@@ -229,9 +229,12 @@ impl Detector for Hdr {
                 out.push(f);
                 if out.len() >= 8 { break; }
                 i += 64; // nagłówek znaleziony: kolejnego nie szukamy w jego wnętrzu
-            } else if aligned && (i == 0 || any_offset) {
+            } else if aligned && any_offset {
                 // Nagłówek z wymazanymi sygnaturami: znaczniki formatu usunięte po załadowaniu, ale tablica
-                // sekcji albo segmentów została. Szukamy tylko na początku regionu i w regionach wykonywalnych.
+                // sekcji albo segmentów została. Szukamy tylko w regionach wykonywalnych: w zwykłych danych
+                // kopie nagłówków plików są codziennością (program czytający pliki wykonywalne ma je na stercie,
+                // a tablica sekcji takiej kopii leży w środku strony). Pomiar na stacji testowej 2026-11-23:
+                // szukanie także na początku regionów niewykonywalnych dało dwa fałszywe alarmy na stercie.
                 if let Some(fmt) = wiped_header_kind(&d[i..(i + PAGE).min(d.len())]) {
                     let addr = r.base + i as u64;
                     let mut f = ctx.finding(self.id(), "HDR", r, addr, PAGE as u64, 40,
@@ -422,6 +425,37 @@ mod tests {
         for (n, p) in [("one", &one), ("noexec", &noexec), ("order", &order), ("noise", &noise), ("zero", &vec![0u8; PAGE]), ("text", &text), ("one_load", &one_load)] {
             assert_eq!(wiped_header_kind(p), None, "{n}");
         }
+    }
+
+    /// Tablica sekcji bez sygnatury liczy się tylko w regionie wykonywalnym: kopia nagłówka pliku w danych
+    /// (sterta programu czytającego pliki wykonywalne) nie jest znaleziskiem.
+    #[test]
+    fn wiped_header_is_reported_only_in_executable_regions() {
+        use crate::{scan_source, Config};
+        use nanshe_core::*;
+        struct One(Region, Vec<u8>);
+        impl MemorySource for One {
+            fn info(&self) -> SourceInfo { SourceInfo { os: "windows".into(), arch: "x86_64".into(), pid: Some(1), name: None, source_type: "live".into(), exe: None, exe_deleted: false, exe_verified: false } }
+            fn regions(&self) -> Result<Vec<Region>> { Ok(vec![self.0.clone()]) }
+            fn read_at(&self, addr: u64, buf: &mut [u8]) -> Result<usize> {
+                let o = (addr - self.0.base) as usize; let n = buf.len().min(self.1.len() - o); buf[..n].copy_from_slice(&self.1[o..o + n]); Ok(n)
+            }
+        }
+        // sterta: na początku strony nagłówek alokatora, dalej kopia nagłówka pliku z tablicą sekcji
+        let mut heap = vec![0u8; 2 * PAGE];
+        heap[0x40..0x40 + PAGE - 0x40].copy_from_slice(&pe_page()[..PAGE - 0x40]);
+        let mut wiped = pe_page(); wiped[..2].fill(0); wiped[0x80..0x84].fill(0); wiped.resize(2 * PAGE, 0x90);
+        let scan = |prot: &str, data: &Vec<u8>| {
+            let r = Region { base: 0x10000, size: data.len() as u64, prot: Prot::parse(prot), kind: RegionKind::Private, backing: None, backing_deleted: false, label: None, readable: true };
+            let rep = scan_source(&One(r, data.clone()), &Config::default());
+            rep.regions.iter().flat_map(|x| x.findings.iter().map(|f| (f.tag.clone(), f.reason.clone()))).collect::<Vec<_>>()
+        };
+        let hdr = |v: &Vec<(String, String)>| v.iter().filter(|f| f.0 == "HDR").count();
+        assert_eq!(hdr(&scan("rw-", &heap)), 0, "kopia nagłówka w danych");
+        assert_eq!(hdr(&scan("rw-", &wiped)), 0, "wymazany nagłówek w danych niewykonywalnych nie jest zgłaszany");
+        let x = scan("r-x", &wiped);
+        assert_eq!(hdr(&x), 1);
+        assert!(x.iter().any(|f| f.0 == "HDR" && f.1.contains("wymazaną sygnaturą")), "{x:?}");
     }
 
 }
