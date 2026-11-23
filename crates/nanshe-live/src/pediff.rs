@@ -22,7 +22,10 @@ pub struct Pe<'a> {
     /// Adres, pod który plik został zlinkowany; relokacje poprawiają kod o różnicę względem niego.
     pub image_base: u64,
     sections: Vec<Sec>,
-    reloc: (u32, u32),
+    /// Relokacje do naniesienia: (adres względny celu, szerokość), posortowane.
+    fixups: Vec<(u32, u8)>,
+    /// Tablica relokacji została odczytana w całości; bez tego porównanie po załadowaniu pod inny adres nie jest wiarygodne.
+    pub relocs_complete: bool,
 }
 
 impl<'a> Pe<'a> {
@@ -47,7 +50,8 @@ impl<'a> Pe<'a> {
             let s = table.checked_add(i * 40)?;
             sections.push(Sec { va: u32le(file, s + 12)?, raw_size: u32le(file, s + 16)?, raw: u32le(file, s + 20)? });
         }
-        Some(Pe { file, image_base, sections, reloc })
+        let (fixups, relocs_complete) = read_fixups(file, &sections, reloc);
+        Some(Pe { file, image_base, sections, fixups, relocs_complete })
     }
 
     /// Bajt pliku odpowiadający adresowi względnemu `rva`; None, gdy w pliku go nie ma
@@ -74,37 +78,69 @@ impl<'a> Pe<'a> {
             if n > 0 { out[dst..dst + n].copy_from_slice(&self.file[src as usize..src as usize + n]); }
         }
         let delta = base.wrapping_sub(self.image_base);
-        if delta == 0 || self.reloc.1 < 8 { return out; }
-        // tablica relokacji: bloki (strona, rozmiar bloku, wpisy 16-bitowe: typ w górnych 4 bitach, przesunięcie w dolnych 12)
-        let (end, mut at) = (self.reloc.0 as u64 + self.reloc.1 as u64, self.reloc.0 as u64);
-        let at32 = |r: u64, k: u32| -> u8 { self.byte((r as u32).wrapping_add(k)) };
-        let word = |r: u64| -> u16 { u16::from_le_bytes([at32(r, 0), at32(r, 1)]) };
-        let dword = |r: u64| -> u32 { u32::from_le_bytes([at32(r, 0), at32(r, 1), at32(r, 2), at32(r, 3)]) };
+        if delta == 0 { return out; }
+        // poprawki, których cel (do 8 bajtów) zachodzi na porównywany zakres; tablica jest posortowana
         let (lo, hi) = (rva as u64, rva as u64 + len as u64);
-        let mut guard = 0u32;
-        while at + 8 <= end && at < u32::MAX as u64 - 8 {
-            let (page, size) = (dword(at) as u64, dword(at + 4) as u64);
-            if size < 8 || at + size > end { break; }
-            // blok dotyczy jednej strony; pomijamy bloki daleko od porównywanego zakresu
-            if page + 0x1000 + 8 > lo && page < hi {
-                for i in 0..(size - 8) / 2 {
-                    let e = word(at + 8 + i * 2);
-                    let (typ, target) = (e >> 12, page + (e & 0xfff) as u64);
-                    let width = match typ { 10 => 8u64, 3 => 4, _ => continue };
-                    if target + width <= lo || target >= hi || target > u32::MAX as u64 - 8 { continue; }
-                    let mut v = [0u8; 8];
-                    for k in 0..width { v[k as usize] = self.byte((target + k) as u32); }
-                    let fixed = if width == 8 { u64::from_le_bytes(v).wrapping_add(delta).to_le_bytes() } else {
-                        let mut w = [0u8; 8]; w[..4].copy_from_slice(&u32::from_le_bytes([v[0], v[1], v[2], v[3]]).wrapping_add(delta as u32).to_le_bytes()); w };
-                    for k in 0..width { let a = target + k; if a >= lo && a < hi { out[(a - lo) as usize] = fixed[k as usize]; } }
-                }
-            }
-            at += size;
-            guard += 1;
-            if guard > 1 << 20 { break; }
+        let from = self.fixups.partition_point(|f| (f.0 as u64) + 8 <= lo);
+        for &(target, width) in self.fixups[from..].iter().take_while(|f| (f.0 as u64) < hi) {
+            let (target, width) = (target as u64, width as u64);
+            if target + width <= lo || target > u32::MAX as u64 - 8 { continue; }
+            let mut v = [0u8; 8];
+            for k in 0..width { v[k as usize] = self.byte((target + k) as u32); }
+            let fixed = if width == 8 { u64::from_le_bytes(v).wrapping_add(delta).to_le_bytes() } else {
+                let mut w = [0u8; 8]; w[..4].copy_from_slice(&u32::from_le_bytes([v[0], v[1], v[2], v[3]]).wrapping_add(delta as u32).to_le_bytes()); w };
+            for k in 0..width { let a = target + k; if a >= lo && a < hi { out[(a - lo) as usize] = fixed[k as usize]; } }
         }
         out
     }
+}
+
+/// Najwięcej wpisów tablicy relokacji, jakie są przetwarzane. Plik deklarujący więcej jest uznawany
+/// za nieporównywalny, żeby spreparowany plik nie mógł zająć skanera na długo.
+pub const MAX_FIXUPS: usize = 4 << 20;
+
+/// Tablica relokacji odczytana raz: (adres względny celu, szerokość 4 albo 8 bajtów), posortowana.
+/// Drugi element: czy tablica została odczytana w całości (bez przekroczenia limitu i bez uszkodzeń).
+/// Rozmiar tablicy jest przycinany do bajtów faktycznie obecnych w pliku.
+fn read_fixups(file: &[u8], sections: &[Sec], reloc: (u32, u32)) -> (Vec<(u32, u8)>, bool) {
+    if reloc.1 < 8 { return (Vec::new(), true); }
+    let off = sections.iter().find_map(|s| { let w = reloc.0.checked_sub(s.va)?; (w < s.raw_size).then(|| s.raw as usize + w as usize) });
+    let Some(off) = off.filter(|o| *o < file.len()) else { return (Vec::new(), false) };
+    let table = &file[off..off + (reloc.1 as usize).min(file.len() - off)];
+    let mut out: Vec<(u32, u8)> = Vec::new();
+    let mut at = 0usize;
+    while at + 8 <= table.len() {
+        let (page, size) = (u32le(table, at).unwrap_or(0), u32le(table, at + 4).unwrap_or(0) as usize);
+        if size == 0 { break; }              // koniec tablicy (dopełnienie zerami)
+        if size < 8 || size % 2 != 0 || at + size > table.len() { return (out, false); }
+        for e in table[at + 8..at + size].chunks_exact(2) {
+            let e = u16::from_le_bytes([e[0], e[1]]);
+            let width = match e >> 12 { 10 => 8u8, 3 => 4, 0 => continue, _ => return (out, false) };
+            let Some(target) = page.checked_add((e & 0xfff) as u32) else { return (out, false) };
+            if out.len() >= MAX_FIXUPS { return (out, false); }
+            out.push((target, width));
+        }
+        at += size;
+    }
+    out.sort_unstable();
+    (out, true)
+}
+
+/// Czy nagłówek obrazu w pamięci (pierwsza strona) i nagłówek pliku opisują ten sam obraz: położenie
+/// nagłówka PE, znacznik czasu, liczba sekcji, rozmiar obrazu i suma kontrolna. Adres załadowania
+/// w nagłówku system zmienia, więc nie jest porównywany. Różnica oznacza inny plik niż załadowany.
+pub fn same_image_header(mem: &[u8], file: &[u8]) -> bool {
+    let fields = |b: &[u8]| -> Option<(u32, u16, u32, u16, u32, u32)> {
+        if b.get(..2)? != b"MZ" { return None; }
+        let pe = u32le(b, 0x3c)? as usize;
+        if b.get(pe..pe.checked_add(4)?)? != b"PE\0\0" { return None; }
+        let opt = pe + 24;
+        let magic = u16le(b, opt)?;
+        if magic != 0x20b && magic != 0x10b { return None; }
+        // SizeOfImage i CheckSum mają te same przesunięcia w obu odmianach nagłówka opcjonalnego
+        Some((pe as u32, u16le(b, pe + 6)?, u32le(b, pe + 8)?, magic, u32le(b, opt + 56)?, u32le(b, opt + 64)?))
+    };
+    match (fields(mem), fields(file)) { (Some(a), Some(b)) => a == b, _ => false }
 }
 
 /// Liczba bajtów pamięci różnych od treści odtworzonej z pliku i adres względny pierwszego z nich.
@@ -113,6 +149,7 @@ impl<'a> Pe<'a> {
 pub fn diff(file: &[u8], base: u64, rva: u32, mem: &[u8]) -> Option<(u64, u32)> {
     let pe = Pe::parse(file)?;
     if rva as u64 + mem.len() as u64 > u32::MAX as u64 { return None; }
+    if !pe.relocs_complete && base != pe.image_base { return None; }
     let want = pe.expected(rva, mem.len(), base);
     let mut n = 0u64;
     let mut first = None;
@@ -197,6 +234,22 @@ mod tests {
     }
 
     #[test]
+    fn image_header_in_memory_must_match_the_file() {
+        let file = pe_file(&code(), &[0x10, 0x200]);
+        // w pamięci system zmienia adres załadowania w nagłówku; reszta pól zostaje
+        let mut mem = file[..0x400].to_vec();
+        mem[0x80 + 24 + 24..0x80 + 24 + 32].copy_from_slice(&0x7ff6_1234_0000u64.to_le_bytes());
+        assert!(same_image_header(&mem, &file));
+        // inny znacznik czasu, inna liczba sekcji, inny rozmiar obrazu: to nie ten plik
+        for (off, n) in [(0x80 + 8, 4usize), (0x80 + 6, 1), (0x80 + 24 + 56, 4), (0x80 + 24 + 64, 4)] {
+            let mut other = file.clone(); for b in &mut other[off..off + n] { *b ^= 0x5a; }
+            assert!(!same_image_header(&mem, &other), "pole pod {off:#x}");
+        }
+        // wymazany nagłówek w pamięci albo plik niebędący obrazem: brak potwierdzenia
+        assert!(!same_image_header(&vec![0u8; 0x400], &file) && !same_image_header(&mem, b"MZ") && !same_image_header(&mem, &[]));
+    }
+
+    #[test]
     fn garbage_and_truncated_files_do_not_panic() {
         let file = pe_file(&code(), &[0x10, 0x200]);
         let mem = loaded(BASE);
@@ -205,8 +258,19 @@ mod tests {
         for cut in (0..file.len()).step_by(13) { let _ = diff(&file[..cut], 0x7ff6_0000_0000, 0x1000, &mem); }
         // każdy bajt nagłówków ustawiony na 0xff: wynik dowolny, ale bez paniki i bez czytania poza plik
         for i in 0x3c..0x400 { let mut bad = file.clone(); bad[i] = 0xff; let _ = diff(&bad, 0x7ff6_0000_0000, 0x1000, &mem); let _ = diff(&bad, 0x7ff6_0000_0000, 0xffff_f000, &mem); }
-        // blok relokacji o rozmiarze zerowym albo wychodzącym poza tablicę kończy przetwarzanie
+        // blok relokacji o rozmiarze zerowym kończy tablicę; blok wychodzący poza tablicę albo o nieznanym typie
+        // wpisu oznacza tablicę niewiarygodną: po załadowaniu pod inny adres porównania nie ma, pod adresem z nagłówka jest
         let mut zero = file.clone(); zero[0x804..0x808].copy_from_slice(&0u32.to_le_bytes());
         assert!(diff(&zero, 0x7ff6_0000_0000, 0x1000, &mem).is_some());
+        let mut over = file.clone(); over[0x804..0x808].copy_from_slice(&0x7fff_fff0u32.to_le_bytes());
+        assert_eq!(diff(&over, 0x7ff6_0000_0000, 0x1000, &mem), None);
+        assert_eq!(diff(&over, BASE, 0x1000, &mem), Some((0, 0x1000)));
+        let mut kind = file.clone(); kind[0x809] = 0x50; // typ wpisu 5: nieobsługiwany
+        assert_eq!(diff(&kind, 0x7ff6_0000_0000, 0x1000, &mem), None);
+        // katalog relokacji deklarujący 4 GiB: rozmiar jest przycinany do pliku, praca jest ograniczona
+        let mut huge = file.clone(); huge[0x80 + 24 + 112 + 44..0x80 + 24 + 112 + 48].copy_from_slice(&u32::MAX.to_le_bytes());
+        let t = std::time::Instant::now();
+        for _ in 0..200 { let _ = diff(&huge, 0x7ff6_0000_0000, 0x1000, &mem); }
+        assert!(t.elapsed().as_secs() < 5, "tablica relokacji o zadeklarowanym ogromnym rozmiarze nie może zająć skanera");
     }
 }

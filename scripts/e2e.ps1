@@ -256,7 +256,7 @@ Set-Content -Path (Join-Path $Out "not-a-dump") -Value "to nie jest zrzut"
 cmd /c "`"$N`" scan `"$(Join-Path $Out "not-a-dump")`" > nul 2> nul"
 if ($LASTEXITCODE -ne 2) { $miss += "plik niebedacy zrzutem: kod $LASTEXITCODE zamiast 2" }
 # 9. Zmiana kodu biblioteki: jeden bajt funkcji z version.dll zmieniony w pamieci daje IMG-MOD z porownania z plikiem
-#    (dokladnie 1 bajt, 10 punktow); kontrola: ta sama strona zapisana ta sama trescia nie daje znaleziska.
+#    (dokladnie 1 bajt, 10 punktow); kontrola: ta sama strona zapisana ta sama trescia nie zglasza roznicy.
 $pm = @()
 foreach ($mode in @("patch", "touch")) {
     $proc = Start-Process -FilePath $S -ArgumentList $mode, "120" -RedirectStandardOutput (Join-Path $Out "$mode.pid") -PassThru -WindowStyle Hidden
@@ -268,7 +268,12 @@ foreach ($mode in @("patch", "touch")) {
     if ($mode -eq "patch") {
         if ($found.Count -ne 1) { $pm += "patch: znalezisk IMG-MOD w version.dll: $($found.Count)" }
         elseif ($found[0].weight -ne 10 -or $found[0].reason -notmatch ": 1 bajt") { $pm += "patch: waga $($found[0].weight), opis: " + ($found[0].reason -replace "[^\x20-\x7e]", "?") }
-    } elseif ($found.Count -ne 0) { $pm += "touch: IMG-MOD mimo braku zmiany tresci" }
+    } else {
+        # kontrola: tresc bez zmian. Tozsamosci pliku na Windows nie da sie potwierdzic, wiec zostaje jedno znalezisko
+        # informacyjne (10 punktow) mowiace o zgodnosci z plikiem, bez liczby roznych bajtow.
+        if ($found.Count -ne 1) { $pm += "touch: znalezisk IMG-MOD w version.dll: $($found.Count)" }
+        elseif ($found[0].weight -ne 10 -or $found[0].reason -notmatch "zgodna z plikiem" -or $found[0].reason -match "bajt") { $pm += "touch: waga $($found[0].weight), opis: " + ($found[0].reason -replace "[^\x20-\x7e]", "?") }
+    }
 }
 if ($pm.Count -eq 0) { "zmiana kodu biblioteki (porownanie z plikiem): OK" } else { $fail = 1; "zmiana kodu biblioteki (porownanie z plikiem): FAIL (" + ($pm -join "; ") + ")" }
 if ($miss.Count -eq 0) { "zrzut pamieci procesu (minidump): OK" } else { $fail = 1; "zrzut pamieci procesu (minidump): FAIL (" + ($miss -join "; ") + ")" }

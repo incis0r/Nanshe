@@ -18,7 +18,7 @@ Kod wyjścia skryptów e2e: 0 gdy wszystko zgodne, 1 gdy cokolwiek odbiega.
 
 | Warstwa | Wynik |
 |---|---|
-| Testy jednostkowe | 127 przechodzi (analyze 24, core 3, dump 5, kb 7, live 19, llm 40, report 29) |
+| Testy jednostkowe | 128 przechodzi (analyze 24, core 3, dump 5, kb 7, live 20, llm 40, report 29) |
 | e2e Linux (aarch64, kontener) | 16 próbek statycznych, 2 dynamiczne i 8 grup asercji dodatkowych |
 | e2e Windows (stacja testowa, x64) | 14 próbek, próbka kontekstu, 2 dynamiczne i 8 grup asercji dodatkowych |
 | Model lokalny na żywo | `gemma3:12b` na lokalnej Ollamie |
@@ -87,7 +87,9 @@ Nowe w tej wersji (analiza i odczyt na żywo):
 - `header_with_wiped_signature_is_recognised_by_its_tables` (analyze): nagłówek PE bez `MZ`, bez `PE` albo z wyzerowanym początkiem strony oraz nagłówek ELF bez sygnatury są rozpoznawane po tablicy sekcji albo segmentów; nagłówek z sygnaturą nie jest zgłaszany drugi raz; kontrole: jedna sekcja, brak sekcji wykonywalnej, adresy nierosnące, dane losowe, zera, tekst z nazwami sekcji, jeden segment ładowany.
 - `modified_code_of_a_file_is_flagged_only_in_read_only_executable_mappings` (analyze) obejmuje też wynik porównania z plikiem: liczba bajtów i adres w opisie, 10 punktów dla zwykłej biblioteki Windows i 40 dla modułu ochronnego; kontrola: porównanie bez różnic nie daje znaleziska.
 - `relocated_image_matches_the_file_and_a_patch_is_counted` (live, `pediff`): obraz PE po relokacji pod trzy różne adresy nie różni się od pliku; pięć zmienionych bajtów jest policzonych z adresem pierwszego; kontrole: bez naniesienia relokacji i dla pliku bez tablicy relokacji różnice są widoczne.
-- `garbage_and_truncated_files_do_not_panic` (live, `pediff`): śmieci, każde obcięcie pliku i każdy bajt nagłówków ustawiony na 0xff nie powodują awarii.
+- `garbage_and_truncated_files_do_not_panic` (live, `pediff`): śmieci, każde obcięcie pliku i każdy bajt nagłówków ustawiony na 0xff nie powodują awarii; uszkodzona tablica relokacji (blok poza tablicą, nieznany typ wpisu) oznacza brak porównania po załadowaniu pod inny adres; katalog relokacji deklarujący 4 GiB nie zajmuje skanera (limit czasu w teście).
+- `image_header_in_memory_must_match_the_file` (live, `pediff`): nagłówek w pamięci ze zmienionym adresem załadowania odpowiada plikowi; inny znacznik czasu, liczba sekcji, rozmiar obrazu albo suma kontrolna oznacza inny plik; wymazany nagłówek i plik niebędący obrazem nie dają potwierdzenia.
+- Zgodność treści z plikiem o niepotwierdzonej tożsamości nie wygasza znaleziska (część testu `modified_code_of_a_file_...`): zostaje 10 punktów z opisem, że tożsamości pliku nie potwierdzono.
 - `headers_decoded_and_garbage_ignored` (report) obejmuje nagłówek PE pod przesunięciem 0xf0 w podglądzie 256 bajtów (format, sekcje i znacznik czasu są odczytywane bez pola rodzaju pliku).
 
 ### `nanshe-dump` (zrzuty pamięci procesów)
@@ -215,7 +217,7 @@ Asercje dodatkowe:
 7. Wersja angielska: jak na Linuksie, dodatkowo cecha `integrity level` w wyniku, opis uprawnień skanera i uchwyt do innego procesu z prawami ingerencji w raporcie angielskim.
 8. Raport różnicowy: jak na Linuksie (wynik `rwx` porównany z samym sobą i z wynikiem `pe`).
 9. Zrzut pamięci procesu: pełny minidump próbek `rwx`, `pe`, `thread`, `guard` i `clean`, zrobiony funkcją systemową `MiniDumpWriteDump`, daje te same tagi co skan na żywo (dla `clean` żadnych); numer procesu i nazwa programu pochodzą ze zrzutu; raport mówi o zrzucie i nie ma sekcji sieci.
-10. Zmiana kodu biblioteki: próbka `patch` (jeden bajt funkcji z `version.dll`) daje dokładnie jedno znalezisko `IMG-MOD` w tej bibliotece, 10 punktów, z opisem „1 bajt”; próbka `touch` nie daje żadnego (kontrola).
+10. Zmiana kodu biblioteki: próbka `patch` (jeden bajt funkcji z `version.dll`) daje dokładnie jedno znalezisko `IMG-MOD` w tej bibliotece, 10 punktów, z opisem „1 bajt”; próbka `touch` (kontrola) nie zgłasza różnicy: zostaje jedno znalezisko informacyjne o zgodności z plikiem pod tą ścieżką, bo tożsamości pliku na Windows nie da się potwierdzić.
 11. Wymazana sygnatura: próbka `pe-wiped` daje `HDR`; `pe-corrupt` nadal nie (kontrola).
 
 Powtarzalność na Windows porównuje regiony ze znaleziskami (z profilem entropii i ciągami), a nie pełną mapę regionów ani kontekst: te zmieniają się między skanami żywego procesu.

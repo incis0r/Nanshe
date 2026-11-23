@@ -3,7 +3,7 @@
 //! Regiony pochodzą ze strumienia MemoryInfoList (ten sam opis co VirtualQueryEx), treść ze
 //! strumienia Memory64List albo MemoryList, nazwy modułów z ModuleList, adresy startu wątków
 //! z ThreadInfoList.
-use crate::{covered, short, u16le, u32le, u64le, Parsed, Seg, Src, MAX_TABLE};
+use crate::{covered, range_at, short, u16le, u32le, u64le, Parsed, Seg, Src, MAX_TABLE};
 use nanshe_core::*;
 use nanshe_core::{tr, trf};
 
@@ -111,7 +111,10 @@ pub(crate) fn parse(src: &mut Src) -> Result<Parsed> {
     p.segs.sort_by_key(|s| s.vaddr);
 
     // --- regiony
-    let module_of = |addr: u64| modules.iter().find(|(b, s, _)| addr >= *b && addr - *b < *s).map(|(_, _, n)| n.clone());
+    // moduły jako zakresy [początek, koniec) posortowane po adresie: wyszukiwanie binarne
+    let mut ranges: Vec<(u64, u64, String)> = modules.iter().map(|(b, s, n)| (*b, b.saturating_add(*s), n.clone())).collect();
+    ranges.sort_by_key(|m| m.0);
+    let module_of = |addr: u64| range_at(&ranges, addr).cloned();
     if let Some((rva, size)) = stream(MEMORY_INFO_LIST) {
         let head = src.read(rva, 16.min(size)).map_err(|_| short())?;
         let (hs, es, n) = (u32le(&head, 0).ok_or_else(short)? as usize, u32le(&head, 4).ok_or_else(short)? as usize, u64le(&head, 8).ok_or_else(short)?);

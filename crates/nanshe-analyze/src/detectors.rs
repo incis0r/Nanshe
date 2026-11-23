@@ -157,7 +157,10 @@ impl Detector for ImgMod {
         // Pomiar na stacji testowej 2026-11-23 (232 procesy): 26 regionów z potwierdzoną różnicą, z czego 10 to te same
         // 12 bajtów w user32.dll we wszystkich procesach 32-bitowych, a 8 to te same 15 bajtów w clr.dll we wszystkich
         // procesach .NET. Przy 20 punktach (razem z ENT-X 10) liczba procesów "podejrzanych" rosła z 5 do 14.
-        let (weight, reason) = if c.compared {
+        let (weight, reason) = if c.compared && bytes == 0 {
+            // treść zgodna z plikiem pod tą ścieżką, ale nie wiadomo, czy to ten sam plik: znalezisko zostaje jako "info"
+            (10, trf!("strony kodu są prywatną kopią; treść zgodna z plikiem pod tą ścieżką, ale tożsamości pliku nie potwierdzono ({name})", "code pages are a private copy; contents equal the file at this path, but the identity of the file was not confirmed ({name})"))
+        } else if c.compared {
             (if full { 40 } else { 10 }, trf!("kod w pamięci różni się od pliku na dysku: {bytes} bajtów, pierwszy pod adresem {addr:#x} ({name})", "code in memory differs from the file on disk: {bytes} bytes, the first at address {addr:#x} ({name})"))
         } else {
             (if full { 40 } else { 10 }, trf!("kod z pliku zmieniony w pamięci: {} KiB stron niewspółdzielonych z plikiem; treści nie porównano z plikiem ({name})", "code from a file changed in memory: {} KiB of pages not shared with the file; contents were not compared with the file ({name})", bytes.div_ceil(1024)))

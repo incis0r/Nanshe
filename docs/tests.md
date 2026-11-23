@@ -18,7 +18,7 @@ Exit code of the e2e scripts: 0 when everything matches, 1 when anything deviate
 
 | Layer | Result |
 |---|---|
-| Unit tests | 127 pass (analyze 24, core 3, dump 5, kb 7, live 19, llm 40, report 29) |
+| Unit tests | 128 pass (analyze 24, core 3, dump 5, kb 7, live 20, llm 40, report 29) |
 | e2e Linux (aarch64, container) | 16 static samples, 2 dynamic and 8 groups of additional assertions |
 | e2e Windows (test host, x64) | 14 samples, the context sample, 2 dynamic and 8 groups of additional assertions |
 | Local model, live | `gemma3:12b` on a local Ollama |
@@ -87,7 +87,9 @@ New in this version (analysis and live reading):
 - `header_with_wiped_signature_is_recognised_by_its_tables` (analyze): a PE header without `MZ`, without `PE` or with the start of the page zeroed, and an ELF header without its signature, are recognised by the section table or the program header table; a header with its signature is not reported a second time; controls: a single section, no executable section, non-increasing addresses, random data, zeros, text containing section names, a single loadable segment.
 - `modified_code_of_a_file_is_flagged_only_in_read_only_executable_mappings` (analyze) now also covers the result of the comparison with the file: the byte count and address in the description, 10 points for an ordinary Windows library and 40 for a security module; control: a comparison without differences produces no finding.
 - `relocated_image_matches_the_file_and_a_patch_is_counted` (live, `pediff`): a PE image relocated to three different addresses does not differ from the file; five changed bytes are counted with the address of the first; controls: without applying relocations, and for a file without a relocation table, the differences are visible.
-- `garbage_and_truncated_files_do_not_panic` (live, `pediff`): garbage, every truncation of the file and every header byte set to 0xff cause no crash.
+- `garbage_and_truncated_files_do_not_panic` (live, `pediff`): garbage, every truncation of the file and every header byte set to 0xff cause no crash; a damaged relocation table (a block outside the table, an unknown entry type) means no comparison after loading at a different address; a relocation directory declaring 4 GiB does not occupy the scanner (time limit in the test).
+- `image_header_in_memory_must_match_the_file` (live, `pediff`): a header in memory with a changed load address matches the file; a different timestamp, section count, image size or checksum means a different file; a wiped header and a file that is not an image give no confirmation.
+- Contents equal to a file whose identity is not confirmed do not suppress the finding (part of the `modified_code_of_a_file_...` test): 10 points remain, with a description saying that the identity of the file was not confirmed.
 - `headers_decoded_and_garbage_ignored` (report) now covers a PE header at offset 0xf0 in a 256-byte preview (format, sections and timestamp are read without the file-kind field).
 
 ### `nanshe-dump` (process memory dumps)
@@ -215,7 +217,7 @@ Additional assertions:
 7. English version: as on Linux, additionally the `integrity level` feature in the result, the description of the scanner privileges and a handle to another process with tampering rights in the English report.
 8. Differential report: as on Linux (the `rwx` result compared with itself and with the `pe` result).
 9. Process memory dump: a full minidump of the `rwx`, `pe`, `thread`, `guard` and `clean` samples, made with the system function `MiniDumpWriteDump`, gives the same tags as a live scan (none for `clean`); the process number and program name come from the dump; the report mentions the dump and has no network section.
-10. Library code change: the `patch` sample (one byte of a function from `version.dll`) gives exactly one `IMG-MOD` finding in that library, 10 points, with the description of 1 byte; the `touch` sample gives none (control).
+10. Library code change: the `patch` sample (one byte of a function from `version.dll`) gives exactly one `IMG-MOD` finding in that library, 10 points, with the description of 1 byte; the `touch` sample (control) reports no difference: one informational finding remains, stating that the contents equal the file at this path, because the identity of the file cannot be confirmed on Windows.
 11. Wiped signature: the `pe-wiped` sample gives `HDR`; `pe-corrupt` still does not (control).
 
 Repeatability on Windows compares the regions with findings (with the entropy profile and strings), not the full region map or the context: these change between scans of a live process.

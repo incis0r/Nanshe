@@ -175,6 +175,9 @@ pub struct CodeChange {
     pub first: u64,
     /// Treść pamięci została porównana z plikiem na dysku.
     pub compared: bool,
+    /// Plik użyty do porównania to na pewno ten, z którego powstało mapowanie. Gdy tego nie wiadomo,
+    /// zgodność treści nie wygasza znaleziska: plik pod tą samą ścieżką mógł zostać podmieniony.
+    pub verified: bool,
 }
 
 pub trait MemorySource {

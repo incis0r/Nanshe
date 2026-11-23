@@ -188,7 +188,7 @@ impl MemorySource for WinProcess {
             page += n;
         }
         if bytes == 0 { return None; }
-        let unverified = Some(CodeChange { bytes, first, compared: false });
+        let unverified = Some(CodeChange { bytes, first, compared: false, verified: false });
         // Porównanie prywatnych stron z plikiem na dysku, z naniesionymi relokacjami dla adresu załadowania.
         if (bytes / 4096) as usize > private.len() { return unverified; } // za dużo stron: bez porównania
         let Some(path) = r.backing.as_deref() else { return unverified };
@@ -202,17 +202,26 @@ impl MemorySource for WinProcess {
         if n == 0 || image == 0 || image > r.base { return unverified; }
         let Ok((file, _, _)) = crate::sysctx::read_file_range(&open, 0, crate::sysctx::MAX_COMPARE_BYTES) else { return unverified };
         let Some(pe) = crate::pediff::Pe::parse(&file) else { return unverified };
-        let (mut diff, mut at) = (0u64, None);
+        // tablica relokacji nieodczytana w całości: po załadowaniu pod inny adres porównanie nie jest wiarygodne
+        if !pe.relocs_complete && image != pe.image_base { return unverified; }
         let mut buf = [0u8; 4096];
+        // Plik pod tą ścieżką mógł zostać zastąpiony po załadowaniu (aktualizacja albo celowa podmiana).
+        // Nagłówek obrazu w pamięci musi odpowiadać nagłówkowi pliku: znacznik czasu, suma kontrolna,
+        // rozmiar obrazu i liczba sekcji. To wykrywa inny plik, ale nie dowodzi tożsamości.
+        if self.read_at(image, &mut buf).ok() != Some(4096) || !crate::pediff::same_image_header(&buf, &file) { return unverified; }
+        let (mut diff, mut at) = (0u64, None);
         for p in &private {
             let Ok(rva) = u32::try_from(p - image) else { return unverified };
-            if self.read_at(*p, &mut buf).ok() != Some(4096) { continue; }
+            // strona, której nie da się odczytać w całości, mogła się różnić: bez niej wynik nie jest wiążący
+            if self.read_at(*p, &mut buf).ok() != Some(4096) { return unverified; }
             let want = pe.expected(rva, 4096, image);
             let (k, i) = crate::sysctx::count_diff(&buf, &want);
             if k > 0 && at.is_none() { at = Some(p + i.unwrap_or(0) as u64); }
             diff += k;
         }
-        Some(CodeChange { bytes: diff, first: at.unwrap_or(first), compared: true })
+        // tożsamości pliku nie da się tu potwierdzić (zgodność nagłówka to tylko przesłanka), więc `verified` jest
+        // fałszywe: brak różnic nie wygasza znaleziska, tylko zmienia jego opis
+        Some(CodeChange { bytes: diff, first: at.unwrap_or(first), compared: true, verified: false })
     }
 
     fn read_at(&self, addr: u64, buf: &mut [u8]) -> Result<usize> {

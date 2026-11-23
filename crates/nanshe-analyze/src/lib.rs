@@ -183,7 +183,7 @@ pub fn scan_source(src: &dyn MemorySource, cfg: &Config) -> ProcessReport {
         let end = r.base.saturating_add(r.size);
         let here: Vec<ThreadInfo> = threads.iter().filter(|t| t.addr >= r.base && t.addr < end).cloned().collect();
         // pytamy tylko o wykonywalny, niezapisywalny kod z pliku: tam zmiana w pamięci jest nietypowa
-        let modified = if r.backing.is_some() && r.is_x() && !r.is_w() { src.modified_code(r).filter(|m| m.bytes > 0) } else { None };
+        let modified = if r.backing.is_some() && r.is_x() && !r.is_w() { src.modified_code(r).filter(|m| m.bytes > 0 || (m.compared && !m.verified)) } else { None };
         let ctx = Ctx { info: &info, cfg, page_entropy: &stats.entropy, threads: &here, modified, data: &data };
 
         let mut findings: Vec<Finding> = dets.iter().flat_map(|d| d.scan(r, &data, &ctx)).collect();
@@ -450,14 +450,14 @@ mod tests {
     }
 
     /// Źródło z wątkami i informacją o zmienionym kodzie, do testów detektorów THR-PRIV i IMG-MOD.
-    struct Live { os: &'static str, verified: bool, regs: Vec<Region>, threads: Vec<ThreadInfo>, modified: Vec<(u64, u64)>, compared: bool }
+    struct Live { os: &'static str, verified: bool, regs: Vec<Region>, threads: Vec<ThreadInfo>, modified: Vec<(u64, u64)>, compared: bool, same_file: bool }
     impl MemorySource for Live {
         fn info(&self) -> SourceInfo { SourceInfo { os: self.os.into(), arch: "x86_64".into(), pid: Some(7), name: Some("p".into()), source_type: "live".into(),
             exe: Some("C:\\Windows\\System32\\p.exe".into()), exe_deleted: false, exe_verified: self.verified } }
         fn regions(&self) -> Result<Vec<Region>> { Ok(self.regs.clone()) }
         fn read_at(&self, _a: u64, b: &mut [u8]) -> Result<usize> { let n = b.len().min(4096); b[..n].fill(0x90); Ok(n) }
         fn threads(&self) -> Vec<ThreadInfo> { self.threads.clone() }
-        fn modified_code(&self, r: &Region) -> Option<CodeChange> { self.modified.iter().find(|m| m.0 == r.base).map(|m| CodeChange { bytes: m.1, first: r.base + 0x1000, compared: self.compared }) }
+        fn modified_code(&self, r: &Region) -> Option<CodeChange> { self.modified.iter().find(|m| m.0 == r.base).map(|m| CodeChange { bytes: m.1, first: r.base + 0x1000, compared: self.compared, verified: self.same_file }) }
     }
 
     #[test]
@@ -465,7 +465,7 @@ mod tests {
         let cfg = Config::default();
         let regs = vec![reg(0x10000, 4096, "r-x", RegionKind::Private, None), reg(0x7ff0_0000, 8192, "r-x", RegionKind::Image, Some("\\Device\\HarddiskVolume3\\Windows\\System32\\ntdll.dll")),
             reg(0x7ff1_0000, 4096, "r--", RegionKind::Image, Some("\\Device\\HarddiskVolume3\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\clr.dll"))];
-        let scan = |threads: Vec<ThreadInfo>, verified| scan_source(&Live { os: "windows", verified, regs: regs.clone(), threads, modified: vec![], compared: false }, &cfg);
+        let scan = |threads: Vec<ThreadInfo>, verified| scan_source(&Live { os: "windows", verified, regs: regs.clone(), threads, modified: vec![], compared: false, same_file: false }, &cfg);
         let p = scan(vec![ThreadInfo { tid: 44, addr: 0x10800 }, ThreadInfo { tid: 45, addr: 0x7ff0_0100 }], false);
         assert_eq!(tags(&p), ["X-PRIV", "THR-PRIV"]);
         let f = p.regions[0].findings.iter().find(|f| f.tag == "THR-PRIV").unwrap();
@@ -480,7 +480,7 @@ mod tests {
         // Linux: ten sam detektor; region jądra ([vdso]) nie jest znaleziskiem
         let mut vdso = reg(0x20000, 4096, "r-x", RegionKind::Unknown, None); vdso.label = Some("[vdso]".into());
         let l = scan_source(&Live { os: "linux", verified: false, regs: vec![vdso, reg(0x30000, 4096, "rwx", RegionKind::Private, None)],
-            threads: vec![ThreadInfo { tid: 9, addr: 0x20010 }, ThreadInfo { tid: 10, addr: 0x30010 }], modified: vec![], compared: false }, &cfg);
+            threads: vec![ThreadInfo { tid: 9, addr: 0x20010 }, ThreadInfo { tid: 10, addr: 0x30010 }], modified: vec![], compared: false, same_file: false }, &cfg);
         assert_eq!(tags(&l), ["RWX", "X-PRIV", "THR-PRIV"]);
     }
 
@@ -488,7 +488,7 @@ mod tests {
     fn modified_code_of_a_file_is_flagged_only_in_read_only_executable_mappings() {
         let cfg = Config::default();
         let code = reg(0x7ff0_0000, 8192, "r-x", RegionKind::Image, Some("\\Device\\HarddiskVolume3\\Windows\\System32\\amsi.dll"));
-        let scan = |r: Region, modified: Vec<(u64, u64)>| scan_source(&Live { os: "windows", verified: false, regs: vec![r], threads: vec![], modified, compared: false }, &cfg);
+        let scan = |r: Region, modified: Vec<(u64, u64)>| scan_source(&Live { os: "windows", verified: false, regs: vec![r], threads: vec![], modified, compared: false, same_file: false }, &cfg);
         let p = scan(code.clone(), vec![(0x7ff0_0000, 4096)]);
         assert_eq!(tags(&p), ["IMG-MOD"]);
         assert_eq!((p.regions[0].findings[0].addr, p.regions[0].findings[0].weight, p.regions[0].severity), (0x7ff0_1000, 40, Severity::Suspicious));
@@ -497,17 +497,23 @@ mod tests {
         let user32 = Region { backing: Some("\\Device\\HarddiskVolume3\\Windows\\System32\\user32.dll".into()), ..code.clone() };
         let u = scan(user32.clone(), vec![(0x7ff0_0000, 4096)]);
         assert_eq!((u.regions[0].findings[0].weight, u.regions[0].severity), (10, Severity::Info));
-        let lin = scan_source(&Live { os: "linux", verified: false, regs: vec![Region { kind: RegionKind::Mapped, backing: Some("/usr/lib/libc.so.6".into()), ..code.clone() }], threads: vec![], modified: vec![(0x7ff0_0000, 4096)], compared: false }, &cfg);
+        let lin = scan_source(&Live { os: "linux", verified: false, regs: vec![Region { kind: RegionKind::Mapped, backing: Some("/usr/lib/libc.so.6".into()), ..code.clone() }], threads: vec![], modified: vec![(0x7ff0_0000, 4096)], compared: false, same_file: false }, &cfg);
         assert_eq!((lin.regions[0].findings[0].weight, lin.regions[0].severity), (40, Severity::Suspicious));
         // po porównaniu z plikiem znalezisko podaje liczbę różnych bajtów i adres pierwszego; zwykła biblioteka
         // Windows ma nadal 10 punktów (takie różnice są na stacji powszechne), moduł ochronny 40
-        let cmp = |r: Region, bytes| scan_source(&Live { os: "windows", verified: false, regs: vec![r], threads: vec![], modified: vec![(0x7ff0_0000, bytes)], compared: true }, &cfg);
+        let cmp_as = |r: Region, bytes, same_file| scan_source(&Live { os: "windows", verified: false, regs: vec![r], threads: vec![], modified: vec![(0x7ff0_0000, bytes)], compared: true, same_file }, &cfg);
+        let cmp = |r: Region, bytes| cmp_as(r, bytes, true);
         let c = cmp(user32.clone(), 5);
         assert_eq!((c.regions[0].findings[0].weight, c.regions[0].severity), (10, Severity::Info));
         assert!(c.regions[0].findings[0].reason.contains("5 bajtów") && c.regions[0].findings[0].reason.contains("0x7ff01000"), "{}", c.regions[0].findings[0].reason);
         assert_eq!(cmp(code.clone(), 5).regions[0].findings[0].weight, 40);
-        // kontrola: porównanie nie wykazało różnic, więc znaleziska nie ma (strona była tylko prywatną kopią)
-        assert!(tags(&cmp(user32, 0)).is_empty());
+        // kontrola: porównanie z plikiem o potwierdzonej tożsamości nie wykazało różnic, więc znaleziska nie ma
+        assert!(tags(&cmp(user32.clone(), 0)).is_empty());
+        // zgodność z plikiem, którego tożsamości nie potwierdzono, nie wygasza znaleziska (plik mógł zostać podmieniony)
+        let u = cmp_as(user32, 0, false);
+        assert_eq!((tags(&u), u.regions[0].findings[0].weight), (vec!["IMG-MOD".to_string()], 10));
+        assert!(u.regions[0].findings[0].reason.contains("tożsamości pliku nie potwierdzono"), "{}", u.regions[0].findings[0].reason);
+        assert_eq!(cmp_as(code.clone(), 0, false).regions[0].findings[0].weight, 10, "także dla modułu ochronnego: różnicy nie stwierdzono");
         // kontrole: brak zmian, zero bajtów, dane (bez prawa wykonania), kod zapisywalny (to domena RWX), pamięć bez pliku
         assert!(tags(&scan(code.clone(), vec![])).is_empty());
         assert!(tags(&scan(code.clone(), vec![(0x7ff0_0000, 0)])).is_empty());

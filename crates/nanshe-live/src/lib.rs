@@ -98,7 +98,7 @@ mod linux {
             let map = self.anon.get_or_init(|| fs::read_to_string(format!("/proc/{}/smaps", self.pid)).map(|s| crate::sysctx::smaps_anonymous(&s)).unwrap_or_default());
             let e = map.get(&r.base).filter(|e| e.anonymous > 0)?;
             // bez porównania: wiadomo tylko, ile stron zapisano; adresem znaleziska jest początek mapowania
-            let unverified = Some(CodeChange { bytes: e.anonymous, first: r.base, compared: false });
+            let unverified = Some(CodeChange { bytes: e.anonymous, first: r.base, compared: false, verified: false });
             if r.size > crate::sysctx::MAX_COMPARE_BYTES { return unverified; }
             let dev_of = |d: u64| format!("{:02x}:{:02x}", ((d >> 8) & 0xfff) | ((d >> 32) & !0xfff), (d & 0xff) | ((d >> 12) & !0xff));
             let via_map = format!("/proc/{}/map_files/{:x}-{:x}", self.pid, r.base, r.base.saturating_add(r.size));
@@ -114,9 +114,11 @@ mod linux {
             while got < mem.len() {
                 match self.mem.read_at(&mut mem[got..], r.base + got as u64) { Ok(0) | Err(_) => break, Ok(n) => got += n }
             }
-            if got == 0 { return unverified; }
-            let (n, first) = crate::sysctx::count_diff(&mem[..got], &file);
-            Some(CodeChange { bytes: n, first: r.base + first.unwrap_or(0) as u64, compared: true })
+            // niepełny odczyt regionu: nieodczytana część mogła się różnić, więc wynik porównania nie jest wiążący
+            if got < mem.len() { return unverified; }
+            let (n, first) = crate::sysctx::count_diff(&mem, &file);
+            // plik otwarty przez map_files albo o zgodnym urządzeniu i i-węźle to ten sam plik, który jest zmapowany
+            Some(CodeChange { bytes: n, first: r.base + first.unwrap_or(0) as u64, compared: true, verified: true })
         }
     }
 

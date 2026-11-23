@@ -2,7 +2,7 @@
 //! Segmenty PT_LOAD opisują regiony pamięci, notatki PT_NOTE niosą nazwę i numer procesu
 //! (NT_PRPSINFO), rejestry wątków (NT_PRSTATUS), listę zmapowanych plików (NT_FILE) i wektor
 //! pomocniczy z adresem ścieżki programu (NT_AUXV).
-use crate::{covered, short, u16le, u32le, u64le, Parsed, Seg, Src, MAX_TABLE};
+use crate::{covered, range_at, short, u16le, u32le, u64le, Parsed, Seg, Src, MAX_TABLE};
 use nanshe_core::*;
 use nanshe_core::{tr, trf};
 
@@ -126,8 +126,11 @@ pub(crate) fn parse(src: &mut Src) -> Result<Parsed> {
     p.threads.dedup_by_key(|t| t.tid);
 
     // nazwy plików z NT_FILE i stos (region, w którym leży wskaźnik stosu któregoś wątku)
+    files.sort_by_key(|f| f.0);
+    p.segs.sort_by_key(|s| s.vaddr);
+    stacks.truncate(4096);
     for r in &mut p.regions {
-        if let Some((_, _, n)) = files.iter().find(|(s, e, _)| r.base >= *s && r.base < *e) {
+        if let Some(n) = range_at(&files, r.base) {
             let (name, deleted) = match n.strip_suffix(" (deleted)") { Some(x) => (x.to_string(), true), None => (n.clone(), false) };
             // plik utworzony przez memfd_create ma w jądrze nazwę "/memfd:nazwa"
             let name = name.strip_prefix("/memfd:").map(|m| format!("memfd:{m}")).unwrap_or(name);

@@ -93,8 +93,18 @@ pub fn open(path: &Path) -> Result<Dump> {
     Ok(Dump { info, regions: p.regions, segs: p.segs, threads: p.threads, file: RefCell::new(src.f), cmdline: p.cmdline, ppid: p.ppid, notes: p.notes })
 }
 
-/// Czy w zrzucie jest treść pod danym adresem.
-pub(crate) fn covered(segs: &[Seg], addr: u64) -> bool { segs.iter().any(|s| addr >= s.vaddr && addr - s.vaddr < s.len) }
+/// Czy w zrzucie jest treść pod danym adresem. `segs` muszą być posortowane po adresie:
+/// wyszukiwanie binarne, bo liczby regionów i fragmentów pochodzą z niezaufanego pliku.
+pub(crate) fn covered(segs: &[Seg], addr: u64) -> bool {
+    let i = segs.partition_point(|s| s.vaddr <= addr);
+    i.checked_sub(1).map(|i| addr - segs[i].vaddr < segs[i].len).unwrap_or(false)
+}
+
+/// Zakres [początek, koniec) zawierający adres, w tablicy posortowanej po początku.
+pub(crate) fn range_at<T>(sorted: &[(u64, u64, T)], addr: u64) -> Option<&T> {
+    let i = sorted.partition_point(|r| r.0 <= addr);
+    i.checked_sub(1).and_then(|i| (addr < sorted[i].1).then(|| &sorted[i].2))
+}
 
 impl MemorySource for Dump {
     fn info(&self) -> SourceInfo { self.info.clone() }
