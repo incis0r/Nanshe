@@ -17,7 +17,7 @@ jobs:
     name: "Linux (container): unit and end-to-end tests"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Unit tests
         run: |
           docker run --rm -v "$PWD":/src -v nanshe-target:/target -e CARGO_TARGET_DIR=/target -w /src \
@@ -31,7 +31,7 @@ jobs:
     name: "Windows: build and unit tests"
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Unit tests
         run: cargo test --workspace --features nanshe-cli/llm
       - name: Release build
