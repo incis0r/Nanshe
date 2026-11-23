@@ -10,10 +10,11 @@ Polish version of this file: [README.pl.md](README.pl.md).
 
 ## What it does
 
-- **Detects** memory regions that are unusual for ordinary software: writable and executable memory, executable memory not backed by a file, high-entropy code, program images loaded without the OS loader, threads running from unbacked memory, modified library code, and more (11 detectors).
+- **Detects** memory regions that are unusual for ordinary software: writable and executable memory, executable memory not backed by a file, high-entropy code, program images loaded without the OS loader, threads running from unbacked memory, library code that differs from the file on disk, and more (11 detectors).
 - **Collects context** for flagged processes: command line, user, parent chain, network sockets, open files and handles, mapped files, SHA-256 hashes.
 - **Explains** each finding from a built-in knowledge base: what it means, benign and malicious explanations, how to verify it, related MITRE ATT&CK techniques.
 - **Prioritises** processes (P1 to P3) with a stated rationale and a first step, and opens the report with an executive summary.
+- **Analyses process memory dumps** (Linux core files, Windows minidumps) with the same detectors: `nanshe scan <dump-file>`.
 - **Compares** two scans of the same host (`nanshe diff`): new regions in running processes, new and exited processes, changes in sockets and mapped files.
 - **Optionally interprets** findings with a language model (local Ollama by default; cloud only with explicit consent and reduced data).
 - Works in **Polish and English** (`--lang pl|en`).
@@ -83,7 +84,7 @@ Polish versions are in [docs/pl/](docs/pl/).
 - Processes protected by the operating system (for example LSASS and anti-malware processes on Windows) and kernel memory are not examined.
 - A scan is the state of memory at one moment; anything that happened before it is not visible.
 - All test samples are synthetic. False-positive rates were measured on a single Windows host and on Linux containers only.
-- macOS and FreeBSD are not supported yet. Memory dumps are not analysed yet.
+- macOS and FreeBSD are not supported yet. Physical memory dumps are not analysed yet (dumps of single processes are).
 - Binaries and installers are not digitally signed.
 
 ## Contributing and security

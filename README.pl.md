@@ -79,6 +79,8 @@ Raport ma być samodzielnym dokumentem dla analityka. Poza znaleziskami zawiera 
 - przegląd całego hosta: macierz procesy x cechy i wspólne drzewo procesów ze znaleziskami; dla procesu wykres rozmiar x entropia regionów,
 - skróty SHA-256 plików programów wszystkich procesów i plików zmapowanych w procesach ze znaleziskami (`--no-hashes` wyłącza).
 
+Zrzut pamięci procesu (plik core z Linuksa, minidump z Windows) analizuje się tym samym poleceniem: `nanshe scan plik-zrzutu --json wynik.json`; opis w [dokumentacji](docs/pl/dokumentacja-0.1.0.md), rozdział 4.
+
 Dwa skany tej samej stacji można porównać: `nanshe diff wczesniej.json pozniej.json` daje raport różnicowy (nowe regiony w działających procesach, nowe i zakończone procesy ze znaleziskami, zmiany w sieci i plikach).
 
 Raport i opisy w wyniku skanu są dostępne po polsku i po angielsku: `nanshe --lang en scan ...`, potem `nanshe report ...` (raport powstaje w języku skanu; opis w [dokumentacji](docs/pl/dokumentacja-0.1.0.md), rozdział 4).

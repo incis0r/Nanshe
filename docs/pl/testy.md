@@ -18,7 +18,7 @@ Kod wyjścia skryptów e2e: 0 gdy wszystko zgodne, 1 gdy cokolwiek odbiega.
 
 | Warstwa | Wynik |
 |---|---|
-| Testy jednostkowe | 119 przechodzi (analyze 23, core 3, kb 7, live 17, llm 40, report 29) |
+| Testy jednostkowe | 127 przechodzi (analyze 24, core 3, dump 5, kb 7, live 19, llm 40, report 29) |
 | e2e Linux (aarch64, kontener) | 16 próbek statycznych, 2 dynamiczne i 8 grup asercji dodatkowych |
 | e2e Windows (stacja testowa, x64) | 14 próbek, próbka kontekstu, 2 dynamiczne i 8 grup asercji dodatkowych |
 | Model lokalny na żywo | `gemma3:12b` na lokalnej Ollamie |
@@ -81,6 +81,24 @@ Backend jest w tych testach atrapą, więc sieć nie jest potrzebna.
 | Chmura: zasady | `cloud_never_gets_d2`, `providers_built_in` | brak `--allow-cloud` i poziom d2 to odmowa, także gdy wywołujący pominie sprawdzenie; lokalnie d2 jest dozwolone (kontrola); czterej dostawcy, wszyscy `https` |
 | Chmura: pseudonimizacja | `cloud_payload_pseudonymized_and_answer_reversed`, `replaces_host_users_and_ips_and_reverses`, `not_an_ip_is_left_alone`, `reverse_never_breaks_json`, `case_and_short_host_do_not_bypass`, `known_value_never_splits_a_longer_name`, `known_value_inside_a_token_masks_the_whole_token`, `retry_feedback_does_not_leak_restored_values`, `generic_host_name_does_not_break_paths_or_words`, `ipv6_is_masked_and_lookalikes_are_not` | host, użytkownicy w ścieżkach i adresy IPv4 nie wychodzą; odpowiedź ma przywrócone wartości; bez trybu chmury dane idą bez zmian (kontrola); numery wersji nie są mylone z adresami; inna wielkość liter i krótka nazwa hosta nie omijają podmiany; znana nazwa wewnątrz dłuższego tokenu (`jkowalski_backup`) maskuje cały token; krótka wartość w zwykłym słowie (`ann` w `scanner`) zostaje (kontrola i zarazem znana luka); ponowione zapytanie nie zawiera przywróconych wartości; host o nazwie `dev` albo `win` nie psuje `/dev/shm` ani `Windows`, ale jest podmieniany jako słowo, w adresie URL i ścieżce UNC; adresy IPv6 są podmieniane, a znaczniki czasu, adresy MAC i `std::string` nie |
 | Chmura: zapytania | `openai_body_follows_supported_params`, `anthropic_body_has_no_sampling_params`, `strict_schema_drops_only_item_bounds`, `responses_parsed_and_failures_named`, `models_parsed_from_both_api_styles`, `key_from_file_must_be_a_single_token` | temperatura, ziarno i schemat idą tylko, gdy model je obsługuje; odmowa, obcięcie i pusta odpowiedź mają nazwane błędy; plik klucza z czymś więcej niż klucz jest odrzucany |
+
+Nowe w tej wersji (analiza i odczyt na żywo):
+
+- `header_with_wiped_signature_is_recognised_by_its_tables` (analyze): nagłówek PE bez `MZ`, bez `PE` albo z wyzerowanym początkiem strony oraz nagłówek ELF bez sygnatury są rozpoznawane po tablicy sekcji albo segmentów; nagłówek z sygnaturą nie jest zgłaszany drugi raz; kontrole: jedna sekcja, brak sekcji wykonywalnej, adresy nierosnące, dane losowe, zera, tekst z nazwami sekcji, jeden segment ładowany.
+- `modified_code_of_a_file_is_flagged_only_in_read_only_executable_mappings` (analyze) obejmuje też wynik porównania z plikiem: liczba bajtów i adres w opisie, 10 punktów dla zwykłej biblioteki Windows i 40 dla modułu ochronnego; kontrola: porównanie bez różnic nie daje znaleziska.
+- `relocated_image_matches_the_file_and_a_patch_is_counted` (live, `pediff`): obraz PE po relokacji pod trzy różne adresy nie różni się od pliku; pięć zmienionych bajtów jest policzonych z adresem pierwszego; kontrole: bez naniesienia relokacji i dla pliku bez tablicy relokacji różnice są widoczne.
+- `garbage_and_truncated_files_do_not_panic` (live, `pediff`): śmieci, każde obcięcie pliku i każdy bajt nagłówków ustawiony na 0xff nie powodują awarii.
+- `headers_decoded_and_garbage_ignored` (report) obejmuje nagłówek PE pod przesunięciem 0xf0 w podglądzie 256 bajtów (format, sekcje i znacznik czasu są odczytywane bez pola rodzaju pliku).
+
+### `nanshe-dump` (zrzuty pamięci procesów)
+
+| Test | Co sprawdza |
+|---|---|
+| `core_file_gives_regions_threads_names_and_memory` | plik core (x86_64 i aarch64): regiony z uprawnieniami, nazwy plików z NT_FILE (w tym `memfd` i plik usunięty), stos rozpoznany po wskaźniku stosu wątku, vdso po wektorze pomocniczym (kontrola: taki sam region bez wpisu nie dostaje etykiety), wątki z licznikiem rozkazów, nazwa, PID, ścieżka programu; odczyt daje tyle, ile jest w zrzucie, kończy na luce, a brak treści to błąd, nie zera |
+| `hostile_headers_do_not_panic_or_read_outside_the_file` | plik core: segment deklarujący treść poza plikiem jest przycinany i odnotowany; tablica segmentów poza plikiem, zły typ pliku i zrzut 32-bitowy dają błąd; każde obcięcie pliku i notatka z rozmiarem przepełniającym licznik nie powodują awarii |
+| `minidump_gives_regions_modules_threads_and_memory` | minidump: regiony z uprawnieniami i rodzajem jak w skanie na żywo, moduł przypisany do regionu obrazu, strona strażnika i strona bez dostępu jako nieczytelne, adresy startu wątków; odczyt przechodzi przez przylegające fragmenty i kończy na luce |
+| `hostile_minidump_does_not_panic_or_read_outside_the_file` | minidump: każde obcięcie pliku i każdy bajt nagłówka oraz katalogu ustawiony na 0xff nie powodują awarii ani odczytu poza plik; nieprawdopodobna liczba strumieni to błąd |
+| `unknown_or_short_files_are_rejected` | plik pusty, za krótki i tekstowy są odrzucane |
 
 ### `nanshe-kb` (baza wiedzy)
 
@@ -162,6 +180,9 @@ Asercje dodatkowe:
 6. Kontekst systemowy (`ctx`): w wyniku są gniazda w stanach `LISTEN` i `ESTABLISHED`, oba pliki próbki (w tym oznaczony jako usunięty), przodkowie, wiersz poleceń procesu i jego dziecka, SHA-256 pliku programu i mapa regionów. W raporcie są sekcje drzewa procesów, sieci, otwartych plików, plików zmapowanych, mapy przestrzeni adresowej, profilu entropii i podglądu bajtów. Kontrole: skan z `--no-context` i skan procesu bez znalezisk (`clean`) nie mają kontekstu ani mapy.
 7. Wersja angielska (`ctx`): skan z `--lang en` zapisuje `"lang": "en"`; raport z tego wyniku ma angielskie części (podsumowanie, ocena, drzewo procesów, sieć, pliki, mapa, objaśnienia cech procesu z bazy wiedzy, kroki sprawdzenia) i ani wynik, ani raport nie zawierają polskich znaków; raport jednojęzyczny nie ma uwagi o językach (kontrola), a raport z `--lang pl` z angielskiego skanu jest po polsku i ją ma. Ta asercja przy pierwszym uruchomieniu wykryła dwa nieprzetłumaczone opisy przy skrótach plików.
 8. Raport różnicowy: dwa skany tego samego procesu `rwx` nie dają nowych regionów ani procesów (kontrola); porównanie wyniku `rwx` z wynikiem `elf` pokazuje jeden nowy proces ze znaleziskami (z tagiem `HDR`) i jeden, który zniknął; wersja angielska ma angielski tytuł; PDF zaczyna się od `%PDF-`.
+9. Zrzut pamięci procesu: plik core próbek `ctx` i `clean` zrobiony narzędziem `gcore` daje te same tagi co skan na żywo (dla `clean` tylko `ENT-X`, czyli vdso nie jest zgłaszane); raport mówi, że źródłem jest zrzut, i nie ma sekcji sieci; plik niebędący zrzutem daje kod 2. Bez `gcore` test jest pomijany z komunikatem.
+10. Zmiana kodu biblioteki: próbka `patch` (jeden bajt nieużywanej funkcji libc zmieniony w pamięci) daje `IMG-MOD` z opisem „1 bajtów”; próbka `touch` (ta sama strona zapisana tą samą treścią) nie daje znaleziska (kontrola).
+11. Wymazana sygnatura: próbka `hdr-wiped` daje `HDR`; `hdr-corrupt` (bez tablicy segmentów) nadal nie (kontrola).
 
 ### Windows (`scripts/e2e.ps1`, natywnie na dedykowanej stacji testowej)
 
@@ -193,6 +214,9 @@ Asercje dodatkowe:
 6. Kontekst systemowy (próbka `ctx`: RWX, nagłówek PE, gniazdo nasłuchujące, połączenie na 127.0.0.1, proces potomny): wiersz poleceń, użytkownik, czas startu, SHA-256 pliku programu, przodkowie, dziecko, gniazda `LISTEN` i `ESTABLISHED`, poziom integralności, mapa regionów, otwarte uchwyty (plik próbki z nazwą, uchwyt do procesu potomnego z prawami ingerencji, co najmniej jeden klucz rejestru, liczba wszystkich uchwytów większa niż zapisanych); w raporcie te same sekcje co na Linuksie oraz odczytany format nagłówka PE. Kontrole jak na Linuksie.
 7. Wersja angielska: jak na Linuksie, dodatkowo cecha `integrity level` w wyniku, opis uprawnień skanera i uchwyt do innego procesu z prawami ingerencji w raporcie angielskim.
 8. Raport różnicowy: jak na Linuksie (wynik `rwx` porównany z samym sobą i z wynikiem `pe`).
+9. Zrzut pamięci procesu: pełny minidump próbek `rwx`, `pe`, `thread`, `guard` i `clean`, zrobiony funkcją systemową `MiniDumpWriteDump`, daje te same tagi co skan na żywo (dla `clean` żadnych); numer procesu i nazwa programu pochodzą ze zrzutu; raport mówi o zrzucie i nie ma sekcji sieci.
+10. Zmiana kodu biblioteki: próbka `patch` (jeden bajt funkcji z `version.dll`) daje dokładnie jedno znalezisko `IMG-MOD` w tej bibliotece, 10 punktów, z opisem „1 bajt”; próbka `touch` nie daje żadnego (kontrola).
+11. Wymazana sygnatura: próbka `pe-wiped` daje `HDR`; `pe-corrupt` nadal nie (kontrola).
 
 Powtarzalność na Windows porównuje regiony ze znaleziskami (z profilem entropii i ciągami), a nie pełną mapę regionów ani kontekst: te zmieniają się między skanami żywego procesu.
 

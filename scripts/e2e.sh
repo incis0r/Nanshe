@@ -29,10 +29,15 @@ check data-noise   0 "ENT-X"             # wysoka entropia w danych RW to nie zn
 check rx-file      1 "ENT-X,X-TMP"       # R-X z pliku w /tmp: łapie X-TMP (katalog zapisywalny dla wszystkich)
 check rwx-lowent   1 "ENT-X,RWX,X-PRIV"  # jak rwx, ale bez ENT-X na ładunku (asercja wyniku niżej)
 check rx-stage     1 "ENT-X,X-PRIV"      # staging RW->R-X: RWX ominięty, X-PRIV łapie
-check hdr-corrupt  1 "ENT-X,X-PRIV"      # e_type spoza zakresu: HDR głuchy
+check hdr-corrupt  1 "ENT-X,X-PRIV"      # e_type spoza zakresu i brak tablicy segmentów: HDR głuchy (kontrola)
+check hdr-wiped    1 "ENT-X,HDR,X-PRIV"  # sygnatura wyzerowana, tablica segmentów została: HDR po tablicy
 check hdr-offset   1 "ENT-X,HDR,X-PRIV"  # nagłówek w środku strony: HDR szuka pod dowolnym przesunięciem
 # red team: pokrycie detektorów
 check delexec      1 "DEL-EXEC,ENT-X"
+# zmiana kodu biblioteki: jeden bajt zmieniony w pamięci daje IMG-MOD po porównaniu z plikiem;
+# kontrola: ta sama strona zapisana tą samą treścią (prywatna kopia bez zmiany) nie daje znaleziska
+check patch        1 "ENT-X,IMG-MOD"
+check touch        0 "ENT-X"
 check execstack    1 "ENT-X,RWX,X-PRIV"
 # red team: wstrzyknięcie do warstwy LLM przez metadane
 check inject-memfd 1 "ENT-X,MEMFD"
@@ -84,6 +89,8 @@ if [ "$rc" = 2 ]; then echo "nieistniejący pid: OK kod=2"; else echo "nieistnie
 # Asercje red team poza zestawem tagów.
 # 1. rwx-lowent: region ładunku ma wynik 60 (RWX+X-PRIV), a nie 90 jak przy rwx: ENT-X nie odpalił.
 grep -q '"score": 90' "$OUT/rwx.json" && res=OK || { res=FAIL; fail=1; }
+grep -q 'różni się od pliku na dysku: 1 bajtów' "$OUT/patch.json" && r2=OK || { r2=FAIL; fail=1; }
+echo "patch: dokładnie jeden bajt różny od pliku: $r2"
 echo "rwx kontrola wyniku 90: $res"
 if grep -q '"score": 90' "$OUT/rwx-lowent.json" || ! grep -q '"score": 60' "$OUT/rwx-lowent.json"; then
   res=FAIL; fail=1; else res=OK; fi
@@ -167,4 +174,32 @@ grep -q '^# Nanshe: differential report' "$OUT/two.en.diff.md" || { res=FAIL; ec
 [ "$(head -c 5 "$OUT/two.diff.pdf")" = "%PDF-" ] || res=FAIL
 [ $res = OK ] || fail=1
 echo "raport różnicowy: $res"
+# 7. Zrzut pamięci procesu: plik core próbki (gcore z pakietu gdb) daje te same tagi co skan na żywo,
+#    zrzut próbki bez znalezisk nie daje żadnych (kontrola), a raport mówi, że źródłem jest zrzut.
+if command -v gcore >/dev/null 2>&1; then
+  res=OK
+  for pair in "ctx:1:ENT-X,HDR,MEMFD,RWX,X-PRIV" "clean:0:ENT-X"; do
+    mode=${pair%%:*}; rest=${pair#*:}; want_rc=${rest%%:*}; want=${rest#*:}
+    $S "$mode" 60 > "$OUT/dump-$mode.pid" & sleep 0.7
+    pid=$(awk '{print $2}' "$OUT/dump-$mode.pid")
+    rm -f "$OUT/core-$mode".*
+    gcore -o "$OUT/core-$mode" "$pid" >/dev/null 2>&1
+    kill "$pid" 2>/dev/null
+    $N scan "$OUT/core-$mode.$pid" --json "$OUT/dump-$mode.json" >/dev/null 2>&1; rc=$?
+    tags=$(grep -o '"tag": "[A-Z-]*"' "$OUT/dump-$mode.json" | cut -d'"' -f4 | sort -u | paste -sd, -)
+    { [ "$rc" = "$want_rc" ] && [ "$tags" = "$want" ]; } || { res=FAIL; echo "  zrzut $mode: kod=$rc (oczek. $want_rc) tagi=[$tags] (oczek. [$want])"; }
+    grep -q '"source_type": "dump"' "$OUT/dump-$mode.json" || { res=FAIL; echo "  zrzut $mode: brak source_type dump"; }
+    rm -f "$OUT/core-$mode.$pid"
+  done
+  $N report "$OUT/dump-ctx.json" --no-llm --md "$OUT/dump.report.md" --pdf "$OUT/dump.report.pdf" 2>/dev/null
+  grep -q 'zrzut pamięci procesu' "$OUT/dump.report.md" || { res=FAIL; echo "  raport nie mówi o zrzucie"; }
+  grep -q '^### Sieć' "$OUT/dump.report.md" && { res=FAIL; echo "  raport ze zrzutu ma sekcję sieci"; }
+  grep -q 'memfd:payload' "$OUT/dump.report.md" || { res=FAIL; echo "  raport ze zrzutu bez nazwy pliku memfd"; }
+  printf 'to nie jest zrzut' > "$OUT/not-a-dump"
+  $N scan "$OUT/not-a-dump" >/dev/null 2>&1; [ $? = 2 ] || { res=FAIL; echo "  plik niebędący zrzutem: kod inny niż 2"; }
+  [ $res = OK ] || fail=1
+  echo "zrzut pamięci procesu (core): $res"
+else
+  echo "zrzut pamięci procesu (core): POMINIĘTE (brak gcore; zainstaluj pakiet gdb)"
+fi
 exit $fail

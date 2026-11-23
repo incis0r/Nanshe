@@ -19,7 +19,7 @@ Czym nie jest:
 | Obszar | Stan |
 |---|---|
 | Skan żywych procesów | Linux i Windows; macOS i FreeBSD bez backendu skanu |
-| Analiza zrzutów pamięci | brak (planowane) |
+| Analiza zrzutów pamięci | zrzuty pojedynczych procesów: plik core (Linux, ELF 64-bit) i minidump (Windows); zrzuty pamięci fizycznej: brak (planowane) |
 | Detektory | 11 cech: `RWX`, `X-PRIV`, `X-MAP`, `GUARD-X`, `MEMFD`, `DEL-EXEC`, `X-TMP`, `ENT-X`, `HDR`, `THR-PRIV`, `IMG-MOD` |
 | Kontekst systemowy | rodzice i dzieci, wiersz poleceń, użytkownik, plik programu, gniazda, otwarte pliki i uchwyty, cechy bezpieczeństwa |
 | Skróty SHA-256 | pliki programów wszystkich procesów, pliki zmapowane w procesach ze znaleziskami, zawartość regionów |
@@ -36,7 +36,8 @@ Projekt jest w języku Rust, podzielony na osiem pakietów (około 8 100 wierszy
 |---|---|---|
 | `nanshe-core` | wspólne typy: region, znalezisko, wynik skanu, kontekst procesu; interfejs źródła pamięci | 446 |
 | `nanshe-analyze` | entropia, detektory, punktacja, obniżka dla środowisk JIT | 1 035 |
-| `nanshe-live` | odczyt żywych procesów: Linux (`/proc`), Windows (API systemu); kontekst systemowy; skróty plików | 1 744 |
+| `nanshe-live` | odczyt żywych procesów: Linux (`/proc`), Windows (API systemu); kontekst systemowy; skróty plików; porównanie kodu z plikiem na dysku | 1 744 |
+| `nanshe-dump` | zrzuty pamięci procesów jako źródło: plik core ELF i minidump Windows | (nowy) |
 | `nanshe-kb` | baza wiedzy do raportu (treść w `kb/*.json`) | 371 |
 | `nanshe-report` | model raportu, Markdown, PDF pisany bez zewnętrznych programów, strona mapy pamięci | 2 227 |
 | `nanshe-llm` | warstwa modelu: dobór danych, filtry, pseudonimizacja, dostawcy, walidacja odpowiedzi | 1 749 |
@@ -65,6 +66,7 @@ proces -> nanshe scan -> wynik.json -> nanshe report  -> wynik.report.md, wynik.
 |---|---|
 | `nanshe scan --pid N` | skan jednego procesu |
 | `nanshe scan --all` | skan wszystkich dostępnych procesów (poza samym skanerem) |
+| `nanshe scan plik-zrzutu` | analiza zrzutu pamięci procesu tymi samymi detektorami |
 | `nanshe report wynik.json` | raport Markdown i PDF |
 | `nanshe diff wczesniej.json pozniej.json` | raport różnicowy: co zmieniło się między dwoma skanami tej samej stacji |
 | `nanshe explain wynik.json` | interpretacja modelem językowym, potem raport |
@@ -89,6 +91,25 @@ Najważniejsze opcje `scan`:
 Kody wyjścia `scan`: 0 brak znalezisk od progu, 1 są znaleziska, 2 błąd, 3 wynik częściowy bez znalezisk.
 
 Najważniejsze opcje `report`: `--llm plik` albo `--no-llm`, `--md`, `--pdf`, `--min`, `--kb katalog` (własna baza wiedzy).
+
+### Zrzuty pamięci procesów: `nanshe scan <plik>`
+
+`nanshe scan plik-zrzutu --json wynik.json` analizuje zrzut pamięci jednego procesu tymi samymi detektorami co skan na żywo. Format jest rozpoznawany po sygnaturze pliku.
+
+| Format | Jak powstaje | Co zawiera |
+|---|---|---|
+| plik core (ELF 64-bit, x86_64 i aarch64) | `gcore <pid>` z pakietu gdb albo zrzut awaryjny jądra | regiony z uprawnieniami, treść pamięci, nazwy zmapowanych plików, rejestry wątków, nazwa i początek wiersza poleceń |
+| minidump z pełną pamięcią | Menedżer zadań („Utwórz plik zrzutu"), `procdump -ma`, funkcja `MiniDumpWriteDump` | regiony z uprawnieniami i rodzajem, treść pamięci, moduły, adresy startu wątków |
+
+Różnice wobec skanu na żywo:
+
+- Nie ma kontekstu systemowego (sieć, otwarte pliki, drzewo procesów): zrzut go nie zawiera. Raport pomija te części i mówi, że źródłem jest zrzut.
+- Obniżka wagi dla środowisk JIT nie jest stosowana, bo pliku programu nie da się sprawdzić; proces ze środowiskiem .NET albo przeglądarką da więcej znalezisk niż przy skanie na żywo.
+- `IMG-MOD` nie działa (nie ma z czym porównać kodu).
+- Minidump nie zawiera nazw plików dla mapowań innych niż moduły. Plik core zapisany przez jądro zwykle nie zawiera niezmienionego kodu z plików; takich regionów detektory treści nie sprawdzą, a wynik to odnotowuje.
+- W pliku core region vdso (kod dostarczany przez jądro) jest rozpoznawany po wektorze pomocniczym i nie jest zgłaszany jako program bez pliku.
+
+Plik zrzutu jest daną niezaufaną: każde przesunięcie i każda liczba z nagłówków są sprawdzane względem długości pliku, liczby wpisów mają limity, a treść pamięci jest czytana z pliku dopiero na żądanie. Zrzut procesu chronionego (na przykład LSASS) wymaga narzędzia, które potrafi go wykonać; Nanshe takiego narzędzia nie zawiera.
 
 ### Raport różnicowy: `nanshe diff`
 
@@ -143,13 +164,14 @@ Każdy detektor dodaje do regionu punkty. Suma punktów regionu daje wagę: poni
 | `ENT-X` | 10 / 20 / 30 | oba | wysoka entropia w regionie wykonywalnym: 20 od 7,2, 30 od 7,8; 10, gdy to pojedyncze strony w zwykłym kodzie z pliku |
 | `HDR` | 40 | oba | nagłówek ELF, PE albo Mach-O w pamięci bez pliku |
 | `THR-PRIV` | 40 | oba | wątek ulokowany w pamięci bez pliku |
-| `IMG-MOD` | 10 / 40 | oba | kod z pliku zmieniony w pamięci; na Windows 40 tylko dla `amsi.dll` i `wldp.dll`, na Linuksie zawsze 40 |
+| `IMG-MOD` | 10 / 40 | oba | kod w pamięci różni się od pliku na dysku: 40 na Linuksie i dla `amsi.dll`, `wldp.dll`, 10 dla pozostałych bibliotek Windows. Znalezisko mówi, czy treść porównano z plikiem |
 
 Szczegóły, które mają znaczenie przy ocenie wyniku:
 
 - **`HDR`** wymaga więcej niż sygnatury: dla ELF poprawnego typu pliku, dla PE niezerowego pola Machine i 1-96 sekcji. Na początku strony szuka w każdym regionie bez pliku poza niewykonywalnym stosem; pod dowolnym przesunięciem tylko w regionach wykonywalnych. Powód obu ograniczeń jest ten sam: program ładujący trzyma w zwykłych danych kopie nagłówków bibliotek.
 - **`THR-PRIV`** na Windows używa adresu startu wątku, na Linuksie adresu instrukcji, z której wątek wywołał jądro (tylko dla wątków czekających w wywołaniu systemowym).
-- **`IMG-MOD`** wykrywa strony kodu, które przestały być współdzielone z plikiem. Mówi, że kod zmieniono, a nie co zmieniono.
+- **`IMG-MOD`** działa w dwóch krokach. Najpierw backend ustala, które strony kodu z pliku proces zapisał (Linux: strony anonimowe wg `smaps`; Windows: strony zestawu roboczego, które nie są już współdzielone). Potem porównuje ich treść z plikiem na dysku: na Linuksie z odpowiednim fragmentem pliku (otwieranego przez `/proc/<pid>/map_files`, a po ścieżce tylko wtedy, gdy urządzenie i i-węzeł zgadzają się z mapą procesu), na Windows z treścią odtworzoną z pliku PE z naniesionymi relokacjami dla faktycznego adresu załadowania. Znalezisko podaje liczbę różnych bajtów i adres pierwszego. Strona, która jest tylko prywatną kopią bez zmiany treści, nie daje znaleziska. Gdy pliku nie da się otworzyć, znalezisko mówi wprost, że treści nie porównano.
+- **`HDR` z wymazaną sygnaturą.** Gdy na początku regionu (albo strony w regionie wykonywalnym) nie ma poprawnego nagłówka, detektor szuka jeszcze tablicy sekcji PE (co najmniej dwa spójne wpisy, w tym wykonywalny) albo tablicy segmentów ELF (co najmniej dwa segmenty ładowane, w tym wykonywalny). Tak wygląda obraz załadowany ręcznie, z którego usunięto znaczniki formatu, żeby nie dało się go znaleźć po sygnaturze.
 
 ### Obniżka dla środowisk tworzących kod w locie
 
@@ -337,7 +359,7 @@ To pomiar z jednej stacji. Na serwerach, stacjach deweloperskich i w kontenerach
 
 **Czego nie robi:**
 
-- nie analizuje zrzutów pamięci,
+- nie analizuje zrzutów pamięci fizycznej (zrzuty pojedynczych procesów analizuje),
 - nie obserwuje procesu w czasie (raport różnicowy porównuje dwa stany, ale nie widzi tego, co pojawiło się i znikło między skanami),
 - nie pokazuje, co dokładnie zmieniono w kodzie biblioteki,
 - nie sprawdza podpisów cyfrowych ani skrótów w zewnętrznych bazach,
@@ -356,7 +378,7 @@ To pomiar z jednej stacji. Na serwerach, stacjach deweloperskich i w kontenerach
 
 Kolejność uzgodniona w toku prac:
 
-1. Analiza zrzutów procesów i pamięci fizycznej jako nowe źródło (te same detektory), z translacją adresów przez gotową bibliotekę.
+1. Analiza zrzutów pamięci fizycznej jako nowe źródło (te same detektory), z translacją adresów przez gotową bibliotekę. Zrzuty pojedynczych procesów są już obsługiwane.
 2. Odczyt pamięci maszyn wirtualnych z hiperwizora (daje dostęp do procesów chronionych bez śladu w badanym systemie).
 3. Porównanie zmienionego kodu z plikiem na dysku (pokazanie, co zmieniono) i wykrywanie nagłówków z wymazanymi sygnaturami.
 4. Znaleziska z kontekstu: proces o wysokich uprawnieniach uruchomiony z katalogu zapisywalnego dla zwykłych użytkowników.

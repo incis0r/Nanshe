@@ -50,7 +50,8 @@ Check "inject"   1 "ENT-X,RWX,X-PRIV"
 # red team: kontrola i ewazja
 Check "data-noise" 0 ""              # wysoka entropia w danych RW to nie znalezisko
 Check "rwx-lowent" 1 "RWX,X-PRIV"    # jak rwx, ale bez ENT-X na ladunku (asercja wyniku nizej)
-Check "pe-corrupt" 1 "X-PRIV"        # zla sygnatura PE: HDR gluchy
+Check "pe-corrupt" 1 "X-PRIV"        # zla sygnatura PE i brak tablicy sekcji: HDR gluchy (kontrola)
+Check "pe-wiped" 1 "HDR,X-PRIV"      # sygnatury MZ i PE wyzerowane, tablica sekcji zostala: HDR po tablicy
 Check "pe-offset"  1 "HDR,X-PRIV"    # naglowek PE w srodku strony: HDR szuka pod dowolnym przesunieciem
 Check "ximage"     0 ""              # SLEPY PUNKT: MEM_IMAGE z %TEMP% niewidoczny (X-MAP tylko dla MEM_MAPPED)
 Check "guard"      1 "GUARD-X,RWX,X-PRIV"  # strony straznika nie czytamy (Z1), ale metadane alarmuja
@@ -201,17 +202,76 @@ cmd /c "`"$N`" diff `"$(Join-Path $Out "rwx.json")`" `"$(Join-Path $Out "rwx.jso
 cmd /c "`"$N`" diff `"$(Join-Path $Out "rwx.json")`" `"$(Join-Path $Out "pe.json")`" --md `"$d2`" --pdf `"$(Join-Path $Out "two.diff.pdf")`" 2> nul"
 cmd /c "`"$N`" --lang en diff `"$(Join-Path $Out "rwx.json")`" `"$(Join-Path $Out "pe.json")`" --md `"$d3`" --pdf `"$(Join-Path $Out "two.en.diff.pdf")`" 2> nul"
 if (-not ((Test-Path $d1) -and (Test-Path $d2) -and (Test-Path $d3))) { $miss += "brak plikow raportu" } else {
-    $s = Get-Content $d1 -Raw -Encoding UTF8; $t = Get-Content $d2 -Raw -Encoding UTF8; $e = Get-Content $d3 -Raw -Encoding UTF8
-    if ($s -notmatch "\| Nowe regiony w dzia.* \| 0 \|") { $miss += "ten sam wynik: nowe regiony" }
-    if ($s -cmatch "NOWY") { $miss += "ten sam wynik: wiersz NOWY" }
-    if ($t -notmatch "\| Nowe procesy ze znaleziskami \| 1 ") { $miss += "rozne procesy: brak nowego procesu" }
-    if ($t -notmatch "znikn.* \| 1 ") { $miss += "rozne procesy: brak procesu, ktory zniknal" }
-    if ($t -notmatch "HDR") { $miss += "rozne procesy: brak tagow nowego procesu" }
-    if ($e -notmatch "(?m)^# Nanshe: differential report") { $miss += "brak wersji angielskiej" }
+    # uwaga: nazwy zmiennych PowerShell nie rozrozniaja wielkosci liter ($s nadpisaloby $S, sciezke do probki)
+    $diffSame = Get-Content $d1 -Raw -Encoding UTF8; $diffTwo = Get-Content $d2 -Raw -Encoding UTF8; $diffEn = Get-Content $d3 -Raw -Encoding UTF8
+    if ($diffSame -notmatch "\| Nowe regiony w dzia.* \| 0 \|") { $miss += "ten sam wynik: nowe regiony" }
+    if ($diffSame -cmatch "NOWY") { $miss += "ten sam wynik: wiersz NOWY" }
+    if ($diffTwo -notmatch "\| Nowe procesy ze znaleziskami \| 1 ") { $miss += "rozne procesy: brak nowego procesu" }
+    if ($diffTwo -notmatch "znikn.* \| 1 ") { $miss += "rozne procesy: brak procesu, ktory zniknal" }
+    if ($diffTwo -notmatch "HDR") { $miss += "rozne procesy: brak tagow nowego procesu" }
+    if ($diffEn -notmatch "(?m)^# Nanshe: differential report") { $miss += "brak wersji angielskiej" }
     $pdfHead = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes((Join-Path $Out "two.diff.pdf")), 0, 5)
     if ($pdfHead -ne "%PDF-") { $miss += "pdf" }
 }
 if ($miss.Count -eq 0) { "raport roznicowy: OK" } else { $fail = 1; "raport roznicowy: FAIL (" + ($miss -join "; ") + ")" }
+# 8. Zrzut pamieci procesu: pelny minidump probki (MiniDumpWriteDump z dbghelp.dll, skladnik systemu) daje te same
+#    tagi co skan na zywo; zrzut probki bez znalezisk nie daje zadnych (kontrola); raport mowi, ze zrodlem jest zrzut.
+Add-Type @"
+using System; using System.IO; using System.Runtime.InteropServices; using Microsoft.Win32.SafeHandles;
+public static class NansheDump {
+    [DllImport("dbghelp.dll", SetLastError = true)]
+    static extern bool MiniDumpWriteDump(IntPtr process, uint pid, SafeFileHandle file, uint type, IntPtr e, IntPtr u, IntPtr c);
+    public static bool Write(int pid, string path) {
+        var p = System.Diagnostics.Process.GetProcessById(pid);
+        using (var fs = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.None)) {
+            // MiniDumpWithFullMemory (0x2) | MiniDumpWithFullMemoryInfo (0x800) | MiniDumpWithThreadInfo (0x1000)
+            return MiniDumpWriteDump(p.Handle, (uint)pid, fs.SafeFileHandle, 0x2 | 0x800 | 0x1000, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+        }
+    }
+}
+"@
+$miss = @()
+foreach ($case in @(@("rwx", 1, "ENT-X,RWX,X-PRIV"), @("pe", 1, "HDR,X-PRIV"), @("thread", 1, "THR-PRIV,X-PRIV"), @("guard", 1, "GUARD-X,RWX,X-PRIV"), @("clean", 0, ""))) {
+    $mode = $case[0]
+    $proc = Start-Process -FilePath $S -ArgumentList $mode, "120" -RedirectStandardOutput (Join-Path $Out "dump-$mode.pid") -PassThru -WindowStyle Hidden
+    Start-Sleep -Milliseconds 1500
+    $dmp = Join-Path $Out "dump-$mode.dmp"; $dj = Join-Path $Out "dump-$mode.json"
+    $ok = [NansheDump]::Write($proc.Id, $dmp)
+    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    if (-not $ok) { $miss += "${mode}: zrzut nie powstal"; continue }
+    cmd /c "`"$N`" scan `"$dmp`" --json `"$dj`" > nul 2> nul"; $rc = $LASTEXITCODE
+    $f = Flagged $dj
+    if ($rc -ne $case[1] -or $f.tags -ne $case[2]) { $miss += "${mode}: kod=$rc (oczek. $($case[1])) tagi=[$($f.tags)] (oczek. [$($case[2])])" }
+    $pj = (Get-Content $dj -Raw -Encoding UTF8 | ConvertFrom-Json).processes[0]
+    if ($pj.info.source_type -ne "dump" -or $pj.info.pid -ne $proc.Id -or $pj.info.name -ne "nanshe-sample.exe") { $miss += "${mode}: metadane zrzutu ($($pj.info.source_type), $($pj.info.pid), $($pj.info.name))" }
+    if ($mode -eq "rwx") {
+        cmd /c "`"$N`" report `"$dj`" --no-llm --md `"$(Join-Path $Out "dump.report.md")`" --pdf `"$(Join-Path $Out "dump.report.pdf")`" 2> nul"
+        $dm = Get-Content (Join-Path $Out "dump.report.md") -Raw -Encoding UTF8
+        if ($dm -notmatch "zrzut pami") { $miss += "raport nie mowi o zrzucie" }
+        if ($dm -match "(?m)^### Sie") { $miss += "raport ze zrzutu ma sekcje sieci" }
+    }
+    Remove-Item $dmp -Force -ErrorAction SilentlyContinue
+}
+Set-Content -Path (Join-Path $Out "not-a-dump") -Value "to nie jest zrzut"
+cmd /c "`"$N`" scan `"$(Join-Path $Out "not-a-dump")`" > nul 2> nul"
+if ($LASTEXITCODE -ne 2) { $miss += "plik niebedacy zrzutem: kod $LASTEXITCODE zamiast 2" }
+# 9. Zmiana kodu biblioteki: jeden bajt funkcji z version.dll zmieniony w pamieci daje IMG-MOD z porownania z plikiem
+#    (dokladnie 1 bajt, 10 punktow); kontrola: ta sama strona zapisana ta sama trescia nie daje znaleziska.
+$pm = @()
+foreach ($mode in @("patch", "touch")) {
+    $proc = Start-Process -FilePath $S -ArgumentList $mode, "120" -RedirectStandardOutput (Join-Path $Out "$mode.pid") -PassThru -WindowStyle Hidden
+    Start-Sleep -Milliseconds 1500
+    $pj = Join-Path $Out "$mode.json"
+    cmd /c "`"$N`" scan --pid $($proc.Id) --json `"$pj`" > nul 2> nul"
+    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    $found = @((Get-Content $pj -Raw -Encoding UTF8 | ConvertFrom-Json).processes[0].regions | ForEach-Object { $_.findings } | Where-Object { $_.tag -eq "IMG-MOD" -and $_.reason -match "version\.dll" })
+    if ($mode -eq "patch") {
+        if ($found.Count -ne 1) { $pm += "patch: znalezisk IMG-MOD w version.dll: $($found.Count)" }
+        elseif ($found[0].weight -ne 10 -or $found[0].reason -notmatch ": 1 bajt") { $pm += "patch: waga $($found[0].weight), opis: " + ($found[0].reason -replace "[^\x20-\x7e]", "?") }
+    } elseif ($found.Count -ne 0) { $pm += "touch: IMG-MOD mimo braku zmiany tresci" }
+}
+if ($pm.Count -eq 0) { "zmiana kodu biblioteki (porownanie z plikiem): OK" } else { $fail = 1; "zmiana kodu biblioteki (porownanie z plikiem): FAIL (" + ($pm -join "; ") + ")" }
+if ($miss.Count -eq 0) { "zrzut pamieci procesu (minidump): OK" } else { $fail = 1; "zrzut pamieci procesu (minidump): FAIL (" + ($miss -join "; ") + ")" }
 # Pliki probek w TEMP zostaja po zabitych procesach (rx-file nie ma tu odpowiednika, ale ximage/inject-map tak)
 Start-Sleep -Milliseconds 500
 Remove-Item (Join-Path $env:TEMP "ns-*") -Force -ErrorAction SilentlyContinue

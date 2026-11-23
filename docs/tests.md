@@ -18,7 +18,7 @@ Exit code of the e2e scripts: 0 when everything matches, 1 when anything deviate
 
 | Layer | Result |
 |---|---|
-| Unit tests | 119 pass (analyze 23, core 3, kb 7, live 17, llm 40, report 29) |
+| Unit tests | 127 pass (analyze 24, core 3, dump 5, kb 7, live 19, llm 40, report 29) |
 | e2e Linux (aarch64, container) | 16 static samples, 2 dynamic and 8 groups of additional assertions |
 | e2e Windows (test host, x64) | 14 samples, the context sample, 2 dynamic and 8 groups of additional assertions |
 | Local model, live | `gemma3:12b` on a local Ollama |
@@ -81,6 +81,24 @@ The backend is a mock in these tests, so no network is needed.
 | Cloud: rules | `cloud_never_gets_d2`, `providers_built_in` | no `--allow-cloud` and level d2 mean a refusal, also when the caller skips the check; locally d2 is allowed (control); four providers, all `https` |
 | Cloud: pseudonymization | `cloud_payload_pseudonymized_and_answer_reversed`, `replaces_host_users_and_ips_and_reverses`, `not_an_ip_is_left_alone`, `reverse_never_breaks_json`, `case_and_short_host_do_not_bypass`, `known_value_never_splits_a_longer_name`, `known_value_inside_a_token_masks_the_whole_token`, `retry_feedback_does_not_leak_restored_values`, `generic_host_name_does_not_break_paths_or_words`, `ipv6_is_masked_and_lookalikes_are_not` | the host, users in paths and IPv4 addresses do not leave; the answer has the values restored; without cloud mode the data goes unchanged (control); version numbers are not mistaken for addresses; different letter case and a short host name do not bypass the substitution; a known name inside a longer token (`jkowalski_backup`) masks the whole token; a short value inside an ordinary word (`ann` in `scanner`) stays (a control and at the same time a known gap); a retried request does not contain restored values; a host named `dev` or `win` does not break `/dev/shm` or `Windows`, but is substituted as a word, in a URL and in a UNC path; IPv6 addresses are substituted, while timestamps, MAC addresses and `std::string` are not |
 | Cloud: requests | `openai_body_follows_supported_params`, `anthropic_body_has_no_sampling_params`, `strict_schema_drops_only_item_bounds`, `responses_parsed_and_failures_named`, `models_parsed_from_both_api_styles`, `key_from_file_must_be_a_single_token` | temperature, seed and schema are sent only when the model supports them; a refusal, a truncation and an empty answer have named errors; a key file with anything more than the key is rejected |
+
+New in this version (analysis and live reading):
+
+- `header_with_wiped_signature_is_recognised_by_its_tables` (analyze): a PE header without `MZ`, without `PE` or with the start of the page zeroed, and an ELF header without its signature, are recognised by the section table or the program header table; a header with its signature is not reported a second time; controls: a single section, no executable section, non-increasing addresses, random data, zeros, text containing section names, a single loadable segment.
+- `modified_code_of_a_file_is_flagged_only_in_read_only_executable_mappings` (analyze) now also covers the result of the comparison with the file: the byte count and address in the description, 10 points for an ordinary Windows library and 40 for a security module; control: a comparison without differences produces no finding.
+- `relocated_image_matches_the_file_and_a_patch_is_counted` (live, `pediff`): a PE image relocated to three different addresses does not differ from the file; five changed bytes are counted with the address of the first; controls: without applying relocations, and for a file without a relocation table, the differences are visible.
+- `garbage_and_truncated_files_do_not_panic` (live, `pediff`): garbage, every truncation of the file and every header byte set to 0xff cause no crash.
+- `headers_decoded_and_garbage_ignored` (report) now covers a PE header at offset 0xf0 in a 256-byte preview (format, sections and timestamp are read without the file-kind field).
+
+### `nanshe-dump` (process memory dumps)
+
+| Test | What it checks |
+|---|---|
+| `core_file_gives_regions_threads_names_and_memory` | core file (x86_64 and aarch64): regions with permissions, file names from NT_FILE (including `memfd` and a deleted file), the stack recognised by a thread's stack pointer, vdso by the auxiliary vector (control: the same region without the entry gets no label), threads with the program counter, name, PID, program path; reading returns as much as the dump holds, stops at a gap, and missing content is an error, not zeros |
+| `hostile_headers_do_not_panic_or_read_outside_the_file` | core file: a segment declaring content outside the file is clipped and recorded; a segment table outside the file, a wrong file type and a 32-bit dump give an error; every truncation of the file and a note whose size overflows the counter cause no crash |
+| `minidump_gives_regions_modules_threads_and_memory` | minidump: regions with permissions and type as in a live scan, a module assigned to an image region, a guard page and a no-access page as unreadable, thread start addresses; reading crosses adjacent fragments and stops at a gap |
+| `hostile_minidump_does_not_panic_or_read_outside_the_file` | minidump: every truncation of the file and every header or directory byte set to 0xff cause neither a crash nor a read outside the file; an implausible number of streams is an error |
+| `unknown_or_short_files_are_rejected` | an empty file, a too-short file and a text file are rejected |
 
 ### `nanshe-kb` (knowledge base)
 
@@ -162,6 +180,9 @@ Additional assertions:
 6. System context (`ctx`): the result contains sockets in the `LISTEN` and `ESTABLISHED` states, both files of the sample (including the one marked as deleted), the ancestors, the command line of the process and of its child, the SHA-256 of the program file and the region map. The report contains the sections for the process tree, network, open files, mapped files, address space map, entropy profile and byte preview. Controls: a scan with `--no-context` and a scan of a process without findings (`clean`) have neither context nor map.
 7. English version (`ctx`): a scan with `--lang en` writes `"lang": "en"`; the report from this result has English parts (summary, assessment, process tree, network, files, map, explanations of the process features from the knowledge base, verification steps) and neither the result nor the report contains Polish characters; a single-language report has no note about languages (control), and a report with `--lang pl` from an English scan is in Polish and has it. On its first run this assertion detected two untranslated descriptions next to the file hashes.
 8. Differential report: two scans of the same `rwx` process give no new regions or processes (control); comparing the `rwx` result with the `elf` result shows one new process with findings (with the `HDR` tag) and one that disappeared; the English version has an English title; the PDF starts with `%PDF-`.
+9. Process memory dump: a core file of the `ctx` and `clean` samples made with `gcore` gives the same tags as a live scan (only `ENT-X` for `clean`, so vdso is not reported); the report states that the source is a dump and has no network section; a file that is not a dump gives exit code 2. Without `gcore` the test is skipped with a message.
+10. Library code change: the `patch` sample (one byte of an unused libc function changed in memory) gives `IMG-MOD` with the description of 1 byte; the `touch` sample (the same page written with the same contents) gives no finding (control).
+11. Wiped signature: the `hdr-wiped` sample gives `HDR`; `hdr-corrupt` (no program header table) still does not (control).
 
 ### Windows (`scripts/e2e.ps1`, natively on a dedicated test host)
 
@@ -193,6 +214,9 @@ Additional assertions:
 6. System context (the `ctx` sample: RWX, PE header, listening socket, connection on 127.0.0.1, child process): command line, user, start time, SHA-256 of the program file, ancestors, child, `LISTEN` and `ESTABLISHED` sockets, integrity level, region map, open handles (the sample file with its name, a handle to the child process with tampering rights, at least one registry key, the number of all handles greater than the number recorded); in the report the same sections as on Linux plus the decoded PE header format. Controls as on Linux.
 7. English version: as on Linux, additionally the `integrity level` feature in the result, the description of the scanner privileges and a handle to another process with tampering rights in the English report.
 8. Differential report: as on Linux (the `rwx` result compared with itself and with the `pe` result).
+9. Process memory dump: a full minidump of the `rwx`, `pe`, `thread`, `guard` and `clean` samples, made with the system function `MiniDumpWriteDump`, gives the same tags as a live scan (none for `clean`); the process number and program name come from the dump; the report mentions the dump and has no network section.
+10. Library code change: the `patch` sample (one byte of a function from `version.dll`) gives exactly one `IMG-MOD` finding in that library, 10 points, with the description of 1 byte; the `touch` sample gives none (control).
+11. Wiped signature: the `pe-wiped` sample gives `HDR`; `pe-corrupt` still does not (control).
 
 Repeatability on Windows compares the regions with findings (with the entropy profile and strings), not the full region map or the context: these change between scans of a live process.
 

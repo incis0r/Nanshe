@@ -19,7 +19,7 @@ What it is not:
 | Area | Status |
 |---|---|
 | Scan of live processes | Linux and Windows; macOS and FreeBSD have no scan backend |
-| Memory dump analysis | none (planned) |
+| Memory dump analysis | dumps of single processes: core file (Linux, 64-bit ELF) and minidump (Windows); physical memory dumps: none (planned) |
 | Detectors | 11 tags: `RWX`, `X-PRIV`, `X-MAP`, `GUARD-X`, `MEMFD`, `DEL-EXEC`, `X-TMP`, `ENT-X`, `HDR`, `THR-PRIV`, `IMG-MOD` |
 | System context | parents and children, command line, user, program file, sockets, open files and handles, security attributes |
 | SHA-256 hashes | program files of all processes, files mapped in processes with findings, region contents |
@@ -36,7 +36,8 @@ The project is written in Rust and divided into eight crates (about 8,100 lines 
 |---|---|---|
 | `nanshe-core` | shared types: region, finding, scan result, process context; memory source interface | 446 |
 | `nanshe-analyze` | entropy, detectors, scoring, reduction for JIT runtimes | 1,035 |
-| `nanshe-live` | reading live processes: Linux (`/proc`), Windows (system API); system context; file hashes | 1,744 |
+| `nanshe-live` | reading live processes: Linux (`/proc`), Windows (system API); system context; file hashes; comparison of code with the file on disk | 1,744 |
+| `nanshe-dump` | process memory dumps as a source: ELF core file and Windows minidump | (new) |
 | `nanshe-kb` | knowledge base for the report (content in `kb/*.json`) | 371 |
 | `nanshe-report` | report model, Markdown, PDF written without external programs, memory map page | 2,227 |
 | `nanshe-llm` | model layer: data selection, filters, pseudonymisation, providers, response validation | 1,749 |
@@ -65,6 +66,7 @@ process -> nanshe scan -> wynik.json -> nanshe report  -> wynik.report.md, wynik
 |---|---|
 | `nanshe scan --pid N` | scan of one process |
 | `nanshe scan --all` | scan of all accessible processes (except the scanner itself) |
+| `nanshe scan dump-file` | analysis of a process memory dump with the same detectors |
 | `nanshe report wynik.json` | Markdown and PDF report |
 | `nanshe diff wczesniej.json pozniej.json` | differential report: what changed between two scans of the same host |
 | `nanshe explain wynik.json` | interpretation by a language model, then the report |
@@ -89,6 +91,25 @@ The most important `scan` options:
 `scan` exit codes: 0 no findings at or above the threshold, 1 there are findings, 2 error, 3 partial result without findings.
 
 The most important `report` options: `--llm plik` or `--no-llm`, `--md`, `--pdf`, `--min`, `--kb katalog` (your own knowledge base).
+
+### Process memory dumps: `nanshe scan <file>`
+
+`nanshe scan dump-file --json result.json` analyses a memory dump of a single process with the same detectors as a live scan. The format is recognised by the file signature.
+
+| Format | How it is produced | What it contains |
+|---|---|---|
+| core file (64-bit ELF, x86_64 and aarch64) | `gcore <pid>` from the gdb package, or a kernel crash dump | regions with permissions, memory contents, names of mapped files, thread registers, the name and the start of the command line |
+| minidump with full memory | Task Manager ("Create dump file"), `procdump -ma`, the `MiniDumpWriteDump` function | regions with permissions and type, memory contents, modules, thread start addresses |
+
+Differences from a live scan:
+
+- There is no system context (network, open files, process tree): a dump does not contain it. The report omits those parts and states that the source is a dump.
+- The severity reduction for JIT runtimes is not applied, because the program file cannot be verified; a process with the .NET runtime or a browser will yield more findings than in a live scan.
+- `IMG-MOD` does not work (there is nothing to compare the code with).
+- A minidump has no file names for mappings other than modules. A core file written by the kernel usually does not contain unmodified file-backed code; content detectors cannot examine such regions, and the result records this.
+- In a core file the vdso region (code supplied by the kernel) is recognised through the auxiliary vector and is not reported as a program without a file.
+
+A dump file is untrusted data: every offset and every number from the headers is checked against the file length, entry counts are limited, and memory contents are read from the file only on demand. Dumping a protected process (for example LSASS) requires a tool that can do it; Nanshe does not include such a tool.
 
 ### Differential report: `nanshe diff`
 
@@ -143,13 +164,14 @@ Each detector adds points to a region. The sum of a region's points gives the se
 | `ENT-X` | 10 / 20 / 30 | both | high entropy in an executable region: 20 from 7.2, 30 from 7.8; 10 when it is single pages in ordinary code from a file |
 | `HDR` | 40 | both | ELF, PE or Mach-O header in memory not backed by a file |
 | `THR-PRIV` | 40 | both | thread located in memory not backed by a file |
-| `IMG-MOD` | 10 / 40 | both | code from a file modified in memory; on Windows 40 only for `amsi.dll` and `wldp.dll`, on Linux always 40 |
+| `IMG-MOD` | 10 / 40 | both | code in memory differs from the file on disk: 40 on Linux and for `amsi.dll`, `wldp.dll`, 10 for other Windows libraries. The finding states whether the contents were compared with the file |
 
 Details that matter when assessing a result:
 
 - **`HDR`** requires more than a signature: for ELF a valid file type, for PE a non-zero Machine field and 1-96 sections. At the start of a page it searches in every region not backed by a file except a non-executable stack; at an arbitrary offset only in executable regions. The reason for both restrictions is the same: the program loader keeps copies of library headers in ordinary data.
 - **`THR-PRIV`** on Windows uses the thread start address, on Linux the address of the instruction from which the thread called the kernel (only for threads waiting in a system call).
-- **`IMG-MOD`** detects code pages that are no longer shared with the file. It says that the code was changed, not what was changed.
+- **`IMG-MOD`** works in two steps. First the backend establishes which file-backed code pages the process has written to (Linux: anonymous pages according to `smaps`; Windows: working-set pages that are no longer shared). Then it compares their contents with the file on disk: on Linux with the corresponding part of the file (opened through `/proc/<pid>/map_files`, and by path only when the device and inode match the process map), on Windows with the contents reconstructed from the PE file with relocations applied for the actual load address. The finding states the number of differing bytes and the address of the first one. A page that is merely a private copy with unchanged contents produces no finding. When the file cannot be opened, the finding says explicitly that the contents were not compared.
+- **`HDR` with a wiped signature.** When there is no valid header at the start of a region (or of a page in an executable region), the detector also looks for a PE section table (at least two consistent entries, one of them executable) or an ELF program header table (at least two loadable segments, one of them executable). This is what a manually loaded image looks like after its format markers were removed so that it cannot be found by signature.
 
 ### Reduction for runtimes that create code on the fly
 
@@ -337,7 +359,7 @@ This is a measurement from one host. On servers, developer workstations and in c
 
 **What it does not do:**
 
-- it does not analyse memory dumps,
+- it does not analyse physical memory dumps (dumps of single processes are analysed),
 - it does not observe a process over time (the differential report compares two states, but does not see what appeared and disappeared between the scans),
 - it does not show what exactly was changed in library code,
 - it does not check digital signatures or hashes in external databases,
@@ -356,7 +378,7 @@ This is a measurement from one host. On servers, developer workstations and in c
 
 The order agreed in the course of the work:
 
-1. Analysis of process dumps and physical memory as a new source (the same detectors), with address translation through an existing library.
+1. Analysis of physical memory dumps as a new source (the same detectors), with address translation through an existing library. Dumps of single processes are already supported.
 2. Reading the memory of virtual machines from the hypervisor (gives access to protected processes without a trace in the examined system).
 3. Comparison of modified code with the file on disk (showing what was changed) and detection of headers with wiped signatures.
 4. Findings from context: a process with high privileges started from a directory writable by ordinary users.
