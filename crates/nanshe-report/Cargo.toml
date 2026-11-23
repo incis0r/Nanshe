@@ -9,5 +9,5 @@ nanshe-core = { path = "../nanshe-core" }
 nanshe-kb = { path = "../nanshe-kb" }
 serde_json.workspace = true
 sha2.workspace = true
-ttf-parser = "0.24"
+ttf-parser = "0.25"
 miniz_oxide = "0.9"
