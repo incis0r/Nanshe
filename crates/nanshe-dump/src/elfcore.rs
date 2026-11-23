@@ -15,6 +15,8 @@ const NT_FILE: u32 = 0x4649_4c45;
 const AT_EXECFN: u64 = 31;
 /// Adres obrazu vdso: kod dostarczany przez jądro, bez pliku na dysku.
 const AT_SYSINFO_EHDR: u64 = 33;
+/// Stały adres strony vsyscall na x86_64: kod jądra widoczny w każdym procesie, bez pliku.
+const VSYSCALL_X86_64: u64 = 0xffff_ffff_ff60_0000;
 /// Przesunięcie tablicy rejestrów w strukturze elf_prstatus (64 bity).
 const PR_REG: usize = 112;
 
@@ -137,6 +139,10 @@ pub(crate) fn parse(src: &mut Src) -> Result<Parsed> {
             r.backing_deleted = deleted || name.starts_with("memfd:");
             r.backing = Some(name);
             r.kind = RegionKind::Mapped;
+        } else if machine == 62 && r.base == VSYSCALL_X86_64 && r.size == 0x1000 {
+            // strona vsyscall (tylko x86_64): wykonywalna, pod stałym adresem, bez pliku. Skan na żywo zna ją
+            // z etykiety w /proc/<pid>/maps; w pliku core etykiet nie ma, więc rozpoznajemy ją po adresie.
+            r.label = Some("[vsyscall]".into());
         } else if vdso == Some(r.base) {
             // obraz vdso zaczyna się nagłówkiem ELF i jest wykonywalny; bez tej etykiety wyglądałby
             // jak program załadowany do pamięci anonimowej
@@ -225,6 +231,7 @@ pub(crate) mod tests {
                 (0x7ffc_0000_0000, 0x2000, 6, stack),
                 (0x7ffd_0000_0000, 0x1000, 5, b"\x7fELF".to_vec()),             // vdso: wykonywalny, z nagłówkiem ELF, bez pliku
                 (0x7ffe_0000_0000, 0x1000, 5, b"\x7fELF".to_vec()),             // to samo bez wpisu w wektorze pomocniczym (kontrola)
+                (VSYSCALL_X86_64, 0x1000, 5, vec![]),                          // strona vsyscall: etykieta tylko na x86_64
             ];
             let bytes = core(machine, &loads, &sample_notes(machine, 0x10_0040, 0x7ffc_0000_0800, 0x7ffc_0000_0100));
             let t = Tmp::new(&format!("core-{machine}"), &bytes);
@@ -234,12 +241,13 @@ pub(crate) mod tests {
             assert_eq!(i.arch, if machine == 62 { "x86_64" } else { "aarch64" });
             assert_eq!((d.cmdline.as_deref(), d.ppid), (Some("sample --mode x"), Some(1)));
             let r = d.regions().unwrap();
-            assert_eq!(r.iter().map(|x| x.base).collect::<Vec<_>>(), vec![0x10_0000, 0x40_0000, 0x7f00_0000_0000, 0x7ffc_0000_0000, 0x7ffd_0000_0000, 0x7ffe_0000_0000]);
+            assert_eq!(r.iter().map(|x| x.base).collect::<Vec<_>>(), vec![0x10_0000, 0x40_0000, 0x7f00_0000_0000, 0x7ffc_0000_0000, 0x7ffd_0000_0000, 0x7ffe_0000_0000, VSYSCALL_X86_64]);
             let by = |base: u64| r.iter().find(|x| x.base == base).unwrap();
             assert_eq!((by(0x10_0000).prot.unwrap().to_string(), by(0x10_0000).kind, by(0x10_0000).readable), ("rwx".to_string(), RegionKind::Private, true));
             assert_eq!((by(0x40_0000).backing.as_deref(), by(0x40_0000).kind, by(0x40_0000).readable, by(0x40_0000).backing_deleted), (Some("/usr/bin/sample"), RegionKind::Mapped, false, false));
             assert_eq!((by(0x7f00_0000_0000).backing.as_deref(), by(0x7f00_0000_0000).backing_deleted), (Some("memfd:payload"), true));
             assert_eq!(by(0x7ffc_0000_0000).kind, RegionKind::Stack);
+            assert_eq!(by(VSYSCALL_X86_64).label.as_deref(), if machine == 62 { Some("[vsyscall]") } else { None }, "{machine}");
             assert_eq!((by(0x7ffd_0000_0000).label.as_deref(), by(0x7ffe_0000_0000).label.as_deref()), (Some("[vdso]"), None));
             assert_eq!(d.threads(), vec![ThreadInfo { tid: 4321, addr: 0x10_0040 }]);
             // odczyt: tyle, ile jest w zrzucie; luka kończy odczyt; brak treści to błąd, a nie zera
@@ -248,7 +256,7 @@ pub(crate) mod tests {
             assert!(buf[..0x1000].iter().all(|b| *b == 0xAA));
             assert_eq!(d.read_at(0x10_0ff0, &mut buf[..0x20]).unwrap(), 0x10);
             assert!(d.read_at(0x40_0000, &mut buf).is_err() && d.read_at(0x10_1000, &mut buf).is_err() && d.read_at(u64::MAX, &mut buf).is_err());
-            assert!(d.notes.iter().any(|n| n.contains("1 regionów nie ma treści")), "{:?}", d.notes);
+            assert!(d.notes.iter().any(|n| n.contains("2 regionów nie ma treści")), "{:?}", d.notes);
         }
     }
 
