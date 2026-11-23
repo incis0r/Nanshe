@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   linux:
-    name: Linux (container): unit and end-to-end tests
+    name: "Linux (container): unit and end-to-end tests"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +28,7 @@ jobs:
             docker.io/library/rust:1-slim-bookworm sh scripts/e2e.sh /target/e2e-out
 
   windows:
-    name: Windows: build and unit tests
+    name: "Windows: build and unit tests"
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
