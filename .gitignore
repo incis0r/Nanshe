@@ -13,3 +13,6 @@
 *.memory.json
 # paczki instalacyjne
 dist/
+
+# pliki metadanych Findera
+.DS_Store
