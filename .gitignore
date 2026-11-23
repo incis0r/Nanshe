@@ -1,0 +1,15 @@
+/target
+*.llm.json
+*.llm-audit.json
+# klucze API i lokalne sekrety
+.nous*
+.creds-*
+.env
+*.report.md
+*.report.pdf
+
+# inwentaryzacje lokalnego systemu
+*.memory.html
+*.memory.json
+# paczki instalacyjne
+dist/

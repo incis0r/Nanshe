@@ -1,0 +1,281 @@
+{
+ "version": "2026-11-22",
+ "guide": [
+  "This report presents the result of a review of the memory of running processes. It points out memory areas with characteristics that are unusual for ordinary software. It does not determine whether the host has been compromised: every finding is a hypothesis to verify.",
+  "A process keeps its code and data in separate areas of memory called regions. In a typical program, code comes from a file on disk and is not modified while the program runs. The tool looks for deviations from this rule: code with no source file, modifiable code, code that looks like encrypted data, a program image loaded without the operating system loader, a thread running from memory not backed by a file, and modified library code.",
+  "Such deviations occur in malware, but also in legitimate software: in browsers, in the .NET and Java runtimes, and in security products. For this reason every finding in the report comes with a benign explanation and a malicious explanation, an assessment in the context of the given process, and a way to verify it.",
+  "Recommended reading order: the executive summary, the process table with priorities, and then, for processes with priority P1 and P2, the parts \"Assessment\", \"What this program is\" and \"What the findings mean\". Region details are there to support verification. The glossary is at the end."
+ ],
+ "severity": {
+  "info": "a single weak characteristic; requires no action unless there are additional indications",
+  "suspicious": "a characteristic that needs an explanation; it often has a benign cause",
+  "high": "several characteristics in one region; to be verified first"
+ },
+ "sections": {
+  "Executive summary": "the key conclusions, the overall assessment and the recommended actions on one page.",
+  "Assessment": "the verification priority of the process, the reasoning behind it and the first step.",
+  "Processes and characteristics": "the table shows which characteristics occurred in which processes and how many times. The cell color is the highest severity. A process that has a characteristic absent from similar processes is worth examining first.",
+  "Process tree with findings": "all processes with findings on a common tree: it shows whether they share a parent.",
+  "What this program is": "what a program with this name usually is and whether it is located where it should be. A process can choose its own name, so what counts is the file path and its SHA-256 hash.",
+  "Process tree": "who started the examined program (above) and what it started itself (below). An unusual parent process, for example a text editor starting a command line, is an important clue.",
+  "Network": "connections and ports opened by the program at the time of the scan. The remote address shows who the program is talking to; the LISTEN state means it is waiting for incoming connections.",
+  "Open files and handles": "files and other resources the program is currently using. Unusual items are listed first: files deleted from disk, files in temporary directories and access to other processes.",
+  "Files mapped into memory": "libraries and files loaded into the program's memory. Files outside system directories, deleted files and files that exist only in memory are listed first.",
+  "Address space map": "the entire memory of the program, starting from the lowest address. The color shows what is located at a given place; red and orange blocks are findings. It is worth looking at what lies next to a finding.",
+  "Region entropy profile": "the bar shows how random the data is in successive parts of the region. Turquoise is ordinary code and data; orange and red are data that looks encrypted or packed.",
+  "Byte preview": "the first bytes of the finding in hexadecimal, with the same bytes as characters on the right. It lets you tell text, code and random data apart at a glance.",
+  "Text strings in the region": "readable strings found in the region: function names, paths, addresses. They often reveal what the code is for.",
+  "LLM interpretation": "hypotheses of a language model based on the region data. This is an aid to reasoning, not proof; the model can be wrong and does not change the score.",
+  "Region size and entropy": "each point is one region with a finding: size on the horizontal axis, randomness of the data on the vertical axis. Ordinary heaps of just-in-time compiled code sit low and close together; a point that is high up or far from the rest is an outlier region.",
+  "SHA-256 hashes": "fingerprints of files and of region contents. The same hash means identical content, so it can be looked up in databases of known files or compared between hosts.",
+  "From memory to network": "on the left the regions with findings, in the middle the process, on the right its network connections at the time of the scan. The diagram shows that the suspicious code and the connection are in the same process; it does not prove that this code opened the connection."
+ },
+ "tags": {
+  "RWX": {
+   "name": "memory writable and executable at once",
+   "en": "region writable and executable at once",
+   "meaning": "The memory region is writable and executable at the same time. In a typical program, code is available for reading and execution only.",
+   "why": "Code that can be overwritten while the program runs makes it possible to place one's own instructions in the process and run them immediately.",
+   "attack": [
+    "T1055 Process Injection"
+   ]
+  },
+  "X-PRIV": {
+   "name": "code with no file on disk",
+   "en": "executable private/anonymous memory with no backing file",
+   "meaning": "The process contains executable code that does not come from any file. The code was created in memory while the process was running.",
+   "why": "Code with no source file is not covered by disk scanning, and it leaves no trace once the process ends.",
+   "attack": [
+    "T1055 Process Injection",
+    "T1620 Reflective Code Loading"
+   ]
+  },
+  "ENT-X": {
+   "name": "code that looks encrypted",
+   "en": "high byte entropy (scale 0-8) in an executable region, typical for packed or encrypted code",
+   "meaning": "The content of an executable region has a distribution close to random. Machine code has a clear structure and much lower entropy.",
+   "why": "This distribution is characteristic of packed or encrypted data that is meant to be decoded immediately before use in order to hide its content.",
+   "attack": [
+    "T1027.002 Software Packing",
+    "T1027 Obfuscated Files or Information"
+   ],
+   "tech": "Shannon entropy calculated per 4 KiB page on a scale of 0-8; thresholds 7.2 (high) and 7.8 (very high). In code backed by a file, isolated pages above the threshold carry reduced severity."
+  },
+  "HDR": {
+   "name": "an entire program hidden in memory",
+   "en": "PE/ELF/Mach-O image header found in memory that has no backing file",
+   "meaning": "Memory with no source file contains the header of an executable file or a library. This means that a program image was loaded without the operating system's loading mechanism.",
+   "why": "This is how techniques for loading code without writing it to disk work: a library or a program reaches memory directly from the network or from an encrypted resource.",
+   "attack": [
+    "T1620 Reflective Code Loading",
+    "T1055 Process Injection"
+   ],
+   "tech": "An ELF header (with a valid file type), a PE header (MZ and PE signatures, non-zero Machine field, 1-96 sections) or a Mach-O header; checked at the start of a page in every region not backed by a file except a non-executable stack, and at any offset only in executable regions."
+  },
+  "THR-PRIV": {
+   "name": "thread running from memory not backed by a file",
+   "en": "a thread located in memory that has no backing file (Windows: thread start address; Linux: instruction that entered the kernel); JIT heaps have such memory but their threads start in library code",
+   "meaning": "A thread of the process is located in memory that does not come from any file. On Windows this means the thread started running there; on Linux, that it called the kernel from that location.",
+   "why": "Just-in-time (JIT) runtimes have memory not backed by a file, but their threads start in library code. A thread located in memory not backed by a file points to code that runs on its own, which is typical of injected code.",
+   "attack": [
+    "T1055 Process Injection"
+   ]
+  },
+  "IMG-MOD": {
+   "name": "library code modified in memory",
+   "en": "code pages of a file-backed executable mapping were modified in memory (no longer shared with the file): function patches, hooks or image replacement; the detector does not know what was changed",
+   "meaning": "A fragment of program or library code differs in memory from the file on disk: the page was modified after loading and the system created a private copy of it.",
+   "why": "This is what function modifications look like: intercepting a call (a hook), disabling protection mechanisms, or replacing the program's code after it has started.",
+   "attack": [
+    "T1562.001 Impair Defenses: Disable or Modify Tools",
+    "T1055.012 Process Hollowing",
+    "T1056.004 Credential API Hooking"
+   ]
+  }
+ },
+ "combos": [
+  {
+   "tags": [
+    "RWX",
+    "X-PRIV"
+   ],
+   "title": "code created at run time",
+   "meaning": "The program has a piece of memory not backed by a file that can be written and executed at the same time. The content does not look encrypted.",
+   "benign": [
+    "Just-in-time (JIT) compilation: the .NET and Java runtimes and the JavaScript engines in browsers and in applications built on them create such regions constantly and in large numbers."
+   ],
+   "malicious": [
+    "Injected code (shellcode): an attacker writes instructions into such a region and runs them. One or two such regions in a program that has no JIT runtime are a strong indication."
+   ],
+   "hints": [
+    {
+     "runtime": true,
+     "text": "A just-in-time (JIT) runtime is loaded in this process ({runtime}), so such regions are expected. Injected code could hide among them, so it is worth comparing their number and sizes across similar processes."
+    },
+    {
+     "runtime": false,
+     "text": "No just-in-time (JIT) runtime was recognized in this process, so it needs to be established what created this region."
+    }
+   ]
+  },
+  {
+   "tags": [
+    "ENT-X",
+    "RWX",
+    "X-PRIV"
+   ],
+   "title": "encrypted or packed code created at run time",
+   "meaning": "A region not backed by a file, writable and executable, filled with data that looks random. This is the strongest combination of characteristics in this report.",
+   "benign": [
+    "Programs protected against copying and analysis (packers, game protection) unpack their code this way.",
+    "Less often: a JIT runtime keeping compressed data next to code."
+   ],
+   "malicious": [
+    "An encrypted payload that will be decoded and run in the same place. This is how loaders (stagers) and many remote access tools work."
+   ],
+   "hints": [
+    {
+     "runtime": true,
+     "text": "Although a JIT runtime is loaded ({runtime}), nearly random content is unusual for it. This region is worth examining first."
+    },
+    {
+     "runtime": false,
+     "text": "The absence of a JIT runtime in the process increases the severity of this finding."
+    }
+   ]
+  },
+  {
+   "tags": [
+    "HDR",
+    "X-PRIV"
+   ],
+   "title": "program loaded into memory not backed by a file",
+   "meaning": "Executable memory not backed by a file contains the header of a program or a library. Someone loaded an executable file manually, without the operating system loader.",
+   "benign": [
+    "Some security products, emulators and developer tools load libraries from memory.",
+    "A copy of the program's own file kept for integrity checking."
+   ],
+   "malicious": [
+    "Reflective loading: a library or a program delivered over the network and run without being written to disk. This is a typical technique of remote access tools."
+   ],
+   "hints": []
+  },
+  {
+   "tags": [
+    "X-PRIV"
+   ],
+   "title": "code with no file, read and execute only",
+   "meaning": "Executable memory not backed by a file that can no longer be written. It often arises like this: a program writes code into ordinary memory and then changes its permissions to executable.",
+   "benign": [
+    "JIT runtimes that remove write permission after generating code (newer versions of .NET and JavaScript engines work this way).",
+    "Small fragments of helper code created by system libraries."
+   ],
+   "malicious": [
+    "Injected code after the preparation stage: changing permissions from write to execute makes it possible to evade simple detection of memory that is writable and executable at once."
+   ],
+   "hints": [
+    {
+     "runtime": true,
+     "text": "A just-in-time (JIT) runtime is loaded in this process ({runtime}), and it creates such regions."
+    },
+    {
+     "runtime": false,
+     "text": "No just-in-time (JIT) runtime was recognized in this process."
+    }
+   ]
+  },
+  {
+   "tags": [
+    "THR-PRIV",
+    "X-PRIV"
+   ],
+   "title": "running code with no file",
+   "meaning": "A thread is located in executable memory not backed by a file. This is not a dormant fragment of code: something is running from there.",
+   "benign": [
+    "Some security products and diagnostic tools start their own threads from code generated in memory.",
+    "Less often: a runtime that starts threads directly from generated code."
+   ],
+   "malicious": [
+    "Injected code started in another process with a new thread. This is the most common way remote access tools launch payloads."
+   ],
+   "hints": [
+    {
+     "runtime": true,
+     "text": "The loaded just-in-time (JIT) runtime ({runtime}) does not explain this finding: its threads start in library code. This region is worth checking first."
+    },
+    {
+     "runtime": false,
+     "text": "There is no just-in-time (JIT) runtime in the process, so no benign explanation is readily available."
+    }
+   ]
+  },
+  {
+   "tags": [
+    "RWX",
+    "THR-PRIV",
+    "X-PRIV"
+   ],
+   "title": "running code with no file that can be overwritten",
+   "meaning": "A thread is located in memory not backed by a file that is writable and executable. The code is running and can be changed while it runs.",
+   "benign": [
+    "Rare. Some copy protection schemes and emulators."
+   ],
+   "malicious": [
+    "Injected code started with a new thread, in a region prepared with no effort at concealment. Typical of simpler tools and off-the-shelf payload generators."
+   ],
+   "hints": [
+    {
+     "runtime": true,
+     "text": "The just-in-time (JIT) runtime ({runtime}) explains the writable and executable memory itself, but not the thread that started in it."
+    }
+   ]
+  },
+  {
+   "tags": [
+    "IMG-MOD"
+   ],
+   "title": "program or library code modified after loading",
+   "meaning": "Part of the code loaded from a file was changed in memory. The tool knows that the page differs from the file, but it does not know what exactly was changed.",
+   "benign": [
+    "Security products (antivirus, EDR) hook system functions in every process.",
+    "Tools for overlays, screen recording and accessibility.",
+    "Packed programs that unpack their own code in place, and a debugger with breakpoints set."
+   ],
+   "malicious": [
+    "Disabling protections by overwriting functions (for example script scanning or event logging).",
+    "Hooking functions in order to steal data or hide presence.",
+    "Replacing the program's code after it has started (process hollowing)."
+   ],
+   "hints": []
+  }
+ ],
+ "terms": {
+  "process": "a running program together with its memory; it has a PID number",
+  "PID": "a number the system assigns to a process; after the process ends, the number may be reused",
+  "memory region": "a contiguous piece of process memory with uniform permissions, for example the code of one library or the stack",
+  "permissions r, w, x": "r: may be read, w: may be written, x: may be run as code; the notation rwx means all three at once",
+  "anonymous (private) memory": "memory that does not come from a file; the program received it empty from the system and filled it itself",
+  "file mapping": "a file from disk visible directly in process memory; this is how programs and libraries are loaded",
+  "entropy": "a measure of data randomness on a scale of 0-8; text is around 4-5, ordinary code 5-6.5, encrypted and packed data above 7.5",
+  "JIT (just-in-time compilation)": "creating machine code while the program runs; .NET, Java and JavaScript engines do this",
+  "shellcode": "short self-contained machine code injected into memory, usually in order to download and run the attacker's actual tool",
+  "reflective loading": "loading a library or a program from memory, with no file on disk and without the operating system loader",
+  "packer": "a tool that compresses or encrypts a program and attaches code that unpacks it at startup",
+  "code injection": "placing and running one's own code in the memory of another process",
+  "SHA-256": "a hash (fingerprint) of a file; the same file always has the same hash, so it can be compared with databases of known files",
+  "stack and heap": "memory areas for the program's working data; they normally should not be executable",
+  "partial result": "the scan did not read everything, for example because the system denied access to some processes; the absence of findings in the unread part proves nothing",
+  "allowlist": "known JIT runtimes for which the tool lowers the severity of findings typical of them; the findings remain in the result",
+  "thread": "one of the parallel lines of execution in a process; every process has at least one",
+  "hook": "overwriting the start of a function so that someone else's code runs first; both security products and malware do this",
+  "MITRE ATT&CK": "a public catalog of techniques used by attackers; identifiers such as T1055 make it possible to name a technique unambiguously",
+  "priority P1, P2, P3": "the order in which processes in this report should be verified: P1 first, P3 when convenient; it follows from the type of findings and the process context and is not a rating of maliciousness"
+ },
+ "socket_states": {
+  "LISTEN": "the program is waiting for incoming connections on this port",
+  "ESTABLISHED": "the connection is open and can carry data",
+  "SYN_SENT": "the program is trying to connect and the other side has not responded yet",
+  "TIME_WAIT": "the connection was closed a moment ago",
+  "CLOSE_WAIT": "the other side has closed the connection, the program has not yet"
+ }
+}

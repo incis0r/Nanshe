@@ -1,0 +1,281 @@
+{
+ "version": "2026-11-22",
+ "guide": [
+  "Raport przedstawia wynik przeglądu pamięci działających procesów. Wskazuje obszary pamięci o cechach nietypowych dla zwykłego oprogramowania. Nie rozstrzyga, czy stacja została przejęta: każde znalezisko jest hipotezą do zweryfikowania.",
+  "Proces przechowuje kod i dane w wydzielonych obszarach pamięci, zwanych regionami. W typowym programie kod pochodzi z pliku na dysku i nie jest modyfikowany w trakcie pracy. Narzędzie wyszukuje odstępstwa od tej reguły: kod bez pliku źródłowego, kod modyfikowalny, kod o cechach danych zaszyfrowanych, obraz programu załadowany z pominięciem systemu, wątek działający z pamięci bez pliku oraz zmieniony kod biblioteki.",
+  "Takie odstępstwa występują w złośliwym oprogramowaniu, ale także w legalnym: w przeglądarkach, środowiskach .NET i Java oraz w programach zabezpieczających. Dlatego każde znalezisko ma w raporcie wyjaśnienie łagodne i niepokojące, ocenę w kontekście danego procesu oraz sposób weryfikacji.",
+  "Zalecana kolejność czytania: podsumowanie dla decydenta, tabela procesów z priorytetami, a następnie dla procesów o priorytecie P1 i P2 części \"Ocena\", \"Co to za program\" i \"Co oznaczają znaleziska\". Szczegóły regionów służą weryfikacji. Słowniczek pojęć znajduje się na końcu."
+ ],
+ "severity": {
+  "info": "pojedyncza słaba cecha; bez dodatkowych przesłanek nie wymaga działania",
+  "suspicious": "cecha wymagająca wyjaśnienia; często ma przyczynę łagodną",
+  "high": "kilka cech w jednym regionie; do weryfikacji w pierwszej kolejności"
+ },
+ "sections": {
+  "Podsumowanie dla decydenta": "najważniejsze ustalenia, ocena ogólna i zalecane działania na jednej stronie.",
+  "Ocena": "priorytet weryfikacji procesu, uzasadnienie i pierwszy krok.",
+  "Procesy i cechy": "tabela pokazuje, które cechy wystąpiły w których procesach i ile razy. Kolor komórki to najwyższa waga. Proces, który ma cechę nieobecną u podobnych procesów, warto obejrzeć pierwszy.",
+  "Drzewo procesów ze znaleziskami": "wszystkie procesy ze znaleziskami na wspólnym drzewie: widać, czy mają wspólnego rodzica.",
+  "Co to za program": "czym zwykle jest program o tej nazwie i czy leży tam, gdzie powinien. Nazwę proces może sobie nadać sam, więc liczy się ścieżka pliku i jego skrót SHA-256.",
+  "Drzewo procesów": "kto uruchomił badany program (wyżej) i co on sam uruchomił (niżej). Nietypowy rodzic, na przykład edytor tekstu uruchamiający wiersz poleceń, to ważna wskazówka.",
+  "Sieć": "połączenia i porty otwarte przez program w chwili skanu. Adres zdalny mówi, z kim program rozmawia; stan LISTEN oznacza, że czeka na połączenia przychodzące.",
+  "Otwarte pliki i uchwyty": "pliki i inne zasoby, z których program właśnie korzysta. Na górze są pozycje nietypowe: pliki usunięte z dysku, pliki z katalogów tymczasowych i dostęp do innych procesów.",
+  "Pliki zmapowane do pamięci": "biblioteki i pliki załadowane do pamięci programu. Na górze są pliki spoza katalogów systemowych, usunięte albo istniejące tylko w pamięci.",
+  "Mapa przestrzeni adresowej": "cała pamięć programu od najniższego adresu. Kolor mówi, co leży w danym miejscu; czerwone i pomarańczowe bloki to znaleziska. Warto patrzeć, co sąsiaduje ze znaleziskiem.",
+  "Profil entropii regionu": "pasek pokazuje, jak bardzo losowe są dane w kolejnych częściach regionu. Kolor turkusowy to zwykły kod i dane, pomarańczowy i czerwony to dane wyglądające na zaszyfrowane albo spakowane.",
+  "Podgląd bajtów": "pierwsze bajty znaleziska zapisane szesnastkowo, a po prawej jako znaki. Pozwala na pierwszy rzut oka odróżnić tekst, kod i dane losowe.",
+  "Ciągi tekstowe w regionie": "czytelne napisy znalezione w regionie: nazwy funkcji, ścieżki, adresy. Często zdradzają, do czego kod służy.",
+  "Interpretacja LLM": "hipotezy modelu językowego na podstawie danych regionu. To pomoc w myśleniu, nie dowód; model może się mylić i nie zmienia punktacji.",
+  "Rozmiar i entropia regionów": "każdy punkt to jeden region ze znaleziskiem: w poziomie rozmiar, w pionie losowość danych. Zwykłe sterty kodu tworzonego w locie leżą nisko i blisko siebie; punkt wysoko albo daleko od reszty to region odstający.",
+  "Skróty SHA-256": "odciski plików i zawartości regionów. Ten sam skrót oznacza identyczną zawartość, więc można go wyszukać w bazach znanych plików albo porównać między stacjami.",
+  "Od pamięci do sieci": "po lewej regiony ze znaleziskami, w środku proces, po prawej jego połączenia sieciowe z chwili skanu. Diagram pokazuje, że podejrzany kod i połączenie są w tym samym procesie; nie dowodzi, że to ten kod otworzył połączenie."
+ },
+ "tags": {
+  "RWX": {
+   "name": "pamięć zapisywalna i wykonywalna naraz",
+   "en": "region writable and executable at once",
+   "meaning": "Region pamięci jest jednocześnie zapisywalny i wykonywalny. W typowym programie kod jest dostępny wyłącznie do odczytu i wykonania.",
+   "why": "Kod, który można nadpisać w trakcie pracy, pozwala umieścić w procesie własne instrukcje i natychmiast je uruchomić.",
+   "attack": [
+    "T1055 Process Injection"
+   ]
+  },
+  "X-PRIV": {
+   "name": "kod bez pliku na dysku",
+   "en": "executable private/anonymous memory with no backing file",
+   "meaning": "Proces zawiera wykonywalny kod, który nie pochodzi z żadnego pliku. Kod powstał w pamięci w trakcie pracy procesu.",
+   "why": "Kodu bez pliku źródłowego nie obejmuje skanowanie dysku, a po zakończeniu procesu nie pozostaje po nim ślad.",
+   "attack": [
+    "T1055 Process Injection",
+    "T1620 Reflective Code Loading"
+   ]
+  },
+  "ENT-X": {
+   "name": "kod wyglądający na zaszyfrowany",
+   "en": "high byte entropy (scale 0-8) in an executable region, typical for packed or encrypted code",
+   "meaning": "Zawartość regionu wykonywalnego ma rozkład bliski losowemu. Kod maszynowy ma wyraźną strukturę i znacznie niższą entropię.",
+   "why": "Taki rozkład mają dane spakowane albo zaszyfrowane, przeznaczone do odkodowania bezpośrednio przed użyciem w celu ukrycia treści.",
+   "attack": [
+    "T1027.002 Software Packing",
+    "T1027 Obfuscated Files or Information"
+   ],
+   "tech": "Entropia Shannona liczona dla stron 4 KiB w skali 0-8; próg 7,2 (wysoka) i 7,8 (bardzo wysoka). W kodzie z pliku pojedyncze strony powyżej progu mają obniżoną wagę."
+  },
+  "HDR": {
+   "name": "cały program schowany w pamięci",
+   "en": "PE/ELF/Mach-O image header found in memory that has no backing file",
+   "meaning": "W pamięci bez pliku źródłowego znajduje się nagłówek pliku wykonywalnego albo biblioteki. Oznacza to, że obraz programu został załadowany z pominięciem mechanizmu ładowania systemu.",
+   "why": "W ten sposób działają techniki ładowania kodu bez zapisu na dysk: biblioteka albo program trafia do pamięci bezpośrednio z sieci lub z zaszyfrowanego zasobu.",
+   "attack": [
+    "T1620 Reflective Code Loading",
+    "T1055 Process Injection"
+   ],
+   "tech": "Nagłówek ELF (z poprawnym typem pliku), PE (sygnatury MZ i PE, niezerowe pole Machine, 1-96 sekcji) albo Mach-O; na początku strony w każdym regionie bez pliku poza niewykonywalnym stosem, pod dowolnym przesunięciem tylko w regionach wykonywalnych."
+  },
+  "THR-PRIV": {
+   "name": "wątek działający z pamięci bez pliku",
+   "en": "a thread located in memory that has no backing file (Windows: thread start address; Linux: instruction that entered the kernel); JIT heaps have such memory but their threads start in library code",
+   "meaning": "Wątek procesu jest ulokowany w pamięci, która nie pochodzi z żadnego pliku. Na Windows oznacza to, że wątek rozpoczął tam działanie; na Linuksie, że z tego miejsca wywołał jądro systemu.",
+   "why": "Środowiska kompilujące kod w locie mają pamięć bez pliku, lecz ich wątki rozpoczynają działanie w kodzie bibliotek. Wątek ulokowany w pamięci bez pliku wskazuje na samodzielnie działający kod, co jest typowe dla kodu wstrzykniętego.",
+   "attack": [
+    "T1055 Process Injection"
+   ]
+  },
+  "IMG-MOD": {
+   "name": "kod biblioteki zmieniony w pamięci",
+   "en": "code pages of a file-backed executable mapping were modified in memory (no longer shared with the file): function patches, hooks or image replacement; the detector does not know what was changed",
+   "meaning": "Fragment kodu programu albo biblioteki różni się w pamięci od pliku na dysku: po załadowaniu strona została zmodyfikowana i system utworzył jej prywatną kopię.",
+   "why": "Tak wyglądają modyfikacje funkcji: przechwycenie wywołania (hook), wyłączenie mechanizmów ochronnych albo podmiana kodu programu po uruchomieniu.",
+   "attack": [
+    "T1562.001 Impair Defenses: Disable or Modify Tools",
+    "T1055.012 Process Hollowing",
+    "T1056.004 Credential API Hooking"
+   ]
+  }
+ },
+ "combos": [
+  {
+   "tags": [
+    "RWX",
+    "X-PRIV"
+   ],
+   "title": "kod tworzony w trakcie pracy",
+   "meaning": "Program ma kawałek pamięci bez pliku, który można jednocześnie zapisywać i uruchamiać. Zawartość nie wygląda na zaszyfrowaną.",
+   "benign": [
+    "Kompilacja w locie (JIT): środowiska .NET, Java, silniki JavaScript w przeglądarkach i aplikacjach opartych na nich tworzą takie regiony stale i w dużej liczbie."
+   ],
+   "malicious": [
+    "Wstrzyknięty kod (shellcode): atakujący zapisuje instrukcje do takiego regionu i je uruchamia. Jeden lub dwa takie regiony w programie, który nie ma środowiska JIT, to mocna wskazówka."
+   ],
+   "hints": [
+    {
+     "runtime": true,
+     "text": "W tym procesie jest załadowane środowisko z kompilacją w locie ({runtime}), więc takie regiony są oczekiwane. Wstrzyknięty kod mógłby się wśród nich ukryć, dlatego warto porównać ich liczbę i rozmiary między podobnymi procesami."
+    },
+    {
+     "runtime": false,
+     "text": "W tym procesie nie rozpoznano środowiska z kompilacją w locie, więc trzeba ustalić, co utworzyło ten region."
+    }
+   ]
+  },
+  {
+   "tags": [
+    "ENT-X",
+    "RWX",
+    "X-PRIV"
+   ],
+   "title": "zaszyfrowany lub spakowany kod tworzony w trakcie pracy",
+   "meaning": "Region bez pliku, zapisywalny i wykonywalny, wypełniony danymi wyglądającymi na losowe. To najmocniejsze połączenie cech w tym raporcie.",
+   "benign": [
+    "Programy chronione przed kopiowaniem i analizą (pakery, zabezpieczenia gier) rozpakowują swój kod w ten sposób.",
+    "Rzadziej: środowisko JIT trzymające skompresowane dane obok kodu."
+   ],
+   "malicious": [
+    "Zaszyfrowany ładunek, który zostanie odkodowany i uruchomiony w tym samym miejscu. Tak działają programy ładujące (stagery) i wiele narzędzi zdalnego sterowania."
+   ],
+   "hints": [
+    {
+     "runtime": true,
+     "text": "Mimo załadowanego środowiska JIT ({runtime}) prawie losowa zawartość jest dla niego nietypowa. Ten region warto obejrzeć w pierwszej kolejności."
+    },
+    {
+     "runtime": false,
+     "text": "Brak środowiska JIT w procesie zwiększa wagę tego znaleziska."
+    }
+   ]
+  },
+  {
+   "tags": [
+    "HDR",
+    "X-PRIV"
+   ],
+   "title": "program załadowany do pamięci bez pliku",
+   "meaning": "W wykonywalnej pamięci bez pliku leży nagłówek programu albo biblioteki. Ktoś załadował plik wykonywalny ręcznie, z pominięciem systemu.",
+   "benign": [
+    "Niektóre programy zabezpieczające, emulatory i narzędzia deweloperskie ładują biblioteki z pamięci.",
+    "Kopia własnego pliku trzymana do sprawdzania integralności."
+   ],
+   "malicious": [
+    "Ładowanie refleksyjne: biblioteka albo program dostarczony przez sieć i uruchomiony bez zapisu na dysk. To typowa technika narzędzi zdalnego sterowania."
+   ],
+   "hints": []
+  },
+  {
+   "tags": [
+    "X-PRIV"
+   ],
+   "title": "kod bez pliku, tylko do odczytu i uruchamiania",
+   "meaning": "Wykonywalna pamięć bez pliku, której nie można już zapisywać. Często powstaje tak: program zapisuje kod do zwykłej pamięci, a potem zmienia jej uprawnienia na wykonywalne.",
+   "benign": [
+    "Środowiska JIT, które po wygenerowaniu kodu odbierają prawo zapisu (tak działają nowsze wersje .NET i silniki JavaScript).",
+    "Małe fragmenty kodu pomocniczego tworzone przez biblioteki systemowe."
+   ],
+   "malicious": [
+    "Wstrzyknięty kod po etapie przygotowania: zmiana uprawnień z zapisu na wykonywanie pozwala ominąć proste wykrywanie pamięci zapisywalnej i wykonywalnej naraz."
+   ],
+   "hints": [
+    {
+     "runtime": true,
+     "text": "W tym procesie jest załadowane środowisko z kompilacją w locie ({runtime}), które tworzy takie regiony."
+    },
+    {
+     "runtime": false,
+     "text": "W tym procesie nie rozpoznano środowiska z kompilacją w locie."
+    }
+   ]
+  },
+  {
+   "tags": [
+    "THR-PRIV",
+    "X-PRIV"
+   ],
+   "title": "działający kod bez pliku",
+   "meaning": "W wykonywalnej pamięci bez pliku ulokowany jest wątek. To nie jest uśpiony fragment kodu: coś stamtąd działa.",
+   "benign": [
+    "Niektóre programy zabezpieczające i narzędzia diagnostyczne uruchamiają własne wątki z kodu wygenerowanego w pamięci.",
+    "Rzadziej: środowisko uruchomieniowe, które startuje wątki bezpośrednio z wygenerowanego kodu."
+   ],
+   "malicious": [
+    "Wstrzyknięty kod uruchomiony w cudzym procesie nowym wątkiem. To najczęstszy sposób uruchamiania ładunków przez narzędzia zdalnego sterowania."
+   ],
+   "hints": [
+    {
+     "runtime": true,
+     "text": "Załadowane środowisko z kompilacją w locie ({runtime}) nie tłumaczy tego znaleziska: jego wątki startują w kodzie bibliotek. Ten region warto sprawdzić w pierwszej kolejności."
+    },
+    {
+     "runtime": false,
+     "text": "W procesie nie ma środowiska z kompilacją w locie, więc nie ma łagodnego wyjaśnienia pod ręką."
+    }
+   ]
+  },
+  {
+   "tags": [
+    "RWX",
+    "THR-PRIV",
+    "X-PRIV"
+   ],
+   "title": "działający kod bez pliku, który można nadpisywać",
+   "meaning": "W pamięci bez pliku, zapisywalnej i wykonywalnej, ulokowany jest wątek. Kod działa i może być zmieniany w trakcie pracy.",
+   "benign": [
+    "Rzadkie. Niektóre zabezpieczenia przed kopiowaniem i emulatory."
+   ],
+   "malicious": [
+    "Wstrzyknięty kod uruchomiony nowym wątkiem, w regionie przygotowanym bez dbałości o ukrycie. Typowe dla prostszych narzędzi i gotowych generatorów ładunków."
+   ],
+   "hints": [
+    {
+     "runtime": true,
+     "text": "Środowisko z kompilacją w locie ({runtime}) tłumaczy samą pamięć zapisywalną i wykonywalną, ale nie wątek, który w niej wystartował."
+    }
+   ]
+  },
+  {
+   "tags": [
+    "IMG-MOD"
+   ],
+   "title": "kod programu albo biblioteki zmieniony po załadowaniu",
+   "meaning": "Część kodu załadowanego z pliku została zmieniona w pamięci. Narzędzie wie, że strona różni się od pliku, ale nie wie, co dokładnie zmieniono.",
+   "benign": [
+    "Programy zabezpieczające (antywirus, EDR) podpinają się pod funkcje systemu w każdym procesie.",
+    "Narzędzia do nakładek, nagrywania ekranu i ułatwień dostępu.",
+    "Programy spakowane, które rozpakowują własny kod w miejscu, oraz debuger z ustawionymi punktami przerwania."
+   ],
+   "malicious": [
+    "Wyłączenie zabezpieczeń przez nadpisanie funkcji (np. skanowania skryptów albo rejestrowania zdarzeń).",
+    "Przechwytywanie funkcji w celu kradzieży danych albo ukrycia obecności.",
+    "Podmiana kodu programu po uruchomieniu (process hollowing)."
+   ],
+   "hints": []
+  }
+ ],
+ "terms": {
+  "proces": "uruchomiony program razem z jego pamięcią; ma numer PID",
+  "PID": "numer nadany procesowi przez system; po zakończeniu procesu numer może zostać użyty ponownie",
+  "region pamięci": "ciągły kawałek pamięci procesu o jednakowych uprawnieniach, np. kod jednej biblioteki albo stos",
+  "uprawnienia r, w, x": "r: wolno czytać, w: wolno zapisywać, x: wolno uruchamiać jako kod; zapis rwx oznacza wszystkie trzy naraz",
+  "pamięć anonimowa (prywatna)": "pamięć, która nie pochodzi z pliku; program dostał ją od systemu pustą i sam ją wypełnił",
+  "mapowanie pliku": "plik z dysku widoczny bezpośrednio w pamięci procesu; tak ładowane są programy i biblioteki",
+  "entropia": "miara losowości danych w skali 0-8; tekst ma około 4-5, zwykły kod 5-6,5, dane zaszyfrowane i spakowane powyżej 7,5",
+  "JIT (kompilacja w locie)": "tworzenie kodu maszynowego w trakcie pracy programu; robią to .NET, Java i silniki JavaScript",
+  "shellcode": "krótki samodzielny kod maszynowy wstrzykiwany do pamięci, zwykle po to, by pobrać i uruchomić właściwe narzędzie atakującego",
+  "ładowanie refleksyjne": "załadowanie biblioteki albo programu z pamięci, bez pliku na dysku i bez udziału systemu",
+  "paker": "narzędzie, które kompresuje albo szyfruje program i dokleja kod rozpakowujący go przy starcie",
+  "wstrzyknięcie kodu": "umieszczenie i uruchomienie własnego kodu w pamięci cudzego procesu",
+  "SHA-256": "skrót (odcisk) pliku; ten sam plik ma zawsze ten sam skrót, więc można go porównać z bazami znanych plików",
+  "stos i sterta": "obszary pamięci na dane robocze programu; zwykle nie powinny być wykonywalne",
+  "wynik częściowy": "skan nie przeczytał wszystkiego, np. system odmówił dostępu do części procesów; brak znalezisk w nieprzeczytanej części niczego nie dowodzi",
+  "lista dozwolonych": "znane środowiska JIT, dla których narzędzie obniża wagę typowych dla nich znalezisk; znaleziska pozostają w wyniku",
+  "wątek": "jedna z równoległych nitek wykonywania w procesie; każdy proces ma co najmniej jeden",
+  "hook (podpięcie)": "nadpisanie początku funkcji tak, by najpierw wykonał się cudzy kod; robią to programy zabezpieczające i złośliwe oprogramowanie",
+  "MITRE ATT&CK": "publiczny katalog technik stosowanych przez atakujących; identyfikatory w rodzaju T1055 pozwalają jednoznacznie nazwać technikę",
+  "priorytet P1, P2, P3": "kolejność weryfikacji procesów w tym raporcie: P1 w pierwszej kolejności, P3 przy okazji; wynika z rodzaju znalezisk i kontekstu procesu, nie jest oceną szkodliwości"
+ },
+ "socket_states": {
+  "LISTEN": "program czeka na połączenia przychodzące na tym porcie",
+  "ESTABLISHED": "połączenie jest otwarte i może przesyłać dane",
+  "SYN_SENT": "program próbuje się połączyć, druga strona jeszcze nie odpowiedziała",
+  "TIME_WAIT": "połączenie zostało zamknięte przed chwilą",
+  "CLOSE_WAIT": "druga strona zamknęła połączenie, program jeszcze nie"
+ }
+}

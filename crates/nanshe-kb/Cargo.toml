@@ -1,0 +1,10 @@
+[package]
+name = "nanshe-kb"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nanshe-core = { path = "../nanshe-core" }
+serde.workspace = true
+serde_json.workspace = true

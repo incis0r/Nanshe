@@ -1,0 +1,441 @@
+{
+ "os": "windows",
+ "tags": {
+  "X-MAP": {
+   "name": "wykonywalna sekcja niebędąca załadowaną biblioteką",
+   "en": "executable mapped section that is not a loaded module image (Windows)",
+   "meaning": "Proces ma wykonywalny widok sekcji pamięci, który nie jest biblioteką załadowaną przez system. Sekcja to obszar pamięci, który może być współdzielony między procesami.",
+   "why": "Współdzielona sekcja pozwala umieścić kod w cudzym procesie bez zapisywania do jego pamięci, co omija część zabezpieczeń.",
+   "attack": [
+    "T1055 Process Injection"
+   ],
+   "tech": "Wykonywalny widok sekcji typu MEM_MAPPED, czyli sekcja niezaładowana jako obraz (SEC_IMAGE)."
+  },
+  "GUARD-X": {
+   "name": "kod za stroną strażnika, nieodczytany",
+   "en": "executable region behind a guard page (PAGE_GUARD) whose content was deliberately NOT read, so nothing is known about what it holds",
+   "meaning": "Wykonywalny region jest oznaczony jako strona strażnika: pierwszy dostęp do niej wywołuje zdarzenie w programie. Narzędzie celowo jej nie czyta, żeby nie zmienić stanu programu, więc zawartość jest nieznana.",
+   "why": "Strona strażnika na wykonywalnej pamięci bywa używana do ukrycia kodu przed skanerami pamięci i do wykrywania prób analizy.",
+   "attack": [
+    "T1622 Debugger Evasion"
+   ],
+   "tech": "Region wykonywalny z flagą PAGE_GUARD. Odczyt zdjąłby flagę, dlatego zawartość nie jest czytana, a region liczy się jako nieodczytany."
+  },
+  "RWX": {
+   "tech": "Strony z ochroną PAGE_EXECUTE_READWRITE albo PAGE_EXECUTE_WRITECOPY."
+  },
+  "X-PRIV": {
+   "tech": "Zatwierdzony region typu MEM_PRIVATE z prawem wykonania."
+  },
+  "THR-PRIV": {
+   "tech": "Adres startu wątku (ThreadQuerySetWin32StartAddress) wskazuje region, który nie jest obrazem modułu ani mapowaniem pliku."
+  },
+  "IMG-MOD": {
+   "tech": "Strony wykonywalnego obrazu modułu (MEM_IMAGE), które według QueryWorkingSetEx nie są współdzielone. Pełna waga tylko dla amsi.dll i wldp.dll; w pozostałych modułach przyczyny łagodne są częste (relokacja, piaskownica Chromium, środowisko .NET)."
+  }
+ },
+ "combos": [
+  {
+   "tags": [
+    "X-MAP"
+   ],
+   "title": "wykonywalna sekcja bez pliku biblioteki",
+   "meaning": "Wykonywalny widok sekcji, który nie jest zwykłą biblioteką. Bez dodatkowych cech nie wiadomo, co zawiera.",
+   "benign": [
+    "Nowsze wersje .NET mapują wygenerowany kod jako sekcje i tworzą takich regionów dziesiątki.",
+    "Programy chroniące przed oszustwami w grach i niektóre programy zabezpieczające."
+   ],
+   "malicious": [
+    "Wstrzyknięcie kodu przez współdzieloną sekcję do innego procesu.",
+    "Plik wykonywalny zmapowany jako dane, żeby nie pojawił się na liście bibliotek."
+   ],
+   "hints": [
+    {
+     "runtime": true,
+     "text": "W tym procesie jest załadowane środowisko z kompilacją w locie ({runtime}); duża liczba takich sekcji bez nazwy pliku jest dla niego typowa."
+    },
+    {
+     "runtime": false,
+     "text": "W tym procesie nie rozpoznano środowiska z kompilacją w locie; ustal, skąd pochodzi sekcja."
+    }
+   ]
+  },
+  {
+   "tags": [
+    "RWX",
+    "X-MAP"
+   ],
+   "title": "zapisywalna i wykonywalna sekcja bez pliku biblioteki",
+   "meaning": "Sekcja pamięci, która nie jest biblioteką, a można ją jednocześnie zapisywać i uruchamiać.",
+   "benign": [
+    "Środowiska JIT współdzielące wygenerowany kod między procesami."
+   ],
+   "malicious": [
+    "Sekcja przygotowana do wstrzyknięcia kodu: jeden proces zapisuje, drugi uruchamia."
+   ],
+   "hints": []
+  },
+  {
+   "tags": [
+    "GUARD-X",
+    "X-PRIV"
+   ],
+   "title": "kod bez pliku ukryty za stroną strażnika",
+   "meaning": "Wykonywalna pamięć bez pliku, której treści narzędzie nie przeczytało, bo jest chroniona stroną strażnika.",
+   "benign": [
+    "Rzadkie. Niektóre zabezpieczenia przed kopiowaniem i debugowaniem."
+   ],
+   "malicious": [
+    "Ukrywanie kodu przed skanerami pamięci: skaner, który przeczyta stronę, zdradza swoją obecność."
+   ],
+   "hints": []
+  },
+  {
+   "tags": [
+    "GUARD-X",
+    "RWX",
+    "X-PRIV"
+   ],
+   "title": "zapisywalny kod bez pliku ukryty za stroną strażnika",
+   "meaning": "Region bez pliku, zapisywalny i wykonywalny, dodatkowo chroniony stroną strażnika; treść nieznana.",
+   "benign": [
+    "Rzadkie. Zabezpieczenia przed analizą w programach komercyjnych."
+   ],
+   "malicious": [
+    "Ukryty ładunek. Do ustalenia zawartości potrzebny jest pełny zrzut pamięci procesu."
+   ],
+   "hints": []
+  }
+ ],
+ "verify": {
+  "*": [
+   "Zobacz region w programie System Informer (dawniej Process Hacker): proces {pid}, zakładka Memory, adres {start}; można tam zapisać region do pliku.",
+   "Sprawdź właściciela, rodzica i wiersz poleceń: Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\" | Select-Object Name,ParentProcessId,CommandLine,CreationDate",
+   "Zrób pełny zrzut pamięci procesu do dalszej analizy (Sysinternals): procdump -ma {pid} C:\\Temp\\proc_{pid}.dmp"
+  ],
+  "HDR": [
+   "Wydobądź ukryte programy z pamięci procesu narzędziem pe-sieve: pe-sieve64.exe /pid {pid} /dump_mode 3"
+  ],
+  "RWX": [
+   "Sprawdź, czy proces ma środowisko .NET albo przeglądarkowe: Get-Process -Id {pid} -Module | Where-Object ModuleName -match \"clr|coreclr|clrjit|msedge|chrome|jvm|v8\""
+  ],
+  "X-PRIV": [
+   "Sprawdź, czy plik programu jest podpisany (Sysinternals): sigcheck -nobanner ŚCIEŻKA_PLIKU_PROGRAMU"
+  ],
+  "X-MAP": [
+   "Wypisz sekcje i ich właścicieli (WinDbg po podłączeniu do procesu): !address {start}"
+  ],
+  "GUARD-X": [
+   "Treść regionu jest w pełnym zrzucie procesu (procdump -ma); przeglądanie go w debugerze na żywym procesie zdejmie stronę strażnika."
+  ],
+  "ENT-X": [
+   "Po zapisaniu regionu policz skrót i porównaj z bazami znanych plików: Get-FileHash PLIK -Algorithm SHA256"
+  ],
+  "THR-PRIV": [
+   "Zobacz wątek i jego stos w System Informer: proces {pid}, zakładka Threads; kolumna Start address pokaże adres bez nazwy modułu."
+  ],
+  "IMG-MOD": [
+   "Wypisz zmienione funkcje narzędziem pe-sieve (pokazuje podpięcia i łatki z nazwami funkcji): pe-sieve64.exe /pid {pid} /shellc 0 /iat 1"
+  ]
+ },
+ "terms": {
+  "PE": "format plików wykonywalnych i bibliotek Windows (EXE, DLL); zaczyna się od liter MZ",
+  "DLL": "biblioteka, czyli plik z kodem ładowany przez programy",
+  "sekcja": "obiekt pamięci, który można zmapować do jednego lub wielu procesów; tak ładowane są biblioteki",
+  "obraz (MEM_IMAGE)": "plik wykonywalny załadowany przez system w zwykły sposób",
+  "strona strażnika (PAGE_GUARD)": "strona pamięci, do której pierwszy dostęp wywołuje zdarzenie; system używa jej do powiększania stosu",
+  "uchwyt": "numer, pod którym proces trzyma otwarty zasób: plik, klucz rejestru, inny proces",
+  "poziom integralności": "stopień zaufania nadany procesowi: niski (piaskownica), średni (zwykły użytkownik), wysoki (administrator), systemowy",
+  "PPL": "ochrona procesów systemowych przed odczytem pamięci; takich procesów narzędzie nie przeskanuje nawet jako administrator",
+  ".NET (CLR)": "środowisko uruchomieniowe Microsoftu; kompiluje kod w locie, więc tworzy pamięć zapisywalną i wykonywalną",
+  "WebView2": "silnik przeglądarki Edge osadzony w innych programach; kompiluje JavaScript w locie",
+  "rejestr": "baza ustawień systemu i programów; klucz rejestru to jedna gałąź tej bazy"
+ },
+ "flags": {
+  "poziom integralności": "niski: piaskownica; średni: zwykły użytkownik; wysoki: uprawnienia administratora; systemowy: usługa systemu. Kod wstrzyknięty do procesu o poziomie wysokim lub systemowym ma pełną kontrolę nad komputerem",
+  "podniesione uprawnienia": "\"tak\" oznacza, że program działa z uprawnieniami administratora",
+  "sesja": "0 to usługi systemowe bez ekranu; 1 i wyższe to sesje zalogowanych użytkowników"
+ },
+ "handles": {
+  "file": "plik otwarty przez program",
+  "key": "gałąź rejestru, z której program czyta albo do której pisze",
+  "section": "współdzielony kawałek pamięci; nazwa często wskazuje, z kim program się komunikuje",
+  "mutant": "znacznik używany, by program nie uruchomił się dwa razy; złośliwe oprogramowanie często ma charakterystyczne nazwy",
+  "process": "dostęp do innego procesu. Prawa zapisu pamięci i tworzenia wątków pozwalają wstrzyknąć do niego kod",
+  "pipe": "kanał komunikacji z innym procesem albo gniazdo sieciowe",
+  "device": "urządzenie, np. konsola"
+ },
+ "processes": [
+  {
+   "names": [
+    "svchost.exe"
+   ],
+   "what": "Wspólny proces-gospodarz usług systemu Windows; na zdrowym komputerze działa ich kilkadziesiąt. Złośliwe programy często podszywają się pod tę nazwę.",
+   "paths": [
+    "\\windows\\system32\\svchost.exe",
+    "\\windows\\syswow64\\svchost.exe"
+   ],
+   "parents": [
+    "services.exe"
+   ]
+  },
+  {
+   "names": [
+    "explorer.exe"
+   ],
+   "what": "Powłoka Windows: pulpit, pasek zadań i okna folderów. Jest rodzicem programów uruchamianych przez użytkownika i częstym celem wstrzyknięć.",
+   "paths": [
+    "\\windows\\explorer.exe"
+   ],
+   "parents": [
+    "userinit.exe",
+    "winlogon.exe",
+    "explorer.exe"
+   ]
+  },
+  {
+   "names": [
+    "lsass.exe"
+   ],
+   "what": "Proces przechowujący dane logowania użytkowników. Dostęp do jego pamięci to typowy krok kradzieży haseł.",
+   "paths": [
+    "\\windows\\system32\\lsass.exe"
+   ],
+   "parents": [
+    "wininit.exe"
+   ]
+  },
+  {
+   "names": [
+    "services.exe"
+   ],
+   "what": "Menedżer usług systemu; uruchamia usługi, w tym procesy svchost.exe.",
+   "paths": [
+    "\\windows\\system32\\services.exe"
+   ],
+   "parents": [
+    "wininit.exe"
+   ]
+  },
+  {
+   "names": [
+    "wininit.exe",
+    "winlogon.exe",
+    "csrss.exe",
+    "smss.exe"
+   ],
+   "what": "Podstawowy proces systemu Windows uruchamiany przy starcie albo logowaniu.",
+   "paths": [
+    "\\windows\\system32\\"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "powershell.exe",
+    "pwsh.exe"
+   ],
+   "what": "Wiersz poleceń i język skryptowy PowerShell, zbudowany na .NET. Często używany przez administratorów i przez atakujących; liczy się wiersz poleceń i rodzic.",
+   "paths": [
+    "\\windows\\system32\\windowspowershell\\**",
+    "\\windows\\syswow64\\windowspowershell\\**",
+    "\\program files\\powershell\\**"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "cmd.exe"
+   ],
+   "what": "Klasyczny wiersz poleceń Windows. Liczy się, kto go uruchomił i z jakim poleceniem.",
+   "paths": [
+    "\\windows\\system32\\cmd.exe",
+    "\\windows\\syswow64\\cmd.exe"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "rundll32.exe",
+    "regsvr32.exe",
+    "mshta.exe",
+    "wscript.exe",
+    "cscript.exe"
+   ],
+   "what": "Narzędzie systemowe, które uruchamia kod wskazany w wierszu poleceń (bibliotekę albo skrypt). Atakujący chętnie go używają, bo plik jest podpisany przez Microsoft; koniecznie sprawdź wiersz poleceń.",
+   "paths": [
+    "\\windows\\system32\\",
+    "\\windows\\syswow64\\"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "dllhost.exe",
+    "runtimebroker.exe",
+    "conhost.exe",
+    "sihost.exe",
+    "taskhostw.exe"
+   ],
+   "what": "Proces pomocniczy systemu Windows.",
+   "paths": [
+    "\\windows\\system32\\"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "msedgewebview2.exe",
+    "msedge.exe"
+   ],
+   "what": "Przeglądarka Edge albo jej silnik osadzony w innym programie (WebView2). Kompiluje JavaScript w locie, więc kod bez pliku jest w niej normalny.",
+   "paths": [
+    "\\program files (x86)\\microsoft\\edgewebview\\**",
+    "\\program files (x86)\\microsoft\\edge\\**",
+    "\\program files\\microsoft\\edgewebview\\**",
+    "\\program files\\microsoft\\edge\\**"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "chrome.exe",
+    "firefox.exe",
+    "brave.exe"
+   ],
+   "what": "Przeglądarka internetowa. Kompiluje JavaScript w locie, więc kod bez pliku jest w niej normalny.",
+   "paths": [
+    "\\program files\\**",
+    "\\program files (x86)\\**"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "teams.exe",
+    "ms-teams.exe",
+    "slack.exe",
+    "code.exe",
+    "discord.exe"
+   ],
+   "what": "Aplikacja zbudowana na silniku przeglądarki (Electron albo WebView2). Kompiluje JavaScript w locie; często instaluje się w profilu użytkownika, a nie w katalogu systemowym.",
+   "paths": [],
+   "parents": []
+  },
+  {
+   "names": [
+    "nanshe-sample.exe"
+   ],
+   "what": "Program testowy narzędzia Nanshe. Celowo tworzy w pamięci układy, których szukają detektory; niczego z nich nie uruchamia.",
+   "paths": [],
+   "parents": []
+  }
+ ],
+ "modules": [
+  {
+   "names": [
+    "clr.dll",
+    "mscorwks.dll"
+   ],
+   "what": "środowisko .NET Framework; tworzy kod w locie (JIT)",
+   "runtime": ".NET Framework"
+  },
+  {
+   "names": [
+    "coreclr.dll"
+   ],
+   "what": "środowisko .NET (nowsze wersje); tworzy kod w locie (JIT)",
+   "runtime": ".NET"
+  },
+  {
+   "names": [
+    "clrjit.dll"
+   ],
+   "what": "kompilator JIT środowiska .NET"
+  },
+  {
+   "names": [
+    "mscoree.dll",
+    "mscoreei.dll"
+   ],
+   "what": "moduł uruchamiający środowisko .NET w procesie"
+  },
+  {
+   "names": [
+    "msedge.dll"
+   ],
+   "what": "silnik przeglądarki Edge / WebView2; tworzy kod w locie (JIT)",
+   "runtime": "WebView2"
+  },
+  {
+   "names": [
+    "chrome.dll",
+    "libcef.dll"
+   ],
+   "what": "silnik przeglądarki Chromium; tworzy kod w locie (JIT)",
+   "runtime": "Chromium"
+  },
+  {
+   "names": [
+    "jvm.dll"
+   ],
+   "what": "maszyna wirtualna Javy; tworzy kod w locie (JIT)",
+   "runtime": "Java"
+  },
+  {
+   "names": [
+    "ntdll.dll"
+   ],
+   "what": "najniższa warstwa systemu w każdym procesie; normalna"
+  },
+  {
+   "names": [
+    "kernel32.dll",
+    "kernelbase.dll"
+   ],
+   "what": "podstawowe funkcje systemu; normalne w każdym procesie"
+  },
+  {
+   "names": [
+    "amsi.dll"
+   ],
+   "what": "interfejs skanowania skryptów przez program antywirusowy; jego brak albo modyfikacja w PowerShellu bywa śladem obejścia zabezpieczeń"
+  },
+  {
+   "names": [
+    "wininet.dll",
+    "winhttp.dll",
+    "urlmon.dll"
+   ],
+   "what": "biblioteka połączeń HTTP; program potrafi pobierać dane z internetu"
+  },
+  {
+   "names": [
+    "ws2_32.dll",
+    "mswsock.dll"
+   ],
+   "what": "biblioteka gniazd sieciowych; program korzysta z sieci"
+  },
+  {
+   "names": [
+    "dbghelp.dll",
+    "dbgcore.dll"
+   ],
+   "what": "biblioteka tworzenia zrzutów pamięci; w nietypowym programie bywa używana do kradzieży danych logowania"
+  },
+  {
+   "names": [
+    "samlib.dll",
+    "vaultcli.dll",
+    "cryptdll.dll"
+   ],
+   "what": "biblioteka dostępu do danych logowania; nietypowa w zwykłych aplikacjach"
+  },
+  {
+   "names": [
+    "system.management.automation"
+   ],
+   "what": "silnik PowerShella; jego obecność w programie innym niż PowerShell oznacza uruchamianie skryptów PowerShell z wnętrza tego programu"
+  }
+ ]
+}

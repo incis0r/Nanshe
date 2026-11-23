@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux (container): unit and end-to-end tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: |
+          docker run --rm -v "$PWD":/src -v nanshe-target:/target -e CARGO_TARGET_DIR=/target -w /src \
+            docker.io/library/rust:1-slim-bookworm cargo test --workspace --features nanshe-cli/llm
+      - name: End-to-end tests (synthetic samples, live scan inside the container)
+        run: |
+          docker run --rm --cap-add SYS_PTRACE -v "$PWD":/src -v nanshe-target:/target -e CARGO_TARGET_DIR=/target -w /src \
+            docker.io/library/rust:1-slim-bookworm sh scripts/e2e.sh /target/e2e-out
+
+  windows:
+    name: Windows: build and unit tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: cargo test --workspace --features nanshe-cli/llm
+      - name: Release build
+        run: cargo build --release -p nanshe-cli -p nanshe-samples --features nanshe-cli/llm

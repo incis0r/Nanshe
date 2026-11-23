@@ -1,0 +1,441 @@
+{
+ "os": "windows",
+ "tags": {
+  "X-MAP": {
+   "name": "executable section that is not a loaded library",
+   "en": "executable mapped section that is not a loaded module image (Windows)",
+   "meaning": "The process has an executable view of a memory section that is not a library loaded by the system. A section is an area of memory that can be shared between processes.",
+   "why": "A shared section makes it possible to place code in another process without writing to its memory, which bypasses some protections.",
+   "attack": [
+    "T1055 Process Injection"
+   ],
+   "tech": "Executable view of a MEM_MAPPED section, that is, a section not loaded as an image (SEC_IMAGE)."
+  },
+  "GUARD-X": {
+   "name": "code behind a guard page, not read",
+   "en": "executable region behind a guard page (PAGE_GUARD) whose content was deliberately NOT read, so nothing is known about what it holds",
+   "meaning": "The executable memory region is marked as a guard page: the first access to it raises an event in the program. The tool deliberately does not read it, so as not to change the program's state, and the content is therefore unknown.",
+   "why": "A guard page on executable memory is sometimes used to hide code from memory scanners and to detect analysis attempts.",
+   "attack": [
+    "T1622 Debugger Evasion"
+   ],
+   "tech": "Executable memory region with the PAGE_GUARD flag. Reading it would clear the flag, so the content is not read and the region counts as unread."
+  },
+  "RWX": {
+   "tech": "Pages with PAGE_EXECUTE_READWRITE or PAGE_EXECUTE_WRITECOPY protection."
+  },
+  "X-PRIV": {
+   "tech": "Committed MEM_PRIVATE memory region with execute permission."
+  },
+  "THR-PRIV": {
+   "tech": "The thread start address (ThreadQuerySetWin32StartAddress) points to a memory region that is neither a module image nor a file mapping."
+  },
+  "IMG-MOD": {
+   "tech": "Pages of an executable module image (MEM_IMAGE) that are not shared according to QueryWorkingSetEx. Full severity applies only to amsi.dll and wldp.dll; in other modules benign causes are common (relocation, the Chromium sandbox, the .NET runtime)."
+  }
+ },
+ "combos": [
+  {
+   "tags": [
+    "X-MAP"
+   ],
+   "title": "executable section without a library file",
+   "meaning": "An executable view of a section that is not an ordinary library. Without additional characteristics, its content cannot be determined.",
+   "benign": [
+    "Newer .NET versions map generated code as sections and create dozens of such memory regions.",
+    "Game anti-cheat software and some security products."
+   ],
+   "malicious": [
+    "Code injection into another process through a shared section.",
+    "An executable file mapped as data so that it does not appear in the list of libraries."
+   ],
+   "hints": [
+    {
+     "runtime": true,
+     "text": "A just-in-time (JIT) runtime is loaded in this process ({runtime}); a large number of such sections without a file name is typical for it."
+    },
+    {
+     "runtime": false,
+     "text": "No just-in-time (JIT) runtime was recognized in this process; determine where the section comes from."
+    }
+   ]
+  },
+  {
+   "tags": [
+    "RWX",
+    "X-MAP"
+   ],
+   "title": "writable and executable section without a library file",
+   "meaning": "A memory section that is not a library and can be written to and executed at the same time.",
+   "benign": [
+    "JIT runtimes that share generated code between processes."
+   ],
+   "malicious": [
+    "A section prepared for code injection: one process writes, the other executes."
+   ],
+   "hints": []
+  },
+  {
+   "tags": [
+    "GUARD-X",
+    "X-PRIV"
+   ],
+   "title": "code not backed by a file, hidden behind a guard page",
+   "meaning": "Executable memory not backed by a file whose content the tool did not read because it is protected by a guard page.",
+   "benign": [
+    "Rare. Some copy protection and anti-debugging mechanisms."
+   ],
+   "malicious": [
+    "Hiding code from memory scanners: a scanner that reads the page reveals its presence."
+   ],
+   "hints": []
+  },
+  {
+   "tags": [
+    "GUARD-X",
+    "RWX",
+    "X-PRIV"
+   ],
+   "title": "writable code not backed by a file, hidden behind a guard page",
+   "meaning": "A memory region not backed by a file, writable and executable, additionally protected by a guard page; content unknown.",
+   "benign": [
+    "Rare. Anti-analysis protections in commercial software."
+   ],
+   "malicious": [
+    "A hidden payload. A full memory dump of the process is needed to determine the content."
+   ],
+   "hints": []
+  }
+ ],
+ "verify": {
+  "*": [
+   "View the memory region in System Informer (formerly Process Hacker): process {pid}, Memory tab, address {start}; the region can be saved to a file from there.",
+   "Check the owner, the parent process and the command line: Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\" | Select-Object Name,ParentProcessId,CommandLine,CreationDate",
+   "Take a full memory dump of the process for further analysis (Sysinternals): procdump -ma {pid} C:\\Temp\\proc_{pid}.dmp"
+  ],
+  "HDR": [
+   "Extract hidden programs from the process memory with pe-sieve: pe-sieve64.exe /pid {pid} /dump_mode 3"
+  ],
+  "RWX": [
+   "Check whether the process hosts a .NET or browser runtime: Get-Process -Id {pid} -Module | Where-Object ModuleName -match \"clr|coreclr|clrjit|msedge|chrome|jvm|v8\""
+  ],
+  "X-PRIV": [
+   "Check whether the program file is signed (Sysinternals): sigcheck -nobanner PROGRAM_FILE_PATH"
+  ],
+  "X-MAP": [
+   "List the sections and their owners (WinDbg, after attaching to the process): !address {start}"
+  ],
+  "GUARD-X": [
+   "The content of the memory region is available in a full process dump (procdump -ma); viewing it in a debugger on the live process will clear the guard page."
+  ],
+  "ENT-X": [
+   "After saving the memory region, compute its SHA-256 hash and compare it against databases of known files: Get-FileHash FILE -Algorithm SHA256"
+  ],
+  "THR-PRIV": [
+   "View the thread and its stack in System Informer: process {pid}, Threads tab; the Start address column will show an address without a module name."
+  ],
+  "IMG-MOD": [
+   "List the modified functions with pe-sieve (it shows hooks and patches with function names): pe-sieve64.exe /pid {pid} /shellc 0 /iat 1"
+  ]
+ },
+ "terms": {
+  "PE": "the format of Windows executable files and libraries (EXE, DLL); it starts with the letters MZ",
+  "DLL": "a library, that is, a file with code loaded by programs",
+  "section": "a memory object that can be mapped into one or more processes; this is how libraries are loaded",
+  "image (MEM_IMAGE)": "an executable file loaded by the system in the ordinary way",
+  "guard page (PAGE_GUARD)": "a memory page whose first access raises an event; the system uses it to grow the stack",
+  "handle": "the number under which a process holds an open resource: a file, a registry key, another process",
+  "integrity level": "the degree of trust assigned to a process: low (sandbox), medium (standard user), high (administrator), system",
+  "PPL": "protection of system processes against memory reads; the tool cannot scan such processes even when run as administrator",
+  ".NET (CLR)": "Microsoft's runtime environment; it compiles code just in time, so it creates writable and executable memory",
+  "WebView2": "the Edge browser engine embedded in other programs; it compiles JavaScript just in time",
+  "registry": "the database of system and program settings; a registry key is one branch of that database"
+ },
+ "flags": {
+  "integrity level": "low: sandbox; medium: standard user; high: administrator privileges; system: system service. Code injected into a process at the high or system level has full control over the computer",
+  "elevated": "\"yes\" means that the program runs with administrator privileges",
+  "session": "0 is system services without a display; 1 and above are sessions of logged-in users"
+ },
+ "handles": {
+  "file": "a file opened by the program",
+  "key": "a registry branch that the program reads from or writes to",
+  "section": "a shared piece of memory; the name often indicates whom the program communicates with",
+  "mutant": "a marker used to keep a program from starting twice; malware often uses distinctive names",
+  "process": "access to another process. Memory write and thread creation rights make it possible to inject code into it",
+  "pipe": "a communication channel to another process, or a network socket",
+  "device": "a device, e.g. the console"
+ },
+ "processes": [
+  {
+   "names": [
+    "svchost.exe"
+   ],
+   "what": "Shared host process for Windows services; a healthy computer runs several dozen of them. Malicious programs often impersonate this name.",
+   "paths": [
+    "\\windows\\system32\\svchost.exe",
+    "\\windows\\syswow64\\svchost.exe"
+   ],
+   "parents": [
+    "services.exe"
+   ]
+  },
+  {
+   "names": [
+    "explorer.exe"
+   ],
+   "what": "The Windows shell: desktop, taskbar and folder windows. It is the parent process of programs started by the user and a frequent injection target.",
+   "paths": [
+    "\\windows\\explorer.exe"
+   ],
+   "parents": [
+    "userinit.exe",
+    "winlogon.exe",
+    "explorer.exe"
+   ]
+  },
+  {
+   "names": [
+    "lsass.exe"
+   ],
+   "what": "The process that stores user logon credentials. Access to its memory is a typical step in password theft.",
+   "paths": [
+    "\\windows\\system32\\lsass.exe"
+   ],
+   "parents": [
+    "wininit.exe"
+   ]
+  },
+  {
+   "names": [
+    "services.exe"
+   ],
+   "what": "The system service manager; it starts services, including svchost.exe processes.",
+   "paths": [
+    "\\windows\\system32\\services.exe"
+   ],
+   "parents": [
+    "wininit.exe"
+   ]
+  },
+  {
+   "names": [
+    "wininit.exe",
+    "winlogon.exe",
+    "csrss.exe",
+    "smss.exe"
+   ],
+   "what": "A core Windows process started at boot or at logon.",
+   "paths": [
+    "\\windows\\system32\\"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "powershell.exe",
+    "pwsh.exe"
+   ],
+   "what": "The PowerShell command line and scripting language, built on .NET. Frequently used by administrators and by attackers; what matters is the command line and the parent process.",
+   "paths": [
+    "\\windows\\system32\\windowspowershell\\**",
+    "\\windows\\syswow64\\windowspowershell\\**",
+    "\\program files\\powershell\\**"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "cmd.exe"
+   ],
+   "what": "The classic Windows command line. What matters is who started it and with what command.",
+   "paths": [
+    "\\windows\\system32\\cmd.exe",
+    "\\windows\\syswow64\\cmd.exe"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "rundll32.exe",
+    "regsvr32.exe",
+    "mshta.exe",
+    "wscript.exe",
+    "cscript.exe"
+   ],
+   "what": "A system tool that runs the code named on its command line (a library or a script). Attackers readily use it because the file is signed by Microsoft; always check the command line.",
+   "paths": [
+    "\\windows\\system32\\",
+    "\\windows\\syswow64\\"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "dllhost.exe",
+    "runtimebroker.exe",
+    "conhost.exe",
+    "sihost.exe",
+    "taskhostw.exe"
+   ],
+   "what": "A Windows helper process.",
+   "paths": [
+    "\\windows\\system32\\"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "msedgewebview2.exe",
+    "msedge.exe"
+   ],
+   "what": "The Edge browser or its engine embedded in another program (WebView2). It compiles JavaScript just in time, so code not backed by a file is normal in it.",
+   "paths": [
+    "\\program files (x86)\\microsoft\\edgewebview\\**",
+    "\\program files (x86)\\microsoft\\edge\\**",
+    "\\program files\\microsoft\\edgewebview\\**",
+    "\\program files\\microsoft\\edge\\**"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "chrome.exe",
+    "firefox.exe",
+    "brave.exe"
+   ],
+   "what": "A web browser. It compiles JavaScript just in time, so code not backed by a file is normal in it.",
+   "paths": [
+    "\\program files\\**",
+    "\\program files (x86)\\**"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "teams.exe",
+    "ms-teams.exe",
+    "slack.exe",
+    "code.exe",
+    "discord.exe"
+   ],
+   "what": "An application built on a browser engine (Electron or WebView2). It compiles JavaScript just in time; it is often installed in the user profile rather than in a system directory.",
+   "paths": [],
+   "parents": []
+  },
+  {
+   "names": [
+    "nanshe-sample.exe"
+   ],
+   "what": "The test program of the Nanshe tool. It deliberately creates in memory the layouts that the detectors look for; it does not execute any of them.",
+   "paths": [],
+   "parents": []
+  }
+ ],
+ "modules": [
+  {
+   "names": [
+    "clr.dll",
+    "mscorwks.dll"
+   ],
+   "what": ".NET Framework runtime; generates code just in time (JIT)",
+   "runtime": ".NET Framework"
+  },
+  {
+   "names": [
+    "coreclr.dll"
+   ],
+   "what": ".NET runtime (newer versions); generates code just in time (JIT)",
+   "runtime": ".NET"
+  },
+  {
+   "names": [
+    "clrjit.dll"
+   ],
+   "what": "JIT compiler of the .NET runtime"
+  },
+  {
+   "names": [
+    "mscoree.dll",
+    "mscoreei.dll"
+   ],
+   "what": "module that starts the .NET runtime in a process"
+  },
+  {
+   "names": [
+    "msedge.dll"
+   ],
+   "what": "Edge / WebView2 browser engine; generates code just in time (JIT)",
+   "runtime": "WebView2"
+  },
+  {
+   "names": [
+    "chrome.dll",
+    "libcef.dll"
+   ],
+   "what": "Chromium browser engine; generates code just in time (JIT)",
+   "runtime": "Chromium"
+  },
+  {
+   "names": [
+    "jvm.dll"
+   ],
+   "what": "Java virtual machine; generates code just in time (JIT)",
+   "runtime": "Java"
+  },
+  {
+   "names": [
+    "ntdll.dll"
+   ],
+   "what": "lowest layer of the system in every process; normal"
+  },
+  {
+   "names": [
+    "kernel32.dll",
+    "kernelbase.dll"
+   ],
+   "what": "core system functions; normal in every process"
+  },
+  {
+   "names": [
+    "amsi.dll"
+   ],
+   "what": "interface through which antivirus software scans scripts; its absence or modification in PowerShell can be a trace of a security bypass"
+  },
+  {
+   "names": [
+    "wininet.dll",
+    "winhttp.dll",
+    "urlmon.dll"
+   ],
+   "what": "HTTP connection library; the program is able to download data from the internet"
+  },
+  {
+   "names": [
+    "ws2_32.dll",
+    "mswsock.dll"
+   ],
+   "what": "network socket library; the program uses the network"
+  },
+  {
+   "names": [
+    "dbghelp.dll",
+    "dbgcore.dll"
+   ],
+   "what": "memory dump creation library; in an unusual program it is sometimes used to steal logon credentials"
+  },
+  {
+   "names": [
+    "samlib.dll",
+    "vaultcli.dll",
+    "cryptdll.dll"
+   ],
+   "what": "library for accessing logon credentials; unusual in ordinary applications"
+  },
+  {
+   "names": [
+    "system.management.automation"
+   ],
+   "what": "PowerShell engine; its presence in a program other than PowerShell means that PowerShell scripts are being run from inside that program"
+  }
+ ]
+}

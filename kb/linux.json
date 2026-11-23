@@ -1,0 +1,381 @@
+{
+ "os": "linux",
+ "tags": {
+  "MEMFD": {
+   "name": "kod z pliku istniejącego tylko w pamięci",
+   "en": "executable mapping of a memfd (file that exists only in RAM)",
+   "meaning": "Proces wykonuje kod z pliku utworzonego wywołaniem memfd_create. Taki plik istnieje wyłącznie w pamięci RAM i nie jest zapisywany na dysku.",
+   "why": "To popularny na Linuksie sposób uruchomienia programu bez zapisu na dysk: pobrany plik wykonywalny trafia do memfd i stamtąd jest uruchamiany.",
+   "attack": [
+    "T1620 Reflective Code Loading"
+   ],
+   "tech": "Wykonywalne mapowanie obiektu utworzonego przez memfd_create (wpis /memfd:<nazwa> w /proc/<pid>/maps)."
+  },
+  "DEL-EXEC": {
+   "name": "kod z pliku usuniętego z dysku",
+   "en": "executable mapping of a file deleted from disk",
+   "meaning": "Program uruchamia kod z pliku, który został już usunięty z dysku. Kod nadal działa, bo system trzyma plik, dopóki ktoś go używa.",
+   "why": "Usunięcie pliku po uruchomieniu to prosty sposób zatarcia śladów: programu nie da się już znaleźć ani zbadać na dysku.",
+   "attack": [
+    "T1070.004 Indicator Removal: File Deletion"
+   ],
+   "tech": "Wykonywalne mapowanie pliku z dopiskiem (deleted) w /proc/<pid>/maps: wpis katalogu usunięto, i-węzeł pozostaje używany."
+  },
+  "X-TMP": {
+   "name": "kod z katalogu tymczasowego",
+   "en": "executable mapping of a file that lives in a world-writable directory such as /tmp or /dev/shm (Linux); legitimate software that unpacks native libraries there also triggers it",
+   "meaning": "Program uruchamia kod z pliku leżącego w katalogu, do którego może pisać każdy użytkownik (np. /tmp, /dev/shm).",
+   "why": "Katalogi tymczasowe to pierwsze miejsce, do którego atakujący zapisuje pobrane narzędzia, bo nie wymagają uprawnień.",
+   "attack": [],
+   "tech": "Wykonywalne mapowanie istniejącego pliku z /tmp, /var/tmp, /dev/shm, /run/shm, /run/user, /var/lock, /run/lock albo /dev/mqueue."
+  },
+  "RWX": {
+   "tech": "Mapowanie z prawami rwx w /proc/<pid>/maps (PROT_READ, PROT_WRITE i PROT_EXEC jednocześnie)."
+  },
+  "X-PRIV": {
+   "tech": "Mapowanie wykonywalne bez ścieżki pliku w /proc/<pid>/maps (pamięć anonimowa), z wyłączeniem regionów jądra ([vdso] i podobnych)."
+  },
+  "THR-PRIV": {
+   "tech": "Adres instrukcji z /proc/<pid>/task/<tid>/syscall wskazuje region bez pliku. Oceniane są wyłącznie wątki oczekujące w wywołaniu systemowym."
+  },
+  "IMG-MOD": {
+   "tech": "Wykonywalne, niezapisywalne mapowanie pliku z niezerowym polem Anonymous w /proc/<pid>/smaps (strony skopiowane przy zapisie)."
+  }
+ },
+ "combos": [
+  {
+   "tags": [
+    "ENT-X",
+    "MEMFD"
+   ],
+   "title": "zaszyfrowany lub spakowany kod z pliku tylko w pamięci",
+   "meaning": "Kod jest uruchamiany z pliku istniejącego wyłącznie w pamięci RAM, a jego zawartość wygląda na losową.",
+   "benign": [
+    "Rzadkie. Niektóre środowiska uruchomieniowe i piaskownice używają memfd, ale ich kod nie wygląda na zaszyfrowany."
+   ],
+   "malicious": [
+    "Program pobrany z sieci i uruchomiony bez zapisu na dysk, dodatkowo spakowany. To typowy obraz bezplikowego złośliwego oprogramowania na Linuksie."
+   ],
+   "hints": []
+  },
+  {
+   "tags": [
+    "MEMFD"
+   ],
+   "title": "kod z pliku istniejącego tylko w pamięci",
+   "meaning": "Kod jest uruchamiany z pliku memfd, którego nie ma na dysku.",
+   "benign": [
+    "Środowiska JIT z podwójnym mapowaniem pamięci, piaskownice przeglądarek, niektóre sterowniki grafiki."
+   ],
+   "malicious": [
+    "Bezplikowe uruchomienie pobranego programu."
+   ],
+   "hints": []
+  },
+  {
+   "tags": [
+    "DEL-EXEC"
+   ],
+   "title": "kod z pliku usuniętego z dysku",
+   "meaning": "Biblioteka albo program nadal działa, choć jego pliku nie ma już na dysku.",
+   "benign": [
+    "Aktualizacja pakietów: stara wersja biblioteki została zastąpiona nową, a program jeszcze nie został uruchomiony ponownie. Wtedy ścieżka wskazuje zwykle katalog systemowy."
+   ],
+   "malicious": [
+    "Program uruchomiony i od razu usunięty, żeby utrudnić analizę. Wtedy ścieżka wskazuje często katalog tymczasowy albo domowy."
+   ],
+   "hints": []
+  },
+  {
+   "tags": [
+    "X-TMP"
+   ],
+   "title": "kod z katalogu tymczasowego",
+   "meaning": "Program załadował wykonywalny plik z katalogu zapisywalnego dla wszystkich.",
+   "benign": [
+    "Programy rozpakowujące własne biblioteki do /tmp: aplikacje Java z bibliotekami natywnymi, programy spakowane PyInstallerem, obrazy AppImage."
+   ],
+   "malicious": [
+    "Narzędzie pobrane przez atakującego i uruchomione z /tmp albo /dev/shm."
+   ],
+   "hints": []
+  }
+ ],
+ "verify": {
+  "*": [
+   "Zobacz, czym jest ten region w mapie pamięci procesu: grep -n {start_plain} /proc/{pid}/maps",
+   "Zapisz zawartość regionu do pliku (wymaga gdb, zatrzymuje proces na chwilę): gdb -p {pid} -batch -ex \"dump memory /tmp/region_{start_plain}.bin {start} {end}\"",
+   "Sprawdź, kto uruchomił proces i z jakim poleceniem: ps -o pid,ppid,user,lstart,cmd -p {pid}"
+  ],
+  "HDR": [
+   "Po zapisaniu regionu sprawdź, co to za plik wykonywalny: file /tmp/region_{start_plain}.bin oraz readelf -h /tmp/region_{start_plain}.bin"
+  ],
+  "ENT-X": [
+   "Po zapisaniu regionu porównaj jego skrót z bazami znanych plików: sha256sum /tmp/region_{start_plain}.bin"
+  ],
+  "MEMFD": [
+   "Znajdź deskryptor pliku memfd i skopiuj cały plik: ls -l /proc/{pid}/fd | grep memfd, potem cp /proc/{pid}/fd/NUMER /tmp/memfd_{pid}.bin"
+  ],
+  "DEL-EXEC": [
+   "Odzyskaj usunięty plik programu, póki proces działa: cp /proc/{pid}/exe /tmp/exe_{pid}.bin (dla biblioteki użyj wpisu z /proc/{pid}/map_files/)"
+  ],
+  "X-TMP": [
+   "Sprawdź właściciela, datę i skrót pliku: ls -l --time-style=full-iso PLIK oraz sha256sum PLIK (ścieżka pliku jest w tabeli regionu)"
+  ],
+  "RWX": [
+   "Sprawdź, czy program ma środowisko JIT: grep -E \"libjvm|libnode|libv8|libmono|libcoreclr|libjs\" /proc/{pid}/maps"
+  ],
+  "THR-PRIV": [
+   "Zobacz, co robi wątek (stos wywołań wszystkich wątków): gdb -p {pid} -batch -ex \"thread apply all bt\""
+  ],
+  "IMG-MOD": [
+   "Porównaj kod w pamięci z plikiem: zapisz region (polecenie wyżej) i porównaj z odpowiednim fragmentem pliku biblioteki (przesunięcie jest w /proc/{pid}/maps); różnice pokażą nadpisane funkcje."
+  ]
+ },
+ "terms": {
+  "/proc": "katalog, w którym Linux udostępnia informacje o działających procesach; narzędzie tylko z niego czyta",
+  "memfd": "plik utworzony w pamięci RAM wywołaniem memfd_create; nie ma go na dysku",
+  "ELF": "format plików wykonywalnych i bibliotek na Linuksie; zaczyna się od bajtów 7f 45 4c 46",
+  "vdso": "mały fragment kodu jądra wstawiany do każdego procesu; jest normalny",
+  "uprawnienia (capabilities)": "części uprawnień administratora nadawane procesowi osobno; pole CapEff pokazuje aktywne",
+  "seccomp": "filtr ograniczający wywołania systemowe procesu; włączony oznacza program uruchomiony w piaskownicy",
+  "LD_PRELOAD": "zmienna, która każe załadować wskazaną bibliotekę przed wszystkimi innymi; bywa używana do podmiany funkcji"
+ },
+ "flags": {
+  "śledzony przez": "inny proces ma nad tym programem kontrolę debugera (ptrace); poza debugowaniem to rzadkie i warte wyjaśnienia",
+  "uprawnienia efektywne": "0000000000000000 oznacza brak dodatkowych uprawnień; same jedynki szesnastkowe (np. 000001ffffffffff) to pełne uprawnienia administratora",
+  "seccomp": "\"filtr\" oznacza program w piaskownicy, co ogranicza skutki ewentualnego przejęcia",
+  "no_new_privs": "1 oznacza, że program i jego potomkowie nie mogą zdobyć wyższych uprawnień",
+  "katalog główny": "program widzi inny katalog główny niż system; zwykle oznacza kontener",
+  "zmienna LD_PRELOAD": "do programu wstrzyknięto dodatkową bibliotekę przy starcie; sprawdź, czym jest ten plik",
+  "zmienna LD_AUDIT": "do programu podpięto bibliotekę nadzorującą ładowanie kodu; poza narzędziami diagnostycznymi to rzadkie",
+  "zmienna LD_LIBRARY_PATH": "program szuka bibliotek w niestandardowych katalogach; jeśli wskazują katalog tymczasowy albo domowy, sprawdź zawartość"
+ },
+ "handles": {
+  "file": "zwykły plik otwarty przez program",
+  "memfd": "plik istniejący tylko w pamięci RAM",
+  "socket": "połączenie sieciowe albo lokalne",
+  "pipe": "kanał do wymiany danych z innym procesem",
+  "device": "urządzenie, np. terminal",
+  "anon": "obiekt jądra, np. licznik zdarzeń"
+ },
+ "processes": [
+  {
+   "names": [
+    "systemd"
+   ],
+   "what": "Program zarządzający startem systemu i usługami; proces numer 1 jest przodkiem wszystkich pozostałych.",
+   "paths": [
+    "/usr/lib/systemd/systemd",
+    "/lib/systemd/systemd",
+    "/sbin/init"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "sshd"
+   ],
+   "what": "Serwer zdalnego logowania SSH. Jego procesy potomne to sesje zalogowanych użytkowników.",
+   "paths": [
+    "/usr/sbin/sshd"
+   ],
+   "parents": [
+    "systemd",
+    "sshd",
+    "init"
+   ]
+  },
+  {
+   "names": [
+    "bash",
+    "sh",
+    "dash",
+    "zsh"
+   ],
+   "what": "Powłoka, czyli wiersz poleceń. Sama jest zwykłym narzędziem; ważne jest, kto ją uruchomił i co ona uruchomiła.",
+   "paths": [
+    "/usr/bin/",
+    "/bin/"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "cron",
+    "crond"
+   ],
+   "what": "Usługa uruchamiająca zadania o zaplanowanych porach. Programy uruchomione przez cron działają bez udziału użytkownika.",
+   "paths": [
+    "/usr/sbin/cron",
+    "/usr/sbin/crond"
+   ],
+   "parents": [
+    "systemd",
+    "init"
+   ]
+  },
+  {
+   "names": [
+    "nginx",
+    "apache2",
+    "httpd"
+   ],
+   "what": "Serwer WWW. Powłoka albo interpreter uruchomiony przez serwer WWW to typowy ślad włamania przez aplikację internetową.",
+   "paths": [
+    "/usr/sbin/"
+   ],
+   "parents": [
+    "systemd",
+    "init",
+    "nginx",
+    "apache2",
+    "httpd"
+   ]
+  },
+  {
+   "names": [
+    "python",
+    "python3",
+    "perl",
+    "ruby",
+    "php"
+   ],
+   "what": "Interpreter języka skryptowego. Uruchamia dowolny kod, więc liczy się wiersz poleceń i rodzic.",
+   "paths": [
+    "/usr/bin/",
+    "/usr/local/bin/"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "node"
+   ],
+   "what": "Środowisko JavaScript z kompilacją w locie; regiony zapisywalne i wykonywalne są w nim normalne.",
+   "paths": [
+    "/usr/bin/**",
+    "/usr/local/bin/**",
+    "/opt/**"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "java"
+   ],
+   "what": "Maszyna wirtualna Javy z kompilacją w locie; regiony zapisywalne i wykonywalne są w niej normalne.",
+   "paths": [
+    "/usr/**",
+    "/opt/**"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "dockerd",
+    "containerd",
+    "containerd-shim",
+    "runc"
+   ],
+   "what": "Część środowiska kontenerów. Procesy w kontenerach mają własny katalog główny i własną sieć.",
+   "paths": [
+    "/usr/bin/",
+    "/usr/sbin/",
+    "/usr/local/bin/"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "nanshe-sample"
+   ],
+   "what": "Program testowy narzędzia Nanshe. Celowo tworzy w pamięci układy, których szukają detektory; niczego z nich nie uruchamia.",
+   "paths": [],
+   "parents": []
+  }
+ ],
+ "modules": [
+  {
+   "names": [
+    "libc.so.6",
+    "libc-"
+   ],
+   "what": "podstawowa biblioteka systemowa; ma ją prawie każdy program"
+  },
+  {
+   "names": [
+    "ld-linux",
+    "ld-musl"
+   ],
+   "what": "program ładujący biblioteki przy starcie; normalny w każdym procesie"
+  },
+  {
+   "names": [
+    "libssl",
+    "libcrypto",
+    "libgnutls"
+   ],
+   "what": "biblioteka szyfrowania; program potrafi nawiązywać połączenia szyfrowane"
+  },
+  {
+   "names": [
+    "libcurl"
+   ],
+   "what": "biblioteka pobierania danych z sieci (HTTP i inne)"
+  },
+  {
+   "names": [
+    "libjvm"
+   ],
+   "what": "maszyna wirtualna Javy; tworzy kod w locie (JIT)",
+   "runtime": "Java"
+  },
+  {
+   "names": [
+    "libnode",
+    "libv8"
+   ],
+   "what": "silnik JavaScript V8; tworzy kod w locie (JIT)",
+   "runtime": "V8"
+  },
+  {
+   "names": [
+    "libcoreclr",
+    "libmono"
+   ],
+   "what": "środowisko .NET; tworzy kod w locie (JIT)",
+   "runtime": ".NET"
+  },
+  {
+   "names": [
+    "libpython"
+   ],
+   "what": "interpreter Pythona osadzony w programie"
+  },
+  {
+   "names": [
+    "libpam"
+   ],
+   "what": "biblioteka logowania użytkowników; program sprawdza hasła albo otwiera sesje"
+  },
+  {
+   "names": [
+    "libnss_"
+   ],
+   "what": "biblioteka tłumaczenia nazw użytkowników i hostów"
+  },
+  {
+   "names": [
+    "libgcc_s"
+   ],
+   "what": "biblioteka pomocnicza kompilatora; normalna"
+  },
+  {
+   "names": [
+    "memfd:"
+   ],
+   "what": "plik istniejący tylko w pamięci RAM; nie ma go na dysku"
+  }
+ ]
+}

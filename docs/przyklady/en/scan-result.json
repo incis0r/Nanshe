@@ -1,0 +1,821 @@
+{
+  "schema_version": 1,
+  "tool_version": "0.1.0",
+  "timestamp": "2026-11-23T12:08:46Z",
+  "host": "1a3b4982fe9e",
+  "heat_cell_bytes": 65536,
+  "partial": false,
+  "processes": [
+    {
+      "info": {
+        "os": "linux",
+        "arch": "aarch64",
+        "pid": 2050,
+        "name": "nanshe-sample",
+        "source_type": "live",
+        "exe": "/target/debug/nanshe-sample",
+        "exe_deleted": false,
+        "exe_verified": true
+      },
+      "regions_total": 26,
+      "regions_unreadable": 0,
+      "bytes_scanned": 2834432,
+      "max_severity": "high",
+      "regions": [
+        {
+          "region": {
+            "base": 281472832700416,
+            "size": 65536,
+            "prot": "rwx",
+            "kind": "private",
+            "backing": null,
+            "backing_deleted": false,
+            "label": null,
+            "readable": true
+          },
+          "bytes_read": 65536,
+          "truncated": false,
+          "entropy_max": 7.96,
+          "entropy_mean": 7.95,
+          "zero_pages": 0,
+          "score": 90,
+          "severity": "high",
+          "findings": [
+            {
+              "id": "2050:ffff80350000:RWX",
+              "detector": "rwx",
+              "tag": "RWX",
+              "addr": 281472832700416,
+              "size": 65536,
+              "prot": "rwx",
+              "entropy": null,
+              "weight": 30,
+              "reason": "region both writable and executable",
+              "bytes_hex": "000000004c6f61644c696272617279410047657450726f6341646472657373005669727475616c416c6c6f6300aca8070a25f299efb9bc68f4c64b49aae57cc1f6999747588a8dd3e7b225127f26768f8b5c175f2e5d002a93816aa763ff742725018baa07d1212624e81024c7d5d6a9cd69ce1b23d544409b4a15da26f4be5088f2e280c86db1b815f4dd7f16df94246bfea370f940ecead09432a704315e19a3fe16b52ae69d397e40758072b87a39f1ae7f7339a40090f4c3da225a48cec53d8f13d77208756ae0ae7852aac36cd3c3e408784e2f22757789a5d072c7f3aff852d8e26470fdb90870fe2e23e1f6671375193f7d27fe5193829537e129b80d"
+            },
+            {
+              "id": "2050:ffff80350000:X-PRIV",
+              "detector": "x-priv",
+              "tag": "X-PRIV",
+              "addr": 281472832700416,
+              "size": 65536,
+              "prot": "rwx",
+              "entropy": null,
+              "weight": 30,
+              "reason": "executable private/anonymous memory not backed by a file",
+              "bytes_hex": "000000004c6f61644c696272617279410047657450726f6341646472657373005669727475616c416c6c6f6300aca8070a25f299efb9bc68f4c64b49aae57cc1f6999747588a8dd3e7b225127f26768f8b5c175f2e5d002a93816aa763ff742725018baa07d1212624e81024c7d5d6a9cd69ce1b23d544409b4a15da26f4be5088f2e280c86db1b815f4dd7f16df94246bfea370f940ecead09432a704315e19a3fe16b52ae69d397e40758072b87a39f1ae7f7339a40090f4c3da225a48cec53d8f13d77208756ae0ae7852aac36cd3c3e408784e2f22757789a5d072c7f3aff852d8e26470fdb90870fe2e23e1f6671375193f7d27fe5193829537e129b80d"
+            },
+            {
+              "id": "2050:ffff80350000:ENT-X",
+              "detector": "ent-x",
+              "tag": "ENT-X",
+              "addr": 281472832720896,
+              "size": 4096,
+              "prot": "rwx",
+              "entropy": 7.96,
+              "weight": 30,
+              "reason": "very high entropy in an executable region: max 7.96, pages above threshold: 16 of 16",
+              "bytes_hex": "2c1b7fde3d8388e4dfd27b512082533550a30e46da344927952a44f10653991a7ef27331e027feffe60ff415ae931af99adc26a126f0bc779efcbc2a507b97c66191d135369733fc5ce6fe41178703ed1b64730ab4b525de0fdba623f56754a3e549ad5cd9ca361611ba443ad2e487dbb9fa9cc429b3d7229c44a7e800c38cb6fa2a628ad60706e2357a53a58a6e1c147e81d25ffdb57e4a9c95cc40e0745aea833a870e84ecc63021034a83e0459a9ba532d7d7d1463105b8f89ccc75cdfb568421e43418355bc17c3162c5446636f681822de3550b853c2bdf3a28408f97d99871c6fb63bb661beede652748156f86759ec18f67218c7187779c72f95d5fd2"
+            }
+          ],
+          "profile": [
+            80,
+            80,
+            80,
+            80,
+            80,
+            80,
+            80,
+            80,
+            80,
+            80,
+            80,
+            80,
+            80,
+            80,
+            80,
+            80
+          ],
+          "strings": [
+            "LoadLibraryA",
+            "GetProcAddress",
+            "VirtualAlloc",
+            "no}P=NHfQr"
+          ],
+          "sha256": "2e043edf3a68f7b9549ebdbc0770ec807dd4eaaa83f3aea3eb459103b1c3566e"
+        },
+        {
+          "region": {
+            "base": 281472832765952,
+            "size": 1622016,
+            "prot": "r-x",
+            "kind": "mapped",
+            "backing": "/usr/lib/aarch64-linux-gnu/libc.so.6",
+            "backing_deleted": false,
+            "label": null,
+            "readable": true
+          },
+          "bytes_read": 1622016,
+          "truncated": false,
+          "entropy_max": 7.92,
+          "entropy_mean": 5.74,
+          "zero_pages": 0,
+          "score": 10,
+          "severity": "info",
+          "findings": [
+            {
+              "id": "2050:ffff80360000:ENT-X",
+              "detector": "ent-x",
+              "tag": "ENT-X",
+              "addr": 281472832778240,
+              "size": 4096,
+              "prot": "r-x",
+              "entropy": 7.92,
+              "weight": 10,
+              "reason": "very high entropy in an executable region: max 7.92, pages above threshold: 3 of 396 (isolated pages in code from a file: low weight)",
+              "bytes_hex": "e24172f0c0e5957c9e3cc07c282deaaf9f3cc07cc1e5957c28ce67717c3b3e32c28e87ffdeb23ae3f349d3d5966c8abae72b36d5944d9d7cf06083fef16083fee69520005d0c9577861fa8df4ad754dc06af4c6b9c872fb69c872fb6bc50769ec389df1454066aecca06da91b95ba9cd646a620bd0f65710c060947fc160947f4c8a2d772cc02928020cda9bb5bb297b6a6bec2fef32bff82fc5a752e4c11ee86ace73f6b1a64a64c4890590e12b3cf787307f916469390fafca26925a70b4ef9ecf2f865a70b4ef8d7114625e9a7f6724297e201019ee2fafdaed0f10bfac390426290510bfac39d0c8014b7395668554af591bfabb7a9e3c35997cb4bae69f"
+            }
+          ],
+          "profile": [
+            79,
+            31,
+            31,
+            44,
+            47,
+            65,
+            64,
+            65,
+            65,
+            65,
+            65,
+            66,
+            65,
+            66,
+            64,
+            63,
+            63,
+            63,
+            65,
+            63,
+            65,
+            65,
+            64,
+            65,
+            67,
+            66,
+            65,
+            66,
+            65,
+            65,
+            65,
+            64,
+            64,
+            63,
+            64,
+            64,
+            64,
+            65,
+            65,
+            64,
+            64,
+            67,
+            63,
+            64,
+            65,
+            61,
+            44,
+            74,
+            52,
+            50,
+            58,
+            57,
+            57,
+            59,
+            58,
+            57,
+            55
+          ],
+          "strings": [
+            "__write_nocancel",
+            "__h_errno_location",
+            "svc_getreq_common",
+            "lremovexattr",
+            "pthread_mutexattr_gettype",
+            "fputc_unlocked",
+            "__realpath_chk",
+            "obstack_alloc_failed_handler",
+            "_dl_find_object",
+            "getaliasbyname",
+            "__libc_dynarray_resize",
+            "delete_module",
+            "strfromf64x",
+            "__libc_scratch_buffer_set_array_size",
+            "_nss_files_setspent",
+            "_IO_wfile_jumps",
+            "cnd_broadcast",
+            "_IO_default_uflow",
+            "getprotobyname",
+            "_IO_file_close_it",
+            "_nss_files_getnetent_r",
+            "xdr_uint64_t",
+            "__strcspn_c2",
+            "preadv64v2",
+            "__printf_chk",
+            "getrpcport",
+            "mtx_unlock",
+            "pthread_getname_np",
+            "_IO_do_write",
+            "pthread_spin_lock",
+            "timer_settime",
+            "__getlogin_r_chk",
+            "mcheck_check_all",
+            "__key_gendes_LOCAL",
+            "__merge_grp",
+            "_thread_db_pthread_eventbuf",
+            "_IO_default_xsgetn",
+            "pthread_attr_setaffinity_np",
+            "__malloc_initialize_hook",
+            "__cmsg_nxthdr"
+          ],
+          "sha256": "4b78ad89d1765de627184d30a78c58855bcc9a8b833127d3dbef60f909fd8a33"
+        },
+        {
+          "region": {
+            "base": 281472834945024,
+            "size": 16384,
+            "prot": "r-x",
+            "kind": "private",
+            "backing": null,
+            "backing_deleted": false,
+            "label": null,
+            "readable": true
+          },
+          "bytes_read": 16384,
+          "truncated": false,
+          "entropy_max": 4.06,
+          "entropy_mean": 2.85,
+          "zero_pages": 0,
+          "score": 70,
+          "severity": "high",
+          "findings": [
+            {
+              "id": "2050:ffff80574000:X-PRIV",
+              "detector": "x-priv",
+              "tag": "X-PRIV",
+              "addr": 281472834945024,
+              "size": 16384,
+              "prot": "r-x",
+              "entropy": null,
+              "weight": 30,
+              "reason": "executable private/anonymous memory not backed by a file",
+              "bytes_hex": "7f454c460201010000000000000000000300b7000100000080b10000000000004000000000000000a0f350000000000000000000400038000a00400029002800060000000400000040000000000000004000000000000000400000000000000030020000000000003002000000000000080000000000000003000000040000007002000000000000700200000000000070020000000000001b000000000000001b0000000000000001000000000000000100000005000000000000000000000000000000000000000000000000000000ccc3060000000000ccc306000000000000000100000000000100000006000000c8ca060000000000c8ca070000000000"
+            },
+            {
+              "id": "2050:ffff80574000:HDR",
+              "detector": "hdr",
+              "tag": "HDR",
+              "addr": 281472834945024,
+              "size": 4096,
+              "prot": "r-x",
+              "entropy": null,
+              "weight": 40,
+              "reason": "ELF header in a region not backed by a file",
+              "bytes_hex": "7f454c460201010000000000000000000300b7000100000080b10000000000004000000000000000a0f350000000000000000000400038000a00400029002800060000000400000040000000000000004000000000000000400000000000000030020000000000003002000000000000080000000000000003000000040000007002000000000000700200000000000070020000000000001b000000000000001b0000000000000001000000000000000100000005000000000000000000000000000000000000000000000000000000ccc3060000000000ccc306000000000000000100000000000100000006000000c8ca060000000000c8ca070000000000"
+            }
+          ],
+          "profile": [
+            20,
+            41,
+            27,
+            26
+          ],
+          "strings": [
+            "/lib/ld-linux-aarch64.so.1",
+            "_ITM_deregisterTMCloneTable",
+            "__gmon_start__",
+            "_ITM_registerTMCloneTable",
+            "_Unwind_Resume",
+            "_Unwind_Backtrace",
+            "_Unwind_GetLanguageSpecificData",
+            "_Unwind_GetIPInfo",
+            "_Unwind_GetDataRelBase",
+            "_Unwind_GetRegionStart",
+            "_Unwind_SetIP",
+            "_Unwind_GetIP",
+            "_Unwind_DeleteException",
+            "_Unwind_RaiseException",
+            "_Unwind_SetGR",
+            "_Unwind_GetTextRelBase",
+            "gnu_get_libc_version",
+            "setsockopt",
+            "pthread_key_delete",
+            "clock_gettime",
+            "posix_spawn_file_actions_init",
+            "freeaddrinfo",
+            "getaddrinfo",
+            "pthread_self",
+            "posix_spawn_file_actions_addchdir_np",
+            "posix_spawnattr_setsigdefault",
+            "socketpair",
+            "__cxa_thread_atexit_impl",
+            "posix_spawnattr_setpgroup",
+            "__xpg_strerror_r",
+            "pthread_attr_getguardsize",
+            "pthread_attr_destroy",
+            "dl_iterate_phdr",
+            "__libc_start_main",
+            "pthread_key_create",
+            "posix_spawn_file_actions_adddup2",
+            "pthread_attr_getstack",
+            "posix_spawn_file_actions_destroy",
+            "memfd_create",
+            "posix_spawnattr_setflags"
+          ],
+          "sha256": "4063392c86a10c8e77471f136ce93dc116b19f38a46082e4b8b5078cc17fcb1b"
+        },
+        {
+          "region": {
+            "base": 281472834990080,
+            "size": 8192,
+            "prot": "r-x",
+            "kind": "mapped",
+            "backing": "memfd:payload",
+            "backing_deleted": true,
+            "label": null,
+            "readable": true
+          },
+          "bytes_read": 8192,
+          "truncated": false,
+          "entropy_max": 7.95,
+          "entropy_mean": 7.95,
+          "zero_pages": 0,
+          "score": 70,
+          "severity": "high",
+          "findings": [
+            {
+              "id": "2050:ffff8057f000:MEMFD",
+              "detector": "memfd",
+              "tag": "MEMFD",
+              "addr": 281472834990080,
+              "size": 8192,
+              "prot": "r-x",
+              "entropy": null,
+              "weight": 40,
+              "reason": "executable mapping memfd:payload",
+              "bytes_hex": "ea1c58d897be9d5012c9a76e43b5af76c2a0727d39913d6590d84fa37fc74f6f092549a6b7010da5403e2889cdaca8070a25f299efb9bc68f4c64b49aae57cc1f6999747588a8dd3e7b225127f26768f8b5c175f2e5d002a93816aa763ff742725018baa07d1212624e81024c7d5d6a9cd69ce1b23d544409b4a15da26f4be5088f2e280c86db1b815f4dd7f16df94246bfea370f940ecead09432a704315e19a3fe16b52ae69d397e40758072b87a39f1ae7f7339a40090f4c3da225a48cec53d8f13d77208756ae0ae7852aac36cd3c3e408784e2f22757789a5d072c7f3aff852d8e26470fdb90870fe2e23e1f6671375193f7d27fe5193829537e129b80d"
+            },
+            {
+              "id": "2050:ffff8057f000:ENT-X",
+              "detector": "ent-x",
+              "tag": "ENT-X",
+              "addr": 281472834990080,
+              "size": 4096,
+              "prot": "r-x",
+              "entropy": 7.95,
+              "weight": 30,
+              "reason": "very high entropy in an executable region: max 7.95, pages above threshold: 2 of 2",
+              "bytes_hex": "ea1c58d897be9d5012c9a76e43b5af76c2a0727d39913d6590d84fa37fc74f6f092549a6b7010da5403e2889cdaca8070a25f299efb9bc68f4c64b49aae57cc1f6999747588a8dd3e7b225127f26768f8b5c175f2e5d002a93816aa763ff742725018baa07d1212624e81024c7d5d6a9cd69ce1b23d544409b4a15da26f4be5088f2e280c86db1b815f4dd7f16df94246bfea370f940ecead09432a704315e19a3fe16b52ae69d397e40758072b87a39f1ae7f7339a40090f4c3da225a48cec53d8f13d77208756ae0ae7852aac36cd3c3e408784e2f22757789a5d072c7f3aff852d8e26470fdb90870fe2e23e1f6671375193f7d27fe5193829537e129b80d"
+            }
+          ],
+          "profile": [
+            80,
+            80
+          ],
+          "strings": [
+            "no}P=NHfQr"
+          ],
+          "sha256": "b511e7d5ceda23c4c9555f760682f3089d78baf592641fdce4ceac79f973cc94"
+        }
+      ],
+      "layout": [
+        {
+          "base": 187650359164928,
+          "size": 446464,
+          "prot": "r-x",
+          "kind": "mapped",
+          "backing": "/target/debug/nanshe-sample",
+          "backing_deleted": false,
+          "label": null,
+          "readable": true
+        },
+        {
+          "base": 187650359672832,
+          "size": 16384,
+          "prot": "r--",
+          "kind": "mapped",
+          "backing": "/target/debug/nanshe-sample",
+          "backing_deleted": false,
+          "label": null,
+          "readable": true
+        },
+        {
+          "base": 187650359689216,
+          "size": 4096,
+          "prot": "rw-",
+          "kind": "mapped",
+          "backing": "/target/debug/nanshe-sample",
+          "backing_deleted": false,
+          "label": null,
+          "readable": true
+        },
+        {
+          "base": 187651175325696,
+          "size": 135168,
+          "prot": "rw-",
+          "kind": "heap",
+          "backing": null,
+          "backing_deleted": false,
+          "label": "[heap]",
+          "readable": true
+        },
+        {
+          "base": 281472832700416,
+          "size": 65536,
+          "prot": "rwx",
+          "kind": "private",
+          "backing": null,
+          "backing_deleted": false,
+          "label": null,
+          "readable": true
+        },
+        {
+          "base": 281472832765952,
+          "size": 1622016,
+          "prot": "r-x",
+          "kind": "mapped",
+          "backing": "/usr/lib/aarch64-linux-gnu/libc.so.6",
+          "backing_deleted": false,
+          "label": null,
+          "readable": true
+        },
+        {
+          "base": 281472834387968,
+          "size": 65536,
+          "prot": "---",
+          "kind": "mapped",
+          "backing": "/usr/lib/aarch64-linux-gnu/libc.so.6",
+          "backing_deleted": false,
+          "label": null,
+          "readable": false
+        },
+        {
+          "base": 281472834453504,
+          "size": 16384,
+          "prot": "r--",
+          "kind": "mapped",
+          "backing": "/usr/lib/aarch64-linux-gnu/libc.so.6",
+          "backing_deleted": false,
+          "label": null,
+          "readable": true
+        },
+        {
+          "base": 281472834469888,
+          "size": 8192,
+          "prot": "rw-",
+          "kind": "mapped",
+          "backing": "/usr/lib/aarch64-linux-gnu/libc.so.6",
+          "backing_deleted": false,
+          "label": null,
+          "readable": true
+        },
+        {
+          "base": 281472834478080,
+          "size": 53248,
+          "prot": "rw-",
+          "kind": "private",
+          "backing": null,
+          "backing_deleted": false,
+          "label": null,
+          "readable": true
+        },
+        {
+          "base": 281472834535424,
+          "size": 81920,
+          "prot": "r-x",
+          "kind": "mapped",
+          "backing": "/usr/lib/aarch64-linux-gnu/libgcc_s.so.1",
+          "backing_deleted": false,
+          "label": null,
+          "readable": true
+        },
+        {
+          "base": 281472834617344,
+          "size": 110592,
+          "prot": "---",
+          "kind": "mapped",
+          "backing": "/usr/lib/aarch64-linux-gnu/libgcc_s.so.1",
+          "backing_deleted": false,
+          "label": null,
+          "readable": false
+        },
+        {
+          "base": 281472834727936,
+          "size": 4096,
+          "prot": "r--",
+          "kind": "mapped",
+          "backing": "/usr/lib/aarch64-linux-gnu/libgcc_s.so.1",
+          "backing_deleted": false,
+          "label": null,
+          "readable": true
+        },
+        {
+          "base": 281472834732032,
+          "size": 4096,
+          "prot": "rw-",
+          "kind": "mapped",
+          "backing": "/usr/lib/aarch64-linux-gnu/libgcc_s.so.1",
+          "backing_deleted": false,
+          "label": null,
+          "readable": true
+        },
+        {
+          "base": 281472834777088,
+          "size": 159744,
+          "prot": "r-x",
+          "kind": "mapped",
+          "backing": "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
+          "backing_deleted": false,
+          "label": null,
+          "readable": true
+        },
+        {
+          "base": 281472834945024,
+          "size": 16384,
+          "prot": "r-x",
+          "kind": "private",
+          "backing": null,
+          "backing_deleted": false,
+          "label": null,
+          "readable": true
+        },
+        {
+          "base": 281472834961408,
+          "size": 4096,
+          "prot": "---",
+          "kind": "private",
+          "backing": null,
+          "backing_deleted": false,
+          "label": null,
+          "readable": false
+        },
+        {
+          "base": 281472834965504,
+          "size": 16384,
+          "prot": "rw-",
+          "kind": "private",
+          "backing": null,
+          "backing_deleted": false,
+          "label": null,
+          "readable": true
+        },
+        {
+          "base": 281472834981888,
+          "size": 8192,
+          "prot": "rw-",
+          "kind": "private",
+          "backing": null,
+          "backing_deleted": false,
+          "label": null,
+          "readable": true
+        },
+        {
+          "base": 281472834990080,
+          "size": 8192,
+          "prot": "r-x",
+          "kind": "mapped",
+          "backing": "memfd:payload",
+          "backing_deleted": true,
+          "label": null,
+          "readable": true
+        },
+        {
+          "base": 281472834998272,
+          "size": 8192,
+          "prot": "rw-",
+          "kind": "private",
+          "backing": null,
+          "backing_deleted": false,
+          "label": null,
+          "readable": true
+        },
+        {
+          "base": 281472835006464,
+          "size": 16384,
+          "prot": "r--",
+          "kind": "unknown",
+          "backing": null,
+          "backing_deleted": false,
+          "label": "[vvar]",
+          "readable": true
+        },
+        {
+          "base": 281472835022848,
+          "size": 8192,
+          "prot": "r-x",
+          "kind": "unknown",
+          "backing": null,
+          "backing_deleted": false,
+          "label": "[vdso]",
+          "readable": true
+        },
+        {
+          "base": 281472835031040,
+          "size": 8192,
+          "prot": "r--",
+          "kind": "mapped",
+          "backing": "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
+          "backing_deleted": false,
+          "label": null,
+          "readable": true
+        },
+        {
+          "base": 281472835039232,
+          "size": 8192,
+          "prot": "rw-",
+          "kind": "mapped",
+          "backing": "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
+          "backing_deleted": false,
+          "label": null,
+          "readable": true
+        },
+        {
+          "base": 281474164436992,
+          "size": 135168,
+          "prot": "rw-",
+          "kind": "stack",
+          "backing": null,
+          "backing_deleted": false,
+          "label": "[stack]",
+          "readable": true
+        }
+      ],
+      "context": {
+        "ppid": 1356,
+        "user": "root (uid 0)",
+        "started": "2026-11-23T12:08:45Z",
+        "cmdline": "/target/debug/nanshe-sample ctx 60",
+        "cwd": "/src",
+        "threads": 1,
+        "exe_file": {
+          "size": 5307872,
+          "modified": "2026-11-22T15:30:04Z",
+          "owner": "root (uid 0)",
+          "mode": "0755",
+          "sha256": "b30029f0ef4af73cfdac3069fc66c732cf4ea1f2b8f453c7c29b75f33100ef67"
+        },
+        "ancestors": [
+          {
+            "pid": 1356,
+            "name": "sh",
+            "exe": "/usr/bin/dash",
+            "cmdline": "sh scripts/example.sh /src/docs/przyklady"
+          },
+          {
+            "pid": 1,
+            "name": "sh",
+            "exe": "/usr/bin/dash",
+            "cmdline": "sh -c cargo test --workspace --features nanshe-cli/llm 2>&1 | grep -E \"^test result: .* [1-9][0-9]* passed|FAILED|^error|^warning: unused\" ; sh scripts/example.sh /src/docs/przyklady 2>&1 | tail -3; sh scripts/e2e.sh /target/e2e-out 2>&1 | tail -5"
+          }
+        ],
+        "children": [
+          {
+            "pid": 2052,
+            "name": "nanshe-sample",
+            "exe": "/target/debug/nanshe-sample",
+            "cmdline": "/target/debug/nanshe-sample clean 600"
+          }
+        ],
+        "sockets": [
+          {
+            "proto": "tcp",
+            "local": "127.0.0.1:42551",
+            "state": "LISTEN"
+          },
+          {
+            "proto": "tcp",
+            "local": "127.0.0.1:56108",
+            "remote": "127.0.0.1:42551",
+            "state": "ESTABLISHED"
+          },
+          {
+            "proto": "tcp",
+            "local": "127.0.0.1:42551",
+            "remote": "127.0.0.1:56108",
+            "state": "ESTABLISHED"
+          }
+        ],
+        "files": [
+          {
+            "fd": 0,
+            "kind": "device",
+            "target": "/dev/null",
+            "deleted": false
+          },
+          {
+            "fd": 1,
+            "kind": "file",
+            "target": "/src/docs/przyklady/sample.pid",
+            "deleted": false
+          },
+          {
+            "fd": 2,
+            "kind": "pipe",
+            "target": "pipe:[1467153]",
+            "deleted": false
+          },
+          {
+            "fd": 3,
+            "kind": "memfd",
+            "target": "memfd:payload",
+            "deleted": true
+          },
+          {
+            "fd": 4,
+            "kind": "socket",
+            "target": "socket:[1467201]",
+            "deleted": false
+          },
+          {
+            "fd": 5,
+            "kind": "socket",
+            "target": "socket:[1467202]",
+            "deleted": false
+          },
+          {
+            "fd": 6,
+            "kind": "socket",
+            "target": "socket:[1467203]",
+            "deleted": false
+          },
+          {
+            "fd": 7,
+            "kind": "file",
+            "target": "/tmp/ns-ctx-2050.dat",
+            "deleted": false
+          },
+          {
+            "fd": 8,
+            "kind": "file",
+            "target": "/tmp/ns-ctx-2050.gone",
+            "deleted": true
+          }
+        ],
+        "files_total": 9,
+        "flags": [
+          [
+            "effective capabilities (CapEff)",
+            "00000000800c05fb"
+          ],
+          [
+            "seccomp",
+            "filter"
+          ],
+          [
+            "no_new_privs",
+            "0"
+          ]
+        ],
+        "notes": []
+      }
+    }
+  ],
+  "lang": "en",
+  "host_info": {
+    "os": "Debian GNU/Linux 12 (bookworm)",
+    "kernel": "7.1.10-200.fc44.aarch64",
+    "boot": "2026-11-13T15:36:49Z",
+    "scanner_user": "root (uid 0)",
+    "scanner_privileges": "root; CAP_SYS_PTRACE: yes",
+    "scanner_limited": false
+  },
+  "files": [
+    {
+      "path": "/target/debug/nanshe-sample",
+      "size": 5307872,
+      "sha256": "b30029f0ef4af73cfdac3069fc66c732cf4ea1f2b8f453c7c29b75f33100ef67"
+    },
+    {
+      "path": "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
+      "size": 202912,
+      "sha256": "17538b8f9889a470c061f69a8fea8124da89627311cd16546c133a89f09056df",
+      "note": "hash of the file at this path in the scanner's system (no access to map_files); for a process in a container this may be a different file"
+    },
+    {
+      "path": "/usr/lib/aarch64-linux-gnu/libc.so.6",
+      "size": 1651408,
+      "sha256": "e4ac8ae1d81e4865e3aadedb962879cf9415903b3f2ba81ec75e9962b86ab8b0",
+      "note": "hash of the file at this path in the scanner's system (no access to map_files); for a process in a container this may be a different file"
+    },
+    {
+      "path": "/usr/lib/aarch64-linux-gnu/libgcc_s.so.1",
+      "size": 133448,
+      "sha256": "046856f95f4636f1fc7c3a12bf4f3cd5634c2fc5145c3fdf7395d4f349fa69c7",
+      "note": "hash of the file at this path in the scanner's system (no access to map_files); for a process in a container this may be a different file"
+    },
+    {
+      "path": "memfd:payload (process 2050)",
+      "size": 0,
+      "note": "file inaccessible: Operation not permitted (os error 1)"
+    }
+  ]
+}

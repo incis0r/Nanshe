@@ -1,0 +1,23 @@
+[package]
+name = "nanshe-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "nanshe"
+path = "src/main.rs"
+
+[features]
+default = []
+# Warstwa interpretacji LLM: jedyna cecha wnosząca kod sieciowy. Wyłączona w domyślnym buildzie.
+llm = ["dep:nanshe-llm"]
+
+[dependencies]
+nanshe-core = { path = "../nanshe-core" }
+nanshe-analyze = { path = "../nanshe-analyze" }
+nanshe-live = { path = "../nanshe-live" }
+nanshe-report = { path = "../nanshe-report" }
+nanshe-llm = { path = "../nanshe-llm", optional = true }
+clap.workspace = true
+serde_json.workspace = true

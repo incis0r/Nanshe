@@ -1,0 +1,381 @@
+{
+ "os": "linux",
+ "tags": {
+  "MEMFD": {
+   "name": "code from a file that exists only in memory",
+   "en": "executable mapping of a memfd (file that exists only in RAM)",
+   "meaning": "The process executes code from a file created with the memfd_create call. Such a file exists only in RAM and is never written to disk.",
+   "why": "This is a popular way on Linux to run a program without writing it to disk: a downloaded executable is placed in a memfd and launched from there.",
+   "attack": [
+    "T1620 Reflective Code Loading"
+   ],
+   "tech": "Executable mapping of an object created by memfd_create (a /memfd:<name> entry in /proc/<pid>/maps)."
+  },
+  "DEL-EXEC": {
+   "name": "code from a file deleted from disk",
+   "en": "executable mapping of a file deleted from disk",
+   "meaning": "The program runs code from a file that has already been deleted from disk. The code keeps running because the system retains the file for as long as something is using it.",
+   "why": "Deleting the file after launch is a simple way to cover tracks: the program can no longer be found or examined on disk.",
+   "attack": [
+    "T1070.004 Indicator Removal: File Deletion"
+   ],
+   "tech": "Executable mapping of a file marked (deleted) in /proc/<pid>/maps: the directory entry has been removed, the inode remains in use."
+  },
+  "X-TMP": {
+   "name": "code from a temporary directory",
+   "en": "executable mapping of a file that lives in a world-writable directory such as /tmp or /dev/shm (Linux); legitimate software that unpacks native libraries there also triggers it",
+   "meaning": "The program runs code from a file located in a directory that any user can write to (e.g. /tmp, /dev/shm).",
+   "why": "Temporary directories are the first place an attacker writes downloaded tools to, because they require no privileges.",
+   "attack": [],
+   "tech": "Executable mapping of an existing file from /tmp, /var/tmp, /dev/shm, /run/shm, /run/user, /var/lock, /run/lock or /dev/mqueue."
+  },
+  "RWX": {
+   "tech": "Mapping with rwx permissions in /proc/<pid>/maps (PROT_READ, PROT_WRITE and PROT_EXEC at the same time)."
+  },
+  "X-PRIV": {
+   "tech": "Executable mapping with no file path in /proc/<pid>/maps (anonymous memory), excluding kernel regions ([vdso] and similar)."
+  },
+  "THR-PRIV": {
+   "tech": "The instruction address from /proc/<pid>/task/<tid>/syscall points to a memory region not backed by a file. Only threads waiting in a system call are assessed."
+  },
+  "IMG-MOD": {
+   "tech": "Executable, non-writable file mapping with a non-zero Anonymous field in /proc/<pid>/smaps (pages copied on write)."
+  }
+ },
+ "combos": [
+  {
+   "tags": [
+    "ENT-X",
+    "MEMFD"
+   ],
+   "title": "encrypted or packed code from a file that exists only in memory",
+   "meaning": "Code is executed from a file that exists only in RAM, and its content appears random.",
+   "benign": [
+    "Rare. Some runtimes and sandboxes use memfd, but their code does not look encrypted."
+   ],
+   "malicious": [
+    "A program downloaded from the network and run without being written to disk, and additionally packed. This is the typical picture of fileless malware on Linux."
+   ],
+   "hints": []
+  },
+  {
+   "tags": [
+    "MEMFD"
+   ],
+   "title": "code from a file that exists only in memory",
+   "meaning": "Code is executed from a memfd file that is not present on disk.",
+   "benign": [
+    "JIT runtimes that use dual memory mapping, browser sandboxes, some graphics drivers."
+   ],
+   "malicious": [
+    "Fileless execution of a downloaded program."
+   ],
+   "hints": []
+  },
+  {
+   "tags": [
+    "DEL-EXEC"
+   ],
+   "title": "code from a file deleted from disk",
+   "meaning": "A library or program is still running although its file is no longer on disk.",
+   "benign": [
+    "Package update: an old version of a library has been replaced by a new one and the program has not been restarted yet. In that case the path usually points to a system directory."
+   ],
+   "malicious": [
+    "A program launched and deleted immediately to hinder analysis. In that case the path often points to a temporary or home directory."
+   ],
+   "hints": []
+  },
+  {
+   "tags": [
+    "X-TMP"
+   ],
+   "title": "code from a temporary directory",
+   "meaning": "The program loaded an executable file from a world-writable directory.",
+   "benign": [
+    "Programs that unpack their own libraries to /tmp: Java applications with native libraries, programs packaged with PyInstaller, AppImage images."
+   ],
+   "malicious": [
+    "A tool downloaded by an attacker and run from /tmp or /dev/shm."
+   ],
+   "hints": []
+  }
+ ],
+ "verify": {
+  "*": [
+   "See what this region is in the process memory map: grep -n {start_plain} /proc/{pid}/maps",
+   "Save the region content to a file (requires gdb, pauses the process briefly): gdb -p {pid} -batch -ex \"dump memory /tmp/region_{start_plain}.bin {start} {end}\"",
+   "Check who started the process and with what command: ps -o pid,ppid,user,lstart,cmd -p {pid}"
+  ],
+  "HDR": [
+   "After saving the region, check what kind of executable file it is: file /tmp/region_{start_plain}.bin and readelf -h /tmp/region_{start_plain}.bin"
+  ],
+  "ENT-X": [
+   "After saving the region, compare its SHA-256 hash against databases of known files: sha256sum /tmp/region_{start_plain}.bin"
+  ],
+  "MEMFD": [
+   "Find the memfd file descriptor and copy the whole file: ls -l /proc/{pid}/fd | grep memfd, then cp /proc/{pid}/fd/NUMBER /tmp/memfd_{pid}.bin"
+  ],
+  "DEL-EXEC": [
+   "Recover the deleted program file while the process is still running: cp /proc/{pid}/exe /tmp/exe_{pid}.bin (for a library, use the entry from /proc/{pid}/map_files/)"
+  ],
+  "X-TMP": [
+   "Check the file owner, date and hash: ls -l --time-style=full-iso FILE and sha256sum FILE (the file path is in the region table)"
+  ],
+  "RWX": [
+   "Check whether the program has a JIT runtime: grep -E \"libjvm|libnode|libv8|libmono|libcoreclr|libjs\" /proc/{pid}/maps"
+  ],
+  "THR-PRIV": [
+   "See what the thread is doing (call stack of all threads): gdb -p {pid} -batch -ex \"thread apply all bt\""
+  ],
+  "IMG-MOD": [
+   "Compare the code in memory with the file: save the region (command above) and compare it with the corresponding part of the library file (the offset is in /proc/{pid}/maps); the differences will show the overwritten functions."
+  ]
+ },
+ "terms": {
+  "/proc": "the directory in which Linux exposes information about running processes; the tool only reads from it",
+  "memfd": "a file created in RAM with the memfd_create call; it is not present on disk",
+  "ELF": "the format of executables and libraries on Linux; it starts with the bytes 7f 45 4c 46",
+  "vdso": "a small piece of kernel code inserted into every process; it is normal",
+  "capabilities": "parts of administrator privileges granted to a process individually; the CapEff field shows the active ones",
+  "seccomp": "a filter that restricts the system calls a process can make; when enabled, the program is running in a sandbox",
+  "LD_PRELOAD": "a variable that forces the specified library to be loaded before all others; sometimes used to replace functions"
+ },
+ "flags": {
+  "traced by": "another process has debugger control (ptrace) over this program; outside of debugging this is rare and worth explaining",
+  "effective capabilities": "0000000000000000 means no additional privileges; all hexadecimal ones (e.g. 000001ffffffffff) means full administrator privileges",
+  "seccomp": "\"filter\" means the program runs in a sandbox, which limits the impact of a possible compromise",
+  "no_new_privs": "1 means the program and its descendants cannot gain higher privileges",
+  "root directory": "the program sees a different root directory than the system; this usually indicates a container",
+  "env LD_PRELOAD": "an additional library was injected into the program at startup; check what this file is",
+  "env LD_AUDIT": "a library that supervises code loading was attached to the program; outside of diagnostic tools this is rare",
+  "env LD_LIBRARY_PATH": "the program searches for libraries in non-standard directories; if they point to a temporary or home directory, check the contents"
+ },
+ "handles": {
+  "file": "regular file opened by the program",
+  "memfd": "file that exists only in RAM",
+  "socket": "network or local connection",
+  "pipe": "channel for exchanging data with another process",
+  "device": "device, e.g. a terminal",
+  "anon": "kernel object, e.g. an event counter"
+ },
+ "processes": [
+  {
+   "names": [
+    "systemd"
+   ],
+   "what": "The program that manages system startup and services; process number 1 is the ancestor of all others.",
+   "paths": [
+    "/usr/lib/systemd/systemd",
+    "/lib/systemd/systemd",
+    "/sbin/init"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "sshd"
+   ],
+   "what": "SSH remote login server. Its child processes are the sessions of logged-in users.",
+   "paths": [
+    "/usr/sbin/sshd"
+   ],
+   "parents": [
+    "systemd",
+    "sshd",
+    "init"
+   ]
+  },
+  {
+   "names": [
+    "bash",
+    "sh",
+    "dash",
+    "zsh"
+   ],
+   "what": "A shell, i.e. the command line. In itself it is an ordinary tool; what matters is who started it and what it started.",
+   "paths": [
+    "/usr/bin/",
+    "/bin/"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "cron",
+    "crond"
+   ],
+   "what": "A service that runs tasks at scheduled times. Programs started by cron run without user involvement.",
+   "paths": [
+    "/usr/sbin/cron",
+    "/usr/sbin/crond"
+   ],
+   "parents": [
+    "systemd",
+    "init"
+   ]
+  },
+  {
+   "names": [
+    "nginx",
+    "apache2",
+    "httpd"
+   ],
+   "what": "Web server. A shell or interpreter started by a web server is a typical trace of an intrusion through a web application.",
+   "paths": [
+    "/usr/sbin/"
+   ],
+   "parents": [
+    "systemd",
+    "init",
+    "nginx",
+    "apache2",
+    "httpd"
+   ]
+  },
+  {
+   "names": [
+    "python",
+    "python3",
+    "perl",
+    "ruby",
+    "php"
+   ],
+   "what": "Scripting language interpreter. It runs arbitrary code, so the command line and the parent process are what count.",
+   "paths": [
+    "/usr/bin/",
+    "/usr/local/bin/"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "node"
+   ],
+   "what": "JavaScript runtime with just-in-time (JIT) compilation; writable and executable regions are normal in it.",
+   "paths": [
+    "/usr/bin/**",
+    "/usr/local/bin/**",
+    "/opt/**"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "java"
+   ],
+   "what": "Java virtual machine with just-in-time (JIT) compilation; writable and executable regions are normal in it.",
+   "paths": [
+    "/usr/**",
+    "/opt/**"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "dockerd",
+    "containerd",
+    "containerd-shim",
+    "runc"
+   ],
+   "what": "Part of the container runtime. Processes in containers have their own root directory and their own network.",
+   "paths": [
+    "/usr/bin/",
+    "/usr/sbin/",
+    "/usr/local/bin/"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "nanshe-sample"
+   ],
+   "what": "Test program of the Nanshe tool. It deliberately creates in memory the patterns the detectors look for; it does not execute any of them.",
+   "paths": [],
+   "parents": []
+  }
+ ],
+ "modules": [
+  {
+   "names": [
+    "libc.so.6",
+    "libc-"
+   ],
+   "what": "core system library; almost every program has it"
+  },
+  {
+   "names": [
+    "ld-linux",
+    "ld-musl"
+   ],
+   "what": "the program that loads libraries at startup; normal in every process"
+  },
+  {
+   "names": [
+    "libssl",
+    "libcrypto",
+    "libgnutls"
+   ],
+   "what": "encryption library; the program is able to establish encrypted connections"
+  },
+  {
+   "names": [
+    "libcurl"
+   ],
+   "what": "library for retrieving data from the network (HTTP and others)"
+  },
+  {
+   "names": [
+    "libjvm"
+   ],
+   "what": "Java virtual machine; generates code just in time (JIT)",
+   "runtime": "Java"
+  },
+  {
+   "names": [
+    "libnode",
+    "libv8"
+   ],
+   "what": "V8 JavaScript engine; generates code just in time (JIT)",
+   "runtime": "V8"
+  },
+  {
+   "names": [
+    "libcoreclr",
+    "libmono"
+   ],
+   "what": ".NET runtime; generates code just in time (JIT)",
+   "runtime": ".NET"
+  },
+  {
+   "names": [
+    "libpython"
+   ],
+   "what": "Python interpreter embedded in the program"
+  },
+  {
+   "names": [
+    "libpam"
+   ],
+   "what": "user login library; the program checks passwords or opens sessions"
+  },
+  {
+   "names": [
+    "libnss_"
+   ],
+   "what": "library for resolving user and host names"
+  },
+  {
+   "names": [
+    "libgcc_s"
+   ],
+   "what": "compiler support library; normal"
+  },
+  {
+   "names": [
+    "memfd:"
+   ],
+   "what": "file that exists only in RAM; it is not present on disk"
+  }
+ ]
+}

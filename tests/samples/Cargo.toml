@@ -1,0 +1,16 @@
+[package]
+name = "nanshe-samples"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "nanshe-sample"
+path = "src/main.rs"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Memory", "Win32_System_Threading"] }
