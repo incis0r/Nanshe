@@ -1,21 +1,23 @@
-# Nanshe na macOS i innych systemach
+# Nanshe on macOS and other systems
 
-Stan: **skan żywych procesów nie jest zaimplementowany** na macOS, FreeBSD ani innych systemach poza Linuksem i Windows. `nanshe scan` zwraca tam błąd „nieobsługiwane".
+Polish version: [pl/macos.md](pl/macos.md).
 
-Zapisaną inwentaryzację z Linux/Windows można otworzyć jako lokalny atlas HTML:
+Status: **scanning of live processes is not implemented** on macOS, FreeBSD or other systems apart from Linux and Windows. `nanshe scan` returns the error "unsupported" there.
+
+A saved inventory from Linux/Windows can be opened as a local HTML atlas:
 
 ```sh
 nanshe map --input host.memory.json
 ```
 
-Uruchomienie bez argumentów próbuje wykonać inwentaryzację live, więc na macOS zwróci
-błąd braku backendu. Nie generuje zastępczych ani syntetycznych danych systemowych.
+Running it without arguments tries to perform a live inventory, so on macOS it returns
+a missing backend error. It does not generate substitute or synthetic system data.
 
-## Do czego służy stacja z macOS
+## What a macOS host is for
 
-Jako stacja analityka: wynik skanu zebrany na Linuksie albo Windows można tu interpretować i zamieniać w raport. Komendy `explain`, `report`, `llm check` i `cloud list` nie zależą od systemu, bo pracują na pliku JSON.
+As an analyst workstation: a scan result collected on Linux or Windows can be interpreted here and turned into a report. The commands `explain`, `report`, `llm check` and `cloud list` do not depend on the system, because they work on a JSON file.
 
-Uwaga: natywny build na macOS nie był sprawdzany (stacja robocza projektu nie ma Rusta). Sprawdzona droga to kontener Linux:
+Note: the native build on macOS was not verified (the project's workstation has no Rust). The verified route is a Linux container:
 
 ```sh
 scripts/dev.sh cargo build --release -p nanshe-cli --features llm
@@ -23,13 +25,13 @@ scripts/dev.sh /target/release/nanshe report wynik.json
 scripts/dev.sh /target/release/nanshe explain wynik.json --llm nous --allow-cloud --key-file .nous
 ```
 
-`scripts/dev.sh` montuje katalog repo jako `/src`, więc pliki wyniku muszą leżeć w repo albo w wolumenie `/target`. Pliki `*.llm.json`, `*.report.md` i `*.report.pdf` są w `.gitignore`, bo zawierają dane z pamięci.
+`scripts/dev.sh` mounts the repository directory as `/src`, so the result files must be in the repository or in the `/target` volume. The files `*.llm.json`, `*.report.md` and `*.report.pdf` are in `.gitignore`, because they contain data from memory.
 
-## Wdrażanie i testy zdalne z macOS
+## Deployment and remote tests from macOS
 
-- Windows: natywnie na dedykowanej stacji testowej (`scripts\e2e.ps1`), opis w [windows.md](windows.md).
-- Linux: testy w kontenerze, opis w [testy.md](testy.md).
+- Windows: natively on a dedicated test host (`scripts\e2e.ps1`), described in [windows.md](windows.md).
+- Linux: tests in a container, described in [tests.md](tests.md).
 
 ## Plan
 
-Backendy macOS (`mach_vm_region_recurse` + `mach_vm_read_overwrite`, z ograniczeniami SIP) i FreeBSD to etap M3 w planie rozwoju ([dokumentacja-0.1.0.md](dokumentacja-0.1.0.md), rozdział 14); bez terminu.
+The macOS backends (`mach_vm_region_recurse` + `mach_vm_read_overwrite`, with SIP restrictions) and FreeBSD are stage M3 in the roadmap ([documentation-0.1.0.md](documentation-0.1.0.md), chapter 14); no date set.

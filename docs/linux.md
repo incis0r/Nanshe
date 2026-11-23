@@ -1,117 +1,118 @@
-# Nanshe na Linuksie
+# Nanshe on Linux
 
-Stan: obsługiwany. Sprawdzony na aarch64 w kontenerze Debian 12 (`rust:1-slim-bookworm`). Linux x86_64: jeszcze niesprawdzony.
+Polish version: [pl/linux.md](pl/linux.md).
+
+Status: supported. Verified on aarch64 in a Debian 12 container (`rust:1-slim-bookworm`). Linux x86_64: not verified yet.
 
 ## Build
 
-Na stacji bez Rusta build idzie w kontenerze (podman):
+On a host without Rust the build runs in a container (podman):
 
 ```sh
-scripts/dev.sh cargo build --release -p nanshe-cli                 # bez kodu sieciowego
-scripts/dev.sh cargo build --release -p nanshe-cli --features llm  # z warstwą LLM
+scripts/dev.sh cargo build --release -p nanshe-cli                 # without network code
+scripts/dev.sh cargo build --release -p nanshe-cli --features llm  # with the LLM layer
 ```
 
-Na hoście z Rustem (stabilny, edycja 2021) te same polecenia `cargo` bez `scripts/dev.sh`. Binarium: `target/release/nanshe`. Nie ma zależności od bibliotek systemowych poza libc; czcionka raportu PDF jest wbudowana.
+On a host with Rust (stable, edition 2021) use the same `cargo` commands without `scripts/dev.sh`. Binary: `target/release/nanshe`. There are no dependencies on system libraries other than libc; the font of the PDF report is embedded.
 
-## Uprawnienia
+## Privileges
 
-Skan czyta `/proc/<pid>/maps` i `/proc/<pid>/mem`. Wystarcza jedno z:
+The scan reads `/proc/<pid>/maps` and `/proc/<pid>/mem`. One of the following is enough:
 
 - root,
 - `CAP_SYS_PTRACE`,
-- ten sam użytkownik co cel i `kernel.yama.ptrace_scope=0`.
+- the same user as the target and `kernel.yama.ptrace_scope=0`.
 
-Wynik i raport podają uprawnienia skanera (root, `CAP_SYS_PTRACE`); skan bez pełnych uprawnień jest w raporcie oznaczony ostrzeżeniem na pierwszej stronie.
+The result and the report state the scanner's privileges (root, `CAP_SYS_PTRACE`); a scan without full privileges is marked in the report with a warning on the first page.
 
-Bez uprawnień proces jest raportowany jako niedostępny, a wynik jako częściowy (kod wyjścia 3 przy `--all`, 2 przy `--pid`). W kontenerze potrzebne `--cap-add SYS_PTRACE` (robi to `scripts/dev.sh`).
+Without privileges the process is reported as inaccessible, and the result as partial (exit code 3 with `--all`, 2 with `--pid`). In a container `--cap-add SYS_PTRACE` is needed (`scripts/dev.sh` does this).
 
-Skaner niczego nie zatrzymuje i niczego nie zapisuje w celu: nie używa `ptrace(PTRACE_ATTACH)`.
+The scanner stops nothing and writes nothing to the target: it does not use `ptrace(PTRACE_ATTACH)`.
 
-## Użycie
+## Usage
 
 ```sh
 nanshe ps
-nanshe scan --pid 1234 --json wynik.json      # skrót na stderr, wynik w pliku
-nanshe scan --all --min high                  # cały host, tylko waga "wysokie"
-nanshe report wynik.json                      # wynik.report.md i wynik.report.pdf
-nanshe explain wynik.json --url http://127.0.0.1:11434   # interpretacja LLM + raport
+nanshe scan --pid 1234 --json wynik.json      # summary on stderr, result in the file
+nanshe scan --all --min high                  # whole host, severity "high" only
+nanshe report wynik.json                      # wynik.report.md and wynik.report.pdf
+nanshe explain wynik.json --url http://127.0.0.1:11434   # LLM interpretation + report
 ```
 
-Kody wyjścia `scan`: 0 brak znalezisk od progu `--min`, 1 są znaleziska, 2 błąd, 3 wynik częściowy bez znalezisk.
+Exit codes of `scan`: 0 no findings at or above the `--min` threshold, 1 there are findings, 2 error, 3 partial result without findings.
 
-## Detektory działające na Linuksie
+## Detectors that work on Linux
 
-| Tag | Punkty | Warunek |
+| Tag | Points | Condition |
 |---|---|---|
-| `RWX` | 30 | region zapisywalny i wykonywalny |
-| `X-PRIV` | 30 | wykonywalna pamięć anonimowa (bez pliku), poza regionami jądra (`[vdso]` itp.) |
-| `MEMFD` | 40 | wykonywalne mapowanie `memfd:` |
-| `DEL-EXEC` | 30 | wykonywalne mapowanie pliku usuniętego z dysku |
-| `X-TMP` | 30 | wykonywalne mapowanie istniejącego pliku z `/tmp/`, `/var/tmp/`, `/dev/shm/`, `/run/shm/`, `/run/user/`, `/var/lock/`, `/run/lock/` albo `/dev/mqueue/` |
-| `ENT-X` | 20/30 | wysoka entropia w regionie wykonywalnym; 10, gdy to pojedyncze strony w zwykłym kodzie z pliku |
-| `HDR` | 40 | nagłówek ELF/PE/Mach-O w regionie bez pliku: na początku strony w każdym regionie, a w regionach wykonywalnych także pod dowolnym przesunięciem (ELF, PE) |
+| `RWX` | 30 | writable and executable region |
+| `X-PRIV` | 30 | executable anonymous memory (not backed by a file), outside kernel regions (`[vdso]` etc.) |
+| `MEMFD` | 40 | executable `memfd:` mapping |
+| `DEL-EXEC` | 30 | executable mapping of a file deleted from disk |
+| `X-TMP` | 30 | executable mapping of an existing file from `/tmp/`, `/var/tmp/`, `/dev/shm/`, `/run/shm/`, `/run/user/`, `/var/lock/`, `/run/lock/` or `/dev/mqueue/` |
+| `ENT-X` | 20/30 | high entropy in an executable region; 10 when it is single pages in ordinary code from a file |
+| `HDR` | 40 | ELF/PE/Mach-O header in a region not backed by a file: at the start of a page in any region, and in executable regions also at any offset (ELF, PE) |
+| `THR-PRIV` | 40 | a thread waiting in a system call whose call instruction lies in memory not backed by a file (outside kernel regions) |
+| `IMG-MOD` | 40 | an executable, non-writable file mapping has pages modified in memory (the `Anonymous` field in `smaps` greater than zero) |
 
-| `THR-PRIV` | 40 | wątek czekający w wywołaniu systemowym, którego instrukcja wywołania leży w pamięci bez pliku (poza regionami jądra) |
-| `IMG-MOD` | 40 | wykonywalne, niezapisywalne mapowanie pliku ma strony zmienione w pamięci (pole `Anonymous` w `smaps` większe od zera) |
+`X-MAP` and `GUARD-X` apply to Windows only.
 
-`X-MAP` i `GUARD-X` dotyczą tylko Windows.
+`THR-PRIV` and `IMG-MOD` are not subject to the reduction for JIT runtimes. `THR-PRIV` reads `/proc/<pid>/task/<tid>/syscall`: a thread that was computing something at the moment of the scan (not waiting in the kernel) is not evaluated. `IMG-MOD` says that the code was changed, but shows neither the differences nor the exact page.
 
-`THR-PRIV` i `IMG-MOD` nie podlegają obniżce dla środowisk JIT. `THR-PRIV` czyta `/proc/<pid>/task/<tid>/syscall`: wątek, który w chwili skanu coś liczył (nie czekał w jądrze), nie jest oceniany. `IMG-MOD` mówi, że kod zmieniono, ale nie pokazuje różnic ani dokładnej strony.
+## SHA-256 hashes
 
-## Skróty SHA-256
+The scan computes file hashes and stores them in the `files` field of the result (`--no-hashes` turns this off):
 
-Skan liczy skróty plików i zapisuje je w polu `files` wyniku (`--no-hashes` wyłącza):
+- the program file of every process, read through `/proc/<pid>/exe` (also when deleted from disk),
+- the files mapped in processes with findings of severity "suspicious" or above, read through `/proc/<pid>/map_files/`, that is the file actually mapped, also a deleted one or a `memfd`.
 
-- plik programu każdego procesu, czytany przez `/proc/<pid>/exe` (także usunięty z dysku),
-- pliki zmapowane w procesach ze znaleziskami od wagi „podejrzane", czytane przez `/proc/<pid>/map_files/`, czyli faktycznie zmapowany plik, także usunięty albo `memfd`.
+Reading `map_files` requires full root privileges. Without them (for example a container with only `CAP_SYS_PTRACE`) the scanner opens the file by path and records a note in the result that for a process in a container this may be a different file; `memfd` and deleted files cannot be hashed in that case. Every region with a finding additionally has a hash of its content (`sha256` in the region). File limit: 512 MiB.
 
-Odczyt `map_files` wymaga pełnych uprawnień roota. Bez nich (np. kontener z samym `CAP_SYS_PTRACE`) skaner otwiera plik po ścieżce i zapisuje w wyniku adnotację, że dla procesu w kontenerze może to być inny plik; plików `memfd` i usuniętych nie da się wtedy policzyć. Każdy region ze znaleziskiem ma dodatkowo skrót swojej zawartości (`sha256` w regionie). Limit pliku: 512 MiB.
+## System context
 
-## Kontekst systemowy
+For a process with a finding of severity "suspicious" or above, the scan additionally collects, by reading `/proc` only:
 
-Dla procesu ze znaleziskiem od wagi „podejrzane" skan zbiera dodatkowo, wyłącznie odczytem `/proc`:
-
-| Co | Skąd |
+| What | Source |
 |---|---|
-| rodzic, liczba wątków, czas startu | `/proc/<pid>/stat`, `btime` z `/proc/stat` |
-| wiersz poleceń, katalog roboczy | `cmdline`, `cwd` |
-| użytkownik | `Uid` ze `status`; nazwa wg `/etc/passwd` skanera |
-| plik programu: rozmiar, czas zmiany, właściciel, tryb, SHA-256 | `/proc/<pid>/exe`, czyli faktycznie uruchomiony plik, także usunięty z dysku |
-| cechy bezpieczeństwa | `TracerPid`, `CapEff`, `Seccomp`, `NoNewPrivs`, katalog główny inny niż `/`, zmienne `LD_PRELOAD`, `LD_AUDIT`, `LD_LIBRARY_PATH` |
-| przodkowie (do 16) i dzieci (do 50) | obraz `/proc` zrobiony raz na skan |
-| otwarte deskryptory (do 200) | `/proc/<pid>/fd` |
-| gniazda TCP/UDP (IPv4, IPv6) i uniksowe | `/proc/<pid>/net/*` dopasowane po i-węźle gniazda; tabele z przestrzeni nazw badanego procesu |
-| pełna mapa regionów | `/proc/<pid>/maps` (ta sama, na której pracowały detektory) |
+| parent, thread count, start time | `/proc/<pid>/stat`, `btime` from `/proc/stat` |
+| command line, working directory | `cmdline`, `cwd` |
+| user | `Uid` from `status`; name according to the scanner's `/etc/passwd` |
+| program file: size, modification time, owner, mode, SHA-256 | `/proc/<pid>/exe`, that is the file actually running, also when deleted from disk |
+| security characteristics | `TracerPid`, `CapEff`, `Seccomp`, `NoNewPrivs`, a root directory other than `/`, the variables `LD_PRELOAD`, `LD_AUDIT`, `LD_LIBRARY_PATH` |
+| ancestors (up to 16) and children (up to 50) | a picture of `/proc` taken once per scan |
+| open descriptors (up to 200) | `/proc/<pid>/fd` |
+| TCP/UDP sockets (IPv4, IPv6) and Unix sockets | `/proc/<pid>/net/*` matched by the socket inode; tables from the namespace of the examined process |
+| full region map | `/proc/<pid>/maps` (the same one the detectors worked on) |
 
-Reszta środowiska procesu nie jest zbierana. `nanshe scan --no-context` wyłącza cały kontekst i mapę.
+The rest of the process environment is not collected. `nanshe scan --no-context` disables the whole context and the map.
 
-Ograniczenia: to stan z chwili skanu (zamkniętych połączeń i zakończonych procesów nie widać); nazwa użytkownika procesu w kontenerze może pochodzić z innej bazy niż `/etc/passwd` skanera; czas startu zakłada 100 tyknięć zegara na sekundę; adresy IPv6 zakładają architekturę little-endian. Wiersz poleceń i ścieżki trafiają do wyniku bez filtrowania sekretów.
+Limitations: this is the state at the moment of the scan (closed connections and exited processes are not visible); the user name of a process in a container may come from a different database than the scanner's `/etc/passwd`; the start time assumes 100 clock ticks per second; IPv6 addresses assume a little-endian architecture. The command line and paths go into the result without filtering of secrets.
 
-## Lista dozwolonych JIT
+## JIT allowlist
 
-Obniża (dzieli przez 3) wagę `RWX`, `X-PRIV` i `ENT-X` dla znanych środowisk JIT. Działa tylko, gdy plik programu wskazany przez jądro (`/proc/<pid>/exe`):
+It reduces (divides by 3) the severity of `RWX`, `X-PRIV` and `ENT-X` for known JIT runtimes. It applies only when the program file indicated by the kernel (`/proc/<pid>/exe`):
 
-- nie jest usunięty,
-- leży w `/usr/`, `/opt/`, `/bin/`, `/sbin/` albo `/snap/`,
-- należy do roota i nie jest zapisywalny dla grupy ani innych,
-- jest tym samym plikiem (urządzenie i i-węzeł), który widzi skaner.
+- is not deleted,
+- is in `/usr/`, `/opt/`, `/bin/`, `/sbin/` or `/snap/`,
+- is owned by root and is not writable by group or others,
+- is the same file (device and inode) that the scanner sees.
 
-Sama nazwa procesu niczego nie obniża.
+The process name alone reduces nothing.
 
-## Znane ograniczenia i ślepe punkty
+## Known limitations and blind spots
 
-Każdy poniższy punkt ma próbkę w `tests/samples` i oczekiwanie w `scripts/e2e.sh`:
+Each item below has a sample in `tests/samples` and an expectation in `scripts/e2e.sh`:
 
-- **R-X z pliku poza katalogami tymczasowymi**: `X-TMP` obejmuje tylko listę katalogów zapisywalnych dla wszystkich (próbka `rx-file` w `/tmp` jest wykrywana). Ten sam ładunek z katalogu domowego albo `/run/user/` pozostaje niewidoczny.
-- **Fałszywe alarmy `X-TMP`**: programy rozpakowujące biblioteki natywne do `/tmp` (np. JNI w Javie, PyInstaller, AppImage) dadzą wagę „podejrzane". Skali nie zmierzono; detektor nie jest objęty listą dozwolonych.
-- **Nagłówek ELF z uszkodzonym polem** (`hdr-corrupt`): `HDR` nie reaguje, zostaje `X-PRIV`. Wymazane sygnatury (stomping) to planowany detektor `HDR-STRIP`.
-- **Nagłówek poza granicą strony w danych niewykonywalnych** (np. ładunek w buforze RW na stercie przed zmianą uprawnień): niewidoczny. To świadome ograniczenie: program ładujący trzyma na stosie kopię nagłówka każdej ładowanej biblioteki, więc szukanie pod dowolnym przesunięciem w danych dawało `HDR` w każdym procesie (sprawdzone na próbce `clean`). W regionach wykonywalnych nagłówek pod przesunięciem jest wykrywany (`hdr-offset`).
-- **RWX o niskiej entropii** (`rwx-lowent`): 60 punktów zamiast 90, bez `ENT-X`.
-- Proces z ponad 1 048 576 regionami: skanowane są pierwsze regiony do limitu, znaleziska zostają, a wynik procesu jest oznaczony jako niekompletny (wynik częściowy).
-- Region większy niż `--max-region-mib` (domyślnie 64) jest czytany częściowo i tak oznaczony.
-- Procesy w innej przestrzeni nazw montowania: lista dozwolonych ich nie obejmuje (plik programu nie jest tym samym plikiem dla skanera).
-- Brak analizy zrzutów (etap M2).
+- **R-X from a file outside temporary directories**: `X-TMP` covers only a list of world-writable directories (the sample `rx-file` in `/tmp` is detected). The same payload from a home directory or `/run/user/` remains invisible.
+- **`X-TMP` false positives**: programs that unpack native libraries into `/tmp` (for example JNI in Java, PyInstaller, AppImage) will produce the severity "suspicious". The scale was not measured; the detector is not covered by the allowlist.
+- **ELF header with a corrupted field** (`hdr-corrupt`): `HDR` does not react, `X-PRIV` remains. Wiped signatures (stomping) are the planned `HDR-STRIP` detector.
+- **Header off a page boundary in non-executable data** (for example a payload in an RW buffer on the heap before the permissions are changed): invisible. This is a deliberate limitation: the program loader keeps on the stack a copy of the header of every library it loads, so searching at any offset in data produced `HDR` in every process (verified on the `clean` sample). In executable regions a header at an offset is detected (`hdr-offset`).
+- **RWX with low entropy** (`rwx-lowent`): 60 points instead of 90, without `ENT-X`.
+- A process with more than 1 048 576 regions: the first regions up to the limit are scanned, the findings are kept, and the result for the process is marked as incomplete (partial result).
+- A region larger than `--max-region-mib` (64 by default) is read partially and marked as such.
+- Processes in a different mount namespace: the allowlist does not cover them (the program file is not the same file for the scanner).
+- No dump analysis (stage M2).
 
-## Warstwa LLM i raport
+## LLM layer and report
 
-Wspólne dla wszystkich systemów: [README](../README.pl.md) i [dokumentacja wersji](dokumentacja-0.1.0.md). Testy: [testy.md](testy.md).
+Common to all systems: [README](../README.md) and the [version documentation](documentation-0.1.0.md). Tests: [tests.md](tests.md).

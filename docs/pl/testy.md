@@ -1,5 +1,7 @@
 # Testy Nanshe
 
+Wersja angielska: [../tests.md](../tests.md).
+
 Trzy warstwy: testy jednostkowe (logika, bez żywych procesów), testy end-to-end na żywych próbkach (Linux w kontenerze, Windows na dedykowanej stacji testowej) i przebiegi na żywo z modelami. Zasada wspólna: **każdy test musi umieć oblać**. Dlatego testy są parami: przypadek, który ma dać wynik, i kontrola różniąca się jedną cechą, która ma go nie dać.
 
 ## Jak uruchomić
@@ -245,7 +247,7 @@ Test buduje pakiet (z kontrolą spójności ICE narzędzia WiX), instaluje go po
 |---|---|
 | budowanie | skrypt kończy się kodem 0 i powstaje plik `.msi`; przy błędzie budowania plik jest usuwany |
 | instalacja cicha | `msiexec /i ... /qn` kończy się kodem 0; program uruchamia się z katalogu instalacji |
-| pliki | baza wiedzy po polsku i angielsku, obie licencje, plik konsoli |
+| pliki | baza wiedzy po polsku i angielsku, obie licencje, plik konsoli (`nanshe-console.cmd`) |
 | uprawnienia katalogu programu | zwykli użytkownicy nie mają żadnego prawa zapisu do katalogu, `nanshe.exe` ani pliku konsoli. Kontrola samego sprawdzenia: katalog z prawem zapisu dla użytkowników jest wykrywany (pierwsza wersja sprawdzenia miała za szeroką maskę i oblewała poprawną instalację) |
 | katalog wyników | wpisy tylko dla Administratorów i SYSTEM, dziedziczenie wyłączone, właściciel Administratorzy |
 | PATH, wpis w „Programy i funkcje", skrót | obecne po instalacji; wpis pochodzi od Instalatora Windows, wydawca HoneyLens |
@@ -266,7 +268,7 @@ Nie są częścią skryptów (wymagają sieci i klucza, a wynik jest niedetermin
 | Nous, `anthropic/claude-haiku-5.5`, d1 | komplet interpretacji, raport `.md` i `.pdf` wygenerowany |
 | stacja Windows -> Ollama w sieci lokalnej | `llm check` i `explain` działają z hosta Windows |
 
-To obserwacje, nie pomiar jakości: próby są małe, a zestawu oceny z punktu 15.9 jeszcze nie ma.
+To obserwacje, nie pomiar jakości: próby są małe, a zestawu oceny jakości modeli jeszcze nie ma.
 
 ## Czego testy nie obejmują
 

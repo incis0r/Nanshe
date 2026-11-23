@@ -34,7 +34,7 @@ Exit codes of `scan`: 0 no findings at or above the threshold, 1 findings, 2 err
 
 The result file and the report contain unfiltered data from the examined host (command lines, paths, network addresses, bytes from memory). Treat them as evidence. `--no-bytes` omits byte previews and strings.
 
-Example reports from a synthetic test sample: [docs/przyklady/](docs/przyklady/) (English: [docs/przyklady/en/](docs/przyklady/en/)).
+Example reports from a synthetic test sample: [docs/examples/](docs/examples/) (English: [docs/examples/en/](docs/examples/en/)).
 
 ## Language model layer (optional)
 
@@ -69,12 +69,14 @@ The Windows end-to-end and installer tests change the machine they run on (they 
 
 ## Documentation
 
-The detailed documentation is currently in Polish:
+Start at [docs/README.md](docs/README.md). Main documents:
 
-- [docs/dokumentacja-0.1.0.md](docs/dokumentacja-0.1.0.md): full description of version 0.1.0 (capabilities, architecture, detectors, result file, report, security of the tool, what was tested, known limitations)
+- [docs/documentation-0.1.0.md](docs/documentation-0.1.0.md): full description of version 0.1.0 (capabilities, architecture, detectors, result file, report, security of the tool, what was tested, known limitations)
 - [docs/linux.md](docs/linux.md), [docs/windows.md](docs/windows.md), [docs/macos.md](docs/macos.md): build, privileges, detectors and limitations per system
-- [docs/baza-wiedzy.md](docs/baza-wiedzy.md): the knowledge base (`kb/`) and how to extend it
-- [docs/testy.md](docs/testy.md): all tests, what they check and what they do not cover
+- [docs/knowledge-base.md](docs/knowledge-base.md): the knowledge base (`kb/`) and how to extend it
+- [docs/tests.md](docs/tests.md): all tests, what they check and what they do not cover
+
+Polish versions are in [docs/pl/](docs/pl/).
 
 ## Known limitations
 

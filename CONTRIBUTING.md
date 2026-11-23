@@ -53,7 +53,7 @@ Continuous integration on GitHub runs the Linux unit and end-to-end tests in a c
 | `crates/nanshe-cli` | the `nanshe` command |
 | `tests/samples` | synthetic samples used by the end-to-end tests |
 | `scripts/`, `packaging/` | build, test and packaging scripts |
-| `docs/` | documentation (currently in Polish) |
+| `docs/` | documentation in English; Polish versions in `docs/pl/` |
 
 ## Submitting
 

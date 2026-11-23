@@ -1,98 +1,100 @@
-# Nanshe na Windows
+# Nanshe on Windows
 
-Stan: obsługiwany. Sprawdzony na Windows 11 Pro x64 (jedna stacja testowa), build natywny MSVC.
+Polish version: [pl/windows.md](pl/windows.md).
+
+Status: supported. Verified on Windows 11 Pro x64 (one test host), native MSVC build.
 
 ## Build
 
-Wymagane: Rust (toolchain `stable-x86_64-pc-windows-msvc`) i Visual Studio Build Tools z obciążeniem C++.
+Required: Rust (toolchain `stable-x86_64-pc-windows-msvc`) and Visual Studio Build Tools with the C++ workload.
 
 ```powershell
 cargo build --release -p nanshe-cli --features llm
 # target\release\nanshe.exe
 ```
 
-Testy end-to-end (`scripts\e2e.ps1`) i testy instalatorów uruchamiaj tylko na dedykowanej stacji testowej: startują próbki, instalują i usuwają program.
+Run the end-to-end tests (`scripts\e2e.ps1`) and the installer tests only on a dedicated test host: they start samples, and install and remove the program.
 
-## Instalacja z paczki
+## Installing from the package
 
-Paczkę buduje na hoście z toolchainem MSVC skrypt `scripts\package-windows.ps1`; powstaje `dist\nanshe-<wersja>-windows-x64.zip` z programem, bazą wiedzy, instalatorem i listą skrótów `SHA256SUMS`. Po rozpakowaniu, w konsoli administratora:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File install.ps1      # opcje: -InstallDir, -NoPath, -NoShortcut, -Quiet
-```
-
-Instalator:
-
-- sprawdza skróty SHA-256 wszystkich plików paczki i odmawia, gdy którykolwiek się nie zgadza,
-- instaluje do `C:\Program Files\Nanshe`; katalog należy do Administratorów, zwykli użytkownicy mają tylko odczyt, dziedziczenie uprawnień jest wyłączone,
-- tworzy `C:\ProgramData\Nanshe\wyniki` dostępny tylko dla Administratorów i SYSTEM (wyniki i raporty zawierają dane z pamięci),
-- odmawia, gdy któryś z tych katalogów już istnieje i jest dowiązaniem, zawiera dowiązanie albo należy do zwykłego konta (w `ProgramData` katalog może założyć każdy użytkownik); sprawdza oba katalogi, zanim cokolwiek zmieni,
-- dopisuje katalog programu do systemowego `PATH`, tworzy skrót w menu Start uruchamiany jako administrator i wpis w „Programy i funkcje".
-
-Usuwanie: „Programy i funkcje" albo `uninstall.ps1` z katalogu programu; wyniki zostają, chyba że podano `-RemoveData`. Skrypt usuwania stosuje te same kontrole co instalator: odmawia, gdy katalog jest dowiązaniem, zawiera dowiązanie albo należy do zwykłego konta. Pliku MSI nie ma (wymaga zestawu WiX), a `nanshe.exe` nie jest podpisany cyfrowo, więc system może ostrzegać przy uruchomieniu.
-
-### Instalator MSI
-
-Drugą, zalecaną postacią jest pakiet Instalatora Windows: `nanshe-<wersja>-windows-x64.msi`. Buduje go `scripts\package-msi.ps1` narzędziem WiX Toolset 3.14 (licencja MS-RL; służy tylko do budowania i nie trafia do pakietu):
+The package is built on a host with the MSVC toolchain by the script `scripts\package-windows.ps1`; it produces `dist\nanshe-<version>-windows-x64.zip` with the program, the knowledge base, the installer and the hash list `SHA256SUMS`. After unpacking, in an administrator console:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\package-msi.ps1 -Bin <katalog z nanshe.exe> -Wix <katalog z candle.exe> -Out dist
-msiexec /i nanshe-0.1.0-windows-x64.msi            # z oknami; cicho: /qn /norestart
-msiexec /x nanshe-0.1.0-windows-x64.msi /qn        # usunięcie (albo "Programy i funkcje")
+powershell -ExecutionPolicy Bypass -File install.ps1      # options: -InstallDir, -NoPath, -NoShortcut, -Quiet
 ```
 
-Pakiet:
+The installer:
 
-- instaluje dla wszystkich użytkowników do `C:\Program Files\Nanshe` (program, baza wiedzy po polsku i angielsku, licencje, `README.md`),
-- tworzy katalog `C:\Program Files\Nanshe\wyniki` dostępny tylko dla Administratorów i konta SYSTEM, bez dziedziczenia uprawnień,
-- dopisuje katalog programu do systemowej zmiennej PATH i usuwa wpis przy odinstalowaniu,
-- dodaje w menu Start skrót „Nanshe (administrator console)", który otwiera konsolę z podniesionymi uprawnieniami w katalogu wyników,
-- pokazuje licencję Apache 2.0 przed instalacją,
-- zastępuje poprzednią wersję zainstalowaną z MSI (stały identyfikator rodziny produktu),
-- odmawia instalacji, gdy wykryje wersję zainstalowaną skryptem `install.ps1` (oba sposoby używają tego samego katalogu).
+- checks the SHA-256 hashes of all files in the package and refuses when any of them does not match,
+- installs to `C:\Program Files\Nanshe`; the directory is owned by Administrators, standard users have read access only, permission inheritance is disabled,
+- creates `C:\ProgramData\Nanshe\wyniki`, accessible only to Administrators and SYSTEM (results and reports contain data from memory),
+- refuses when either of these directories already exists and is a reparse point (junction or link), contains one, or is owned by a standard account (in `ProgramData` any user can create a directory); it checks both directories before changing anything,
+- adds the program directory to the system `PATH`, creates a Start menu shortcut that runs as administrator, and an entry in "Programs and Features".
 
-Różnice wobec instalatora skryptowego: katalog wyników leży w `Program Files`, a nie w `ProgramData`. W `ProgramData` zwykły użytkownik może przygotować katalog przed instalacją; skrypt to sprawdza, a pakiet MSI unika problemu, wybierając miejsce, w którym zwykły użytkownik niczego nie utworzy. Przy odinstalowaniu pliki wyników zostają.
+Removal: "Programs and Features" or `uninstall.ps1` from the program directory; results are kept unless `-RemoveData` is given. The removal script applies the same checks as the installer: it refuses when the directory is a reparse point, contains one, or is owned by a standard account.exe` is not digitally signed, so the system may show a warning on launch.
 
-Pakiet i program nie są podpisane cyfrowo: Windows pokaże ostrzeżenie o nieznanym wydawcy. Pliki WiX także nie mają podpisu, dlatego skrypt budujący sprawdza skrót SHA-256 archiwum WiX zapisany w skrypcie (skrót pochodzi z jednego pobrania z oficjalnego wydania; nie był porównany z niezależnym źródłem).
+### MSI installer
 
-## Uprawnienia
+The second, recommended form is a Windows Installer package: `nanshe-<version>-windows-x64.msi`. It is built by `scripts\package-msi.ps1` with WiX Toolset 3.14 (MS-RL license; it is used only for building and is not included in the package):
 
-- Uruchamiać jako administrator (podniesiony). Narzędzie włącza `SeDebugPrivilege`; bez niej widać tylko procesy własnego użytkownika, a narzędzie wypisuje ostrzeżenie.
-- Procesy chronione (PPL, np. LSASS z `RunAsPPL`, usługi antywirusa) są niedostępne także dla administratora: trafiają do wyniku jako niedostępne, a wynik jest częściowy.
-- Wynik i raport podają, z jakimi uprawnieniami działał skaner (konto, poziom integralności, `SeDebugPrivilege`). Skan bez podniesionych uprawnień albo bez `SeDebugPrivilege` jest w raporcie oznaczony ostrzeżeniem na pierwszej stronie.
-- Konto SYSTEM nie daje więcej niż administrator z podniesionymi uprawnieniami: w dwóch pomiarach na stacji testowej (2026-11-22) oba skany miały tyle samo procesów niedostępnych (18, potem 20) i te same procesy ze znaleziskami. Procesy chronione wymagają innej drogi (zrzut pamięci albo odczyt z hiperwizora).
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\package-msi.ps1 -Bin <directory with nanshe.exe> -Wix <directory with candle.exe> -Out dist
+msiexec /i nanshe-0.1.0-windows-x64.msi            # with dialogs; silent: /qn /norestart
+msiexec /x nanshe-0.1.0-windows-x64.msi /qn        # removal (or "Programs and Features")
+```
 
-Skaner używa `OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ)`, `VirtualQueryEx` i `ReadProcessMemory`. Niczego nie zapisuje w celu i nie wstrzykuje kodu.
+The package:
 
-## Strony ze strażnikiem (PAGE_GUARD)
+- installs for all users to `C:\Program Files\Nanshe` (the program, the knowledge base in Polish and English, licenses, `README.md`),
+- creates the directory `C:\Program Files\Nanshe\wyniki`, accessible only to Administrators and the SYSTEM account, without permission inheritance,
+- adds the program directory to the system PATH variable and removes the entry on uninstall,
+- adds the Start menu shortcut "Nanshe (administrator console)", which opens an elevated console in the results directory,
+- shows the Apache 2.0 license before installation,
+- replaces a previous version installed from MSI (fixed product family identifier),
+- refuses to install when it detects a version installed with the `install.ps1` script (both methods use the same directory).
 
-Odczyt strony ze strażnikiem zdejmuje flagę, czyli zmienia stan badanego procesu. Dlatego takich stron skaner nie czyta.
+Differences from the script installer: the results directory is in `Program Files`, not in `ProgramData`. In `ProgramData` a standard user can prepare the directory before installation; the script checks for that, and the MSI package avoids the problem by choosing a location where a standard user cannot create anything. On uninstall the result files are kept.
 
-- Wykonywalny region ze strażnikiem dostaje tag `GUARD-X` (30 punktów), liczy się jako nieodczytany, a wynik jest częściowy. Detektory treści (`ENT-X`, `HDR`) go nie sprawdziły i raport mówi to wprost.
-- Zwykłe strony strażnika stosu (RW) nie są liczone: ma je każdy wątek.
+The package and the program are not digitally signed: Windows will show an unknown publisher warning. The WiX files are not signed either, which is why the build script checks the SHA-256 hash of the WiX archive stored in the script (the hash comes from a single download of the official release; it was not compared with an independent source).
 
-## Kontekst systemowy
+## Privileges
 
-Dla procesu ze znaleziskiem od wagi „podejrzane" skan zbiera dodatkowo, wyłącznie zapytaniami o metadane (`PROCESS_QUERY_LIMITED_INFORMATION`):
+- Run as administrator (elevated). The tool enables `SeDebugPrivilege`; without it only the processes of the current user are visible, and the tool prints a warning.
+- Protected processes (PPL, for example LSASS with `RunAsPPL`, antivirus services) are inaccessible to an administrator as well: they are recorded in the result as inaccessible, and the result is partial.
+- The result and the report state the privileges the scanner ran with (account, integrity level, `SeDebugPrivilege`). A scan without elevation or without `SeDebugPrivilege` is marked in the report with a warning on the first page.
+- The SYSTEM account gives no more than an elevated administrator: in two measurements on the test host (2026-11-22) both scans had the same number of inaccessible processes (18, then 20) and the same processes with findings. Protected processes require a different route (a memory dump or reading from the hypervisor).
 
-| Co | Skąd |
+The scanner uses `OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ)`, `VirtualQueryEx` and `ReadProcessMemory`. It writes nothing to the target and injects no code.
+
+## Guard pages (PAGE_GUARD)
+
+Reading a guard page clears the flag, which means it changes the state of the examined process. For that reason the scanner does not read such pages.
+
+- An executable region with a guard gets the tag `GUARD-X` (30 points), counts as unread, and the result is partial. The content detectors (`ENT-X`, `HDR`) did not check it, and the report says so explicitly.
+- Ordinary stack guard pages (RW) are not counted: every thread has them.
+
+## System context
+
+For a process with a finding of severity "suspicious" or above, the scan additionally collects, using metadata queries only (`PROCESS_QUERY_LIMITED_INFORMATION`):
+
+| What | Source |
 |---|---|
-| rodzic, liczba wątków, dzieci | migawka `CreateToolhelp32Snapshot` |
-| wiersz poleceń | `NtQueryInformationProcess(ProcessCommandLineInformation)`; jądro kopiuje go do bufora skanera |
-| użytkownik, poziom integralności, podniesienie uprawnień | token procesu (`TokenUser`, `TokenIntegrityLevel`, `TokenElevation`) |
-| czas startu, sesja | `GetProcessTimes`, `ProcessIdToSessionId` |
-| plik programu: rozmiar, czas zmiany, SHA-256 | ścieżka z `QueryFullProcessImageNameW`, plik czytany z dysku |
-| gniazda TCP/UDP (IPv4, IPv6) z właścicielem | `GetExtendedTcpTable`, `GetExtendedUdpTable` |
-| otwarte uchwyty: liczba wszystkich oraz nazwane pliki dyskowe, klucze rejestru, sekcje, muteksy i uchwyty do innych procesów (do 300) | `NtQuerySystemInformation(SystemExtendedHandleInformation)`, potem typ i nazwa przez kopię uchwytu |
-| pełna mapa regionów | `VirtualQueryEx` (ta sama, na której pracowały detektory) |
+| parent, thread count, children | `CreateToolhelp32Snapshot` snapshot |
+| command line | `NtQueryInformationProcess(ProcessCommandLineInformation)`; the kernel copies it into the scanner's buffer |
+| user, integrity level, elevation | process token (`TokenUser`, `TokenIntegrityLevel`, `TokenElevation`) |
+| start time, session | `GetProcessTimes`, `ProcessIdToSessionId` |
+| program file: size, modification time, SHA-256 | path from `QueryFullProcessImageNameW`, file read from disk |
+| TCP/UDP sockets (IPv4, IPv6) with owner | `GetExtendedTcpTable`, `GetExtendedUdpTable` |
+| open handles: the total count plus named disk files, registry keys, sections, mutexes and handles to other processes (up to 300) | `NtQuerySystemInformation(SystemExtendedHandleInformation)`, then type and name through a copy of the handle |
+| full region map | `VirtualQueryEx` (the same one the detectors worked on) |
 
-Uchwyty: żeby poznać typ i nazwę obiektu, skaner otwiera proces z prawem `PROCESS_DUP_HANDLE` i kopiuje uchwyt do siebie bez żadnych praw (`DuplicateHandle` z dostępem 0; dla uchwytów do procesów z prawem zapytania o metadane), po czym kopię zamyka. Stan badanego procesu się nie zmienia, ale obiekt ma przez chwilę o jedno odwołanie więcej. To jedyne miejsce, w którym skaner prosi o prawo inne niż odczyt. Nazwy są pytane tylko dla plików dyskowych i obiektów innych niż pliki: zapytanie o nazwę potoku potrafi zawiesić wątek, więc potoki i gniazda są zapisywane bez nazwy. Każde zapytanie o nazwę idzie przez wątek roboczy z limitem 500 ms; po trzech przekroczeniach limitu lista uchwytów procesu jest przerywana z adnotacją w raporcie. Uchwyt do innego procesu jest opisany numerem PID, nazwą i prawami pozwalającymi ingerować w ten proces (zapis pamięci, operacje na pamięci, tworzenie wątków, kopiowanie uchwytów).
+Handles: to learn the type and name of an object, the scanner opens the process with the `PROCESS_DUP_HANDLE` right and copies the handle to itself with no rights at all (`DuplicateHandle` with access 0; for handles to processes, with the metadata query right), then closes the copy. The state of the examined process does not change, but for a moment the object has one more reference. This is the only place where the scanner asks for a right other than read. Names are queried only for disk files and for objects other than files: a name query on a pipe can hang the thread, so pipes and sockets are recorded without a name. Every name query goes through a worker thread with a 500 ms limit; after the limit is exceeded three times, the handle list of the process is cut short with a note in the report. A handle to another process is described by its PID, its name and the rights that allow interfering with that process (memory write, memory operations, thread creation, handle duplication).
 
-Numer PID rodzica bywa użyty ponownie po jego zakończeniu, dlatego rodzic jest uznawany tylko, gdy powstał przed dzieckiem; inaczej łańcuch przodków jest urywany z adnotacją w raporcie.
+The PID of a parent can be reused after the parent exits, so a parent is accepted only when it was created before the child; otherwise the ancestor chain is cut off with a note in the report.
 
-Nie są zbierane: katalog roboczy, właściciel pliku programu, podpis cyfrowy pliku, nazwy potoków, uchwyty obiektów bez nazwy (poza ich liczbą). Uchwyty działają tylko w wersji 64-bitowej narzędzia. Procesy chronione, dla których system odmawia `PROCESS_DUP_HANDLE`, mają podaną samą liczbę uchwytów. `nanshe scan --no-context` wyłącza cały kontekst i mapę.
+Not collected: working directory, owner of the program file, digital signature of the file, pipe names, handles of unnamed objects (apart from their count). Handles work only in the 64-bit version of the tool. Protected processes for which the system denies `PROCESS_DUP_HANDLE` have only the handle count reported. `nanshe scan --no-context` disables the whole context and the map.
 
-## Użycie
+## Usage
 
 ```powershell
 nanshe ps
@@ -101,67 +103,66 @@ nanshe scan --all --min high --json host.json
 nanshe report wynik.json
 ```
 
-## Detektory działające na Windows
+## Detectors that work on Windows
 
-| Tag | Punkty | Warunek |
+| Tag | Points | Condition |
 |---|---|---|
-| `RWX` | 30 | strona `PAGE_EXECUTE_READWRITE` / `PAGE_EXECUTE_WRITECOPY` |
-| `X-PRIV` | 30 | wykonywalna pamięć prywatna (`MEM_PRIVATE`) |
-| `X-MAP` | 30 | wykonywalne mapowanie `MEM_MAPPED`, czyli sekcja niebędąca obrazem modułu |
-| `GUARD-X` | 30 | wykonywalny region z `PAGE_GUARD`, treść nieodczytana |
-| `ENT-X` | 20/30 | wysoka entropia w regionie wykonywalnym |
-| `HDR` | 40 | nagłówek PE (`MZ` + `PE\0\0`, niezerowe pole Machine, 1-96 sekcji) w regionie bez pliku: na początku strony w każdym regionie, a w regionach wykonywalnych także pod dowolnym przesunięciem |
+| `RWX` | 30 | `PAGE_EXECUTE_READWRITE` / `PAGE_EXECUTE_WRITECOPY` page |
+| `X-PRIV` | 30 | executable private memory (`MEM_PRIVATE`) |
+| `X-MAP` | 30 | executable `MEM_MAPPED` mapping, that is a section that is not a module image |
+| `GUARD-X` | 30 | executable region with `PAGE_GUARD`, content not read |
+| `ENT-X` | 20/30 | high entropy in an executable region |
+| `HDR` | 40 | PE header (`MZ` + `PE\0\0`, non-zero Machine field, 1-96 sections) in a region not backed by a file: at the start of a page in any region, and in executable regions also at any offset |
+| `THR-PRIV` | 40 | the thread start address lies in memory not backed by a file |
+| `IMG-MOD` | 10/40 | pages of an executable, non-writable module image are no longer shared with the file (copy on write); 40 for `amsi.dll` and `wldp.dll`, 10 for the rest |
 
-| `THR-PRIV` | 40 | adres startu wątku leży w pamięci bez pliku |
-| `IMG-MOD` | 10/40 | strony wykonywalnego, niezapisywalnego obrazu modułu nie są już współdzielone z plikiem (kopia przy zapisie); 40 dla `amsi.dll` i `wldp.dll`, 10 dla pozostałych |
+`MEMFD` and `DEL-EXEC` apply to Linux only.
 
-`MEMFD` i `DEL-EXEC` dotyczą tylko Linuksa.
+`THR-PRIV` and `IMG-MOD` are not subject to the reduction for JIT runtimes. The start address comes from `NtQueryInformationThread`, and the page state from `QueryWorkingSetEx` (both read-only). `IMG-MOD` evaluates only the pages present in the working set of the process and does not show what was changed.
 
-`THR-PRIV` i `IMG-MOD` nie podlegają obniżce dla środowisk JIT. Adres startu pochodzi z `NtQueryInformationThread`, a stan stron z `QueryWorkingSetEx` (oba tylko do odczytu). `IMG-MOD` ocenia wyłącznie strony obecne w zestawie roboczym procesu i nie pokazuje, co zmieniono.
+Measurement on the test host (2026-11-22, 240 processes): `IMG-MOD` occurred in 28 regions of 19 processes, including `user32.dll` in 10 processes, `clr.dll` in 9, `ntdll.dll` in 3 (WebView2 processes) and the libraries of the monitoring agent. I did not examine the causes one by one; known benign sources are relocation of libraries without ASLR, Chromium sandbox hooks and the .NET runtime itself. That is why an ordinary library gets 10 points ("info", also together with `ENT-X` in the same code; at 20 points ten ordinary processes became "suspicious"), and only the script security modules (`amsi.dll`, `wldp.dll`), whose modification in memory is typical of bypasses, carry the full severity. `THR-PRIV` did not occur even once in this measurement.
 
-Pomiar na stacji testowej (2026-11-22, 240 procesów): `IMG-MOD` wystąpił w 28 regionach 19 procesów, w tym `user32.dll` w 10 procesach, `clr.dll` w 9, `ntdll.dll` w 3 (procesy WebView2) i biblioteki agenta monitoringu. Przyczyn nie badałem pojedynczo; znane łagodne źródła to relokacja bibliotek bez ASLR, podpięcia piaskownicy Chromium i samo środowisko .NET. Dlatego zwykła biblioteka dostaje 10 punktów („info", także razem z `ENT-X` w tym samym kodzie; przy 20 punktach dziesięć zwykłych procesów stawało się „podejrzane"), a pełną wagę mają tylko moduły zabezpieczeń skryptów (`amsi.dll`, `wldp.dll`), których zmiana w pamięci jest typowa dla obejść. `THR-PRIV` nie wystąpił w tym pomiarze ani razu.
+## SHA-256 hashes
 
-## Skróty SHA-256
+The scan computes file hashes and stores them in the `files` field of the result (`--no-hashes` turns this off): the program file of every process, and the files mapped in processes with findings of severity "suspicious" or above (opened by device path). Every region with a finding additionally has a hash of its content. File limit: 512 MiB. The digital signature of files is not checked.
 
-Skan liczy skróty plików i zapisuje je w polu `files` wyniku (`--no-hashes` wyłącza): plik programu każdego procesu oraz pliki zmapowane w procesach ze znaleziskami od wagi „podejrzane" (otwierane po ścieżce urządzenia). Każdy region ze znaleziskiem ma dodatkowo skrót swojej zawartości. Limit pliku: 512 MiB. Podpis cyfrowy plików nie jest sprawdzany.
+## Baseline and noise
 
-## Linia bazowa i szum
+Measurement of `scan --all` on the test host (2026-11-21): 246 processes, 22 GB, 45 s; 18 processes inaccessible, 25 with "suspicious" or "high" regions. Almost all of the noise is JIT runtimes:
 
-Pomiar `scan --all` na stacji testowej (2026-11-21): 246 procesów, 22 GB, 45 s; 18 procesów niedostępnych, 25 z regionami „podejrzane" lub „wysokie". Prawie cały szum to środowiska JIT:
+- .NET Framework: private RWX heaps in every process with `clr.dll` loaded, one RWX page in the `clr.dll` image, executable sections not backed by a file (`X-MAP`),
+- V8 in Electron/WebView2 applications.
 
-- .NET Framework: prywatne sterty RWX w każdym procesie z załadowanym `clr.dll`, jedna strona RWX w obrazie `clr.dll`, wykonywalne sekcje bez pliku (`X-MAP`),
-- V8 w aplikacjach Electron/WebView2.
+### Severity reduction for JIT runtimes
 
-### Obniżka wagi dla środowisk JIT
+Measurement on the test host (2026-11-22, `scan --all`, 244 processes): before the change 20 processes had "suspicious" or "high" regions, after the change 5. What remained was an in-house tool run from outside the system directories and four `Teams.exe` processes from the user profile, that is programs outside the system directories; 14 processes have findings with the reduction note, and 213 of 222 program files meet the directory and owner condition. The result after tightening the conditions (owner, runtime directories) is the same. This is one host.
 
-Pomiar na stacji testowej (2026-11-22, `scan --all`, 244 procesy): przed zmianą 20 procesów miało regiony „podejrzane" lub „wysokie", po zmianie 5. Zostało narzędzie własne uruchamiane spoza katalogów systemowych i cztery procesy `Teams.exe` z profilu użytkownika, czyli programy spoza katalogów systemowych; 14 procesów ma znaleziska z adnotacją obniżki, a 213 z 222 plików programów spełnia warunek katalogu i właściciela. Wynik po zaostrzeniu warunków (właściciel, katalogi środowisk) jest taki sam. To jedna stacja.
+On Windows a JIT runtime is recognised by a loaded module, because .NET and WebView2 run inside arbitrary programs. The severity of `RWX`, `X-PRIV`, `X-MAP` and `ENT-X` is divided by 3 (the findings stay visible, with the note `jit:dotnet` or `jit:webview2`) when both conditions are met:
 
-Na Windows środowisko JIT jest rozpoznawane po załadowanym module, bo .NET i WebView2 działają wewnątrz dowolnych programów. Waga `RWX`, `X-PRIV`, `X-MAP` i `ENT-X` jest dzielona przez 3 (znaleziska zostają widoczne, z adnotacją `jit:dotnet` albo `jit:webview2`), gdy spełnione są oba warunki:
+- the program file is in `%SystemRoot%`, `%ProgramFiles%` or `%ProgramFiles(x86)%` (values from the scanner's environment), outside the subdirectories in which a standard user can create files (`Temp`, `Tasks`, `Tracing`, `spool`, `debug` and a few others), and its owner is SYSTEM, the Administrators group or TrustedInstaller,
+- the process contains a module image (`MEM_IMAGE`) of the runtime loaded from its installation directory at the root of the volume: `clr.dll` from `\Windows\Microsoft.NET\Framework*`, `coreclr.dll` from `\Program Files\dotnet\shared` or `\Program Files\WindowsApps`, `msedge.dll` from the EdgeWebView or Edge directories.
 
-- plik programu leży w `%SystemRoot%`, `%ProgramFiles%` albo `%ProgramFiles(x86)%` (wartości ze środowiska skanera), poza podkatalogami, w których zwykły użytkownik może tworzyć pliki (`Temp`, `Tasks`, `Tracing`, `spool`, `debug` i kilka innych), a jego właścicielem jest SYSTEM, grupa Administratorzy albo TrustedInstaller,
-- w procesie jest obraz modułu (`MEM_IMAGE`) środowiska załadowany z jego katalogu instalacyjnego w korzeniu wolumenu: `clr.dll` z `\Windows\Microsoft.NET\Framework*`, `coreclr.dll` z `\Program Files\dotnet\shared` albo `\Program Files\WindowsApps`, `msedge.dll` z katalogów EdgeWebView albo Edge.
+The first condition exists so that loading `clr.dll` into one's own program from `%TEMP%` or from `C:\Windows\Temp` is not enough. `HDR` and `GUARD-X` are not reduced, and `X-MAP` only for sections not backed by a file (this is how .NET maps generated code); an executable mapping of a file never gets the reduction.
 
-Pierwszy warunek jest po to, żeby nie wystarczyło załadować `clr.dll` do własnego programu z `%TEMP%` albo z `C:\Windows\Temp`. `HDR` i `GUARD-X` nie są obniżane, a `X-MAP` tylko dla sekcji bez pliku (tak .NET mapuje wygenerowany kod); wykonywalne mapowanie pliku nigdy nie dostaje obniżki.
+Limitations of this reduction:
 
-Ograniczenia tej obniżki:
+- Code injected into a legitimate .NET process inherits the reduction. A private RWX region with low entropy then drops from 60 to 20 points ("info") and disappears from the default view; with high entropy (30 points) or with an image header (60) it stays visible. `--min info` shows everything.
+- The owner of the program file is checked, not the whole DACL: a file owned by Administrators but writable by everyone will pass the condition. The digital signature is not verified.
+- Programs outside the system directories (for example Electron in the user profile) do not get the reduction, so they remain in the result.
 
-- Kod wstrzyknięty do legalnego procesu .NET dziedziczy obniżkę. Prywatny region RWX o niskiej entropii spada wtedy z 60 do 20 punktów („info") i znika z domyślnego widoku; z wysoką entropią (30 punktów) albo z nagłówkiem obrazu (60) zostaje widoczny. `--min info` pokazuje wszystko.
-- Sprawdzany jest właściciel pliku programu, nie cała lista DACL: plik należący do Administratorów, ale zapisywalny dla wszystkich, przejdzie warunek. Podpis cyfrowy nie jest weryfikowany.
-- Programy spoza katalogów systemowych (np. Electron w profilu użytkownika) nie dostają obniżki, więc nadal są w wyniku.
+## Known limitations and blind spots
 
-## Znane ograniczenia i ślepe punkty
+Each item has a sample in `tests/samples` and an expectation in `scripts/e2e.ps1`:
 
-Każdy punkt ma próbkę w `tests/samples` i oczekiwanie w `scripts/e2e.ps1`:
+- **`SEC_IMAGE` section from a file outside the system directories** (`ximage`): `MEM_IMAGE` regions are not scored, the payload is invisible.
+- **PE header with a wiped signature** (`pe-corrupt`): `HDR` does not react, `X-PRIV` remains. This is typical behaviour of today's C2 tools; a `HDR-STRIP` detector is planned.
+- **Header off a page boundary in non-executable data**: invisible (deliberately, because copies of headers in ordinary data are an everyday occurrence). In executable regions a header at an offset is detected (`pe-offset`).
+- A process with more than 1 048 576 regions: the first regions up to the limit are scanned, the findings are kept, and the result for the process is marked as incomplete.
+- **Payload behind a guard** (`guard-hide`): the content is invisible, but the region gets `GUARD-X` and `X-PRIV`.
+- 32-bit processes (WOW64) are not distinguished from 64-bit ones.
+- Between two scans of a live process the number of regions changes (pool threads), so the findings are repeatable, not the counters.
+- Windows Defender did not react to the binaries or the samples (one observation, test host, 2026-11).
 
-- **Sekcja `SEC_IMAGE` z pliku spoza katalogów systemowych** (`ximage`): regiony `MEM_IMAGE` nie są punktowane, ładunek niewidoczny.
-- **Nagłówek PE z wymazaną sygnaturą** (`pe-corrupt`): `HDR` nie reaguje, zostaje `X-PRIV`. To typowe zachowanie dzisiejszych narzędzi C2; planowany detektor `HDR-STRIP`.
-- **Nagłówek poza granicą strony w danych niewykonywalnych**: niewidoczny (świadomie, bo kopie nagłówków w zwykłych danych są codziennością). W regionach wykonywalnych nagłówek pod przesunięciem jest wykrywany (`pe-offset`).
-- Proces z ponad 1 048 576 regionami: skanowane są pierwsze regiony do limitu, znaleziska zostają, a wynik procesu jest oznaczony jako niekompletny.
-- **Ładunek za strażnikiem** (`guard-hide`): treść niewidoczna, ale region dostaje `GUARD-X` i `X-PRIV`.
-- Procesy 32-bitowe (WOW64) nie są odróżniane od 64-bitowych.
-- Między dwoma skanami żywego procesu zmienia się liczba regionów (wątki puli), więc powtarzalne są znaleziska, a nie liczniki.
-- Windows Defender nie zareagował na binaria ani próbki (jedna obserwacja, stacja testowa, 2026-11).
+## LLM layer and report
 
-## Warstwa LLM i raport
-
-Działają tak samo jak na Linuksie. Z hosta Windows do Ollamy w sieci lokalnej: `nanshe explain wynik.json --url http://<host>:11434 --insecure-llm` (czyste HTTP tylko w zaufanej sieci). Testy: [testy.md](testy.md).
+They work the same as on Linux. From a Windows host to Ollama on the local network: `nanshe explain wynik.json --url http://<host>:11434 --insecure-llm` (plain HTTP only on a trusted network). Tests: [tests.md](tests.md).

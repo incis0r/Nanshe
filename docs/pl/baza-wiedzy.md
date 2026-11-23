@@ -1,5 +1,7 @@
 # Baza wiedzy raportu
 
+Wersja angielska: [../knowledge-base.md](../knowledge-base.md).
+
 Raport ma być zrozumiały dla osoby (i dla modelu językowego), która nie zajmuje się analizą pamięci na co dzień. Dlatego obok danych technicznych zawiera objaśnienia prostym językiem. Ich treść nie jest zaszyta w kodzie, tylko leży w plikach danych w katalogu `kb/`:
 
 | Plik | Zakres |
@@ -78,7 +80,7 @@ Każdy plik to jeden obiekt JSON. Plik systemu jest nakładany na wspólny: obie
 
 ## Ograniczenia
 
-- Treść jest po polsku; raport nie ma jeszcze wersji angielskiej.
+- Treść jest po polsku i po angielsku; każdą zmianę trzeba wprowadzić w obu wersjach.
 - Opisy procesów i modułów to kilkadziesiąt najczęstszych pozycji, nie katalog oprogramowania. Program nieopisany w bazie dostaje w raporcie informację, że brak opisu nie jest oceną.
 - Typowe ścieżki i rodzice dotyczą standardowych instalacji. Niestandardowa instalacja da ostrzeżenie, które trzeba wyjaśnić ręcznie.
 - Polecenia sprawdzające zakładają dostęp administratora i obecność narzędzi (gdb, Sysinternals, System Informer, pe-sieve); raport ich nie uruchamia.

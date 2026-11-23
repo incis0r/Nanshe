@@ -1,6 +1,6 @@
 #!/bin/sh
 # Generuje przykładowe wyniki i raporty z próbki syntetycznej (kontener Linux):
-#   scripts/dev.sh sh scripts/example.sh <katalog>
+#   scripts/dev.sh sh scripts/example.sh docs/examples
 # Powstają: wynik skanu i raport po polsku, wynik i raport po angielsku oraz raport różnicowy.
 set -eu
 OUT="${1:?podaj katalog wyników}"; mkdir -p "$OUT/en"

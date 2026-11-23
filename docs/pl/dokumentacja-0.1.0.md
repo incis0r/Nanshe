@@ -1,6 +1,8 @@
 # Nanshe 0.1.0: dokumentacja wersji początkowej
 
-Stan na 2026-11-22. Dokument opisuje, co ta wersja robi, jak jest zbudowana, co zostało sprawdzone i czego nie umie. Szczegóły dla poszczególnych systemów są w [linux.md](linux.md), [windows.md](windows.md) i [macos.md](macos.md), opis testów w [testy.md](testy.md), baza wiedzy w [baza-wiedzy.md](baza-wiedzy.md), a pierwotne założenia w [initial_idea.md](initial_idea.md).
+Wersja angielska: [../documentation-0.1.0.md](../documentation-0.1.0.md).
+
+Stan na 2026-11-22. Dokument opisuje, co ta wersja robi, jak jest zbudowana, co zostało sprawdzone i czego nie umie. Szczegóły dla poszczególnych systemów są w [linux.md](linux.md), [windows.md](windows.md) i [macos.md](macos.md), opis testów w [testy.md](testy.md) i baza wiedzy w [baza-wiedzy.md](baza-wiedzy.md).
 
 ## 1. Do czego służy
 

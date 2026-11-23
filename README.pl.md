@@ -2,7 +2,7 @@
 
 # Nanshe
 
-Triage pamięci: wskazuje regiony, którym powinien przyjrzeć się człowiek. Pełny opis: [docs/dokumentacja-0.1.0.md](docs/dokumentacja-0.1.0.md). Wersja angielska tego pliku: [README.md](README.md).
+Triage pamięci: wskazuje regiony, którym powinien przyjrzeć się człowiek. Pełny opis: [docs/pl/dokumentacja-0.1.0.md](docs/pl/dokumentacja-0.1.0.md). Wersja angielska tego pliku: [README.md](README.md).
 
 ## Build i testy (kontener Linux, podman)
 
@@ -81,11 +81,11 @@ Raport ma być samodzielnym dokumentem dla analityka. Poza znaleziskami zawiera 
 
 Dwa skany tej samej stacji można porównać: `nanshe diff wczesniej.json pozniej.json` daje raport różnicowy (nowe regiony w działających procesach, nowe i zakończone procesy ze znaleziskami, zmiany w sieci i plikach).
 
-Raport i opisy w wyniku skanu są dostępne po polsku i po angielsku: `nanshe --lang en scan ...`, potem `nanshe report ...` (raport powstaje w języku skanu; opis w [dokumentacji](docs/dokumentacja-0.1.0.md), rozdział 4).
+Raport i opisy w wyniku skanu są dostępne po polsku i po angielsku: `nanshe --lang en scan ...`, potem `nanshe report ...` (raport powstaje w języku skanu; opis w [dokumentacji](docs/pl/dokumentacja-0.1.0.md), rozdział 4).
 
-Żeby raport dało się czytać bez przygotowania z analizy pamięci, każda część ma objaśnienie prostym językiem z bazy wiedzy (`kb/`): czym jest program, co oznacza dany zestaw cech, jakie są łagodne i niepokojące wyjaśnienia i jakim poleceniem sprawdzić region. Opis: [docs/baza-wiedzy.md](docs/baza-wiedzy.md).
+Żeby raport dało się czytać bez przygotowania z analizy pamięci, każda część ma objaśnienie prostym językiem z bazy wiedzy (`kb/`): czym jest program, co oznacza dany zestaw cech, jakie są łagodne i niepokojące wyjaśnienia i jakim poleceniem sprawdzić region. Opis: [docs/pl/baza-wiedzy.md](docs/pl/baza-wiedzy.md).
 
-Kontekst jest zbierany tylko dla procesów ze znaleziskami od wagi „podejrzane"; `nanshe scan --no-context` go wyłącza. Raport i plik wyniku zawierają wtedy dane ze stacji bez filtrowania (wiersze poleceń, ścieżki, adresy, bajty z pamięci), więc trzeba je traktować jak materiał dowodowy. Model LLM tych danych nie dostaje. Przykład: [docs/przyklady/](docs/przyklady/).
+Kontekst jest zbierany tylko dla procesów ze znaleziskami od wagi „podejrzane"; `nanshe scan --no-context` go wyłącza. Raport i plik wyniku zawierają wtedy dane ze stacji bez filtrowania (wiersze poleceń, ścieżki, adresy, bajty z pamięci), więc trzeba je traktować jak materiał dowodowy. Model LLM tych danych nie dostaje. Przykład: [docs/examples/](docs/examples/).
 
 `nanshe explain` generuje ten raport sam po zakończeniu interpretacji (`--no-report` wyłącza). Raport nie przyjmie interpretacji innego wyniku skanu (sprawdzane po SHA-256).
 
@@ -106,11 +106,11 @@ Wynik skanu zawiera fragmenty pamięci (do 256 B na znalezisko), więc może zaw
 
 ## Dokumentacja
 
-- [docs/baza-wiedzy.md](docs/baza-wiedzy.md): baza wiedzy (`kb/`), z której raport bierze objaśnienia prostym językiem; jak ją rozszerzać
-- [docs/przyklady/](docs/przyklady/): przykładowy raport z próbki syntetycznej, z interpretacją LLM i bez (`.md` i `.pdf`)
-- [docs/dokumentacja-0.1.0.md](docs/dokumentacja-0.1.0.md): pełny opis wersji 0.1.0: możliwości, budowa, detektory, plik wyniku, raport, bezpieczeństwo, co sprawdzono i czego narzędzie nie umie
-- [docs/linux.md](docs/linux.md), [docs/windows.md](docs/windows.md), [docs/macos.md](docs/macos.md): build, uprawnienia, detektory i ograniczenia per system
-- [docs/testy.md](docs/testy.md): wszystkie testy, co sprawdzają i czego nie obejmują
+- [docs/pl/baza-wiedzy.md](docs/pl/baza-wiedzy.md): baza wiedzy (`kb/`), z której raport bierze objaśnienia prostym językiem; jak ją rozszerzać
+- [docs/examples/](docs/examples/): przykładowy raport z próbki syntetycznej, z interpretacją LLM i bez (`.md` i `.pdf`)
+- [docs/pl/dokumentacja-0.1.0.md](docs/pl/dokumentacja-0.1.0.md): pełny opis wersji 0.1.0: możliwości, budowa, detektory, plik wyniku, raport, bezpieczeństwo, co sprawdzono i czego narzędzie nie umie
+- [docs/pl/linux.md](docs/pl/linux.md), [docs/pl/windows.md](docs/pl/windows.md), [docs/pl/macos.md](docs/pl/macos.md): build, uprawnienia, detektory i ograniczenia per system
+- [docs/pl/testy.md](docs/pl/testy.md): wszystkie testy, co sprawdzają i czego nie obejmują
 
 ## Licencja
 
