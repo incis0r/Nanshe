@@ -4,6 +4,7 @@
 #![deny(unsafe_code)]
 
 pub mod maps;
+pub mod pediff;
 pub mod sysctx;
 pub mod wintables;
 #[cfg(windows)]
@@ -40,7 +41,7 @@ mod linux {
 
     pub struct LinuxProcess { pid: u32, name: Option<String>, exe: Option<String>, exe_deleted: bool, exe_verified: bool, mem: fs::File,
         /// strony anonimowe wg smaps, wczytywane przy pierwszym pytaniu o zmieniony kod
-        anon: std::cell::OnceCell<std::collections::HashMap<u64, u64>> }
+        anon: std::cell::OnceCell<std::collections::HashMap<u64, crate::sysctx::SmapsEntry>> }
 
     fn map_err(pid: u32, e: std::io::Error) -> Error {
         match e.kind() {
@@ -90,10 +91,32 @@ mod linux {
             v.sort_by_key(|t| t.tid);
             v
         }
-        fn modified_code(&self, r: &Region) -> Option<(u64, u64)> {
+        /// Kod z pliku, w którym proces ma strony anonimowe (zapisane): treść pamięci jest porównywana
+        /// z plikiem. Plik jest otwierany przez /proc/<pid>/map_files (dokładnie ten zmapowany, także
+        /// usunięty), a gdy to niedostępne, po ścieżce, o ile urządzenie i i-węzeł zgadzają się z mapą.
+        fn modified_code(&self, r: &Region) -> Option<CodeChange> {
             let map = self.anon.get_or_init(|| fs::read_to_string(format!("/proc/{}/smaps", self.pid)).map(|s| crate::sysctx::smaps_anonymous(&s)).unwrap_or_default());
-            // smaps nie mówi, która strona; adresem znaleziska jest początek mapowania
-            map.get(&r.base).map(|b| (*b, r.base))
+            let e = map.get(&r.base).filter(|e| e.anonymous > 0)?;
+            // bez porównania: wiadomo tylko, ile stron zapisano; adresem znaleziska jest początek mapowania
+            let unverified = Some(CodeChange { bytes: e.anonymous, first: r.base, compared: false });
+            if r.size > crate::sysctx::MAX_COMPARE_BYTES { return unverified; }
+            let dev_of = |d: u64| format!("{:02x}:{:02x}", ((d >> 8) & 0xfff) | ((d >> 32) & !0xfff), (d & 0xff) | ((d >> 12) & !0xff));
+            let via_map = format!("/proc/{}/map_files/{:x}-{:x}", self.pid, r.base, r.base.saturating_add(r.size));
+            let file = crate::sysctx::read_file_range(&via_map, e.offset, r.size).ok().map(|x| x.0).or_else(|| {
+                let path = r.backing.as_deref().filter(|p| p.starts_with('/') && !r.backing_deleted)?;
+                let (data, dev, ino) = crate::sysctx::read_file_range(path, e.offset, r.size).ok()?;
+                // plik pod tą ścieżką w systemie skanera musi być tym samym plikiem co w mapie procesu
+                (ino == e.inode && dev_of(dev) == e.dev).then_some(data)
+            });
+            let Some(file) = file else { return unverified };
+            let mut mem = vec![0u8; r.size as usize];
+            let mut got = 0usize;
+            while got < mem.len() {
+                match self.mem.read_at(&mut mem[got..], r.base + got as u64) { Ok(0) | Err(_) => break, Ok(n) => got += n }
+            }
+            if got == 0 { return unverified; }
+            let (n, first) = crate::sysctx::count_diff(&mem[..got], &file);
+            Some(CodeChange { bytes: n, first: r.base + first.unwrap_or(0) as u64, compared: true })
         }
     }
 

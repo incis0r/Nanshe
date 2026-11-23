@@ -45,6 +45,9 @@ pub fn enable_debug_privilege() -> bool {
     }
 }
 
+/// Ile prywatnych stron kodu jednego regionu jest porównywanych z plikiem (16 MiB).
+const MAX_COMPARE_PAGES: usize = 4096;
+
 pub struct WinProcess { pid: u32, name: Option<String>, exe: Option<String>, h: Handle }
 
 impl WinProcess {
@@ -161,10 +164,11 @@ impl MemorySource for WinProcess {
 
     /// Strony kodu obrazu, które nie są już współdzielone z plikiem (kopia przy zapisie), wg zestawu
     /// roboczego procesu. Strony spoza zestawu roboczego nie są oceniane.
-    fn modified_code(&self, r: &Region) -> Option<(u64, u64)> {
+    fn modified_code(&self, r: &Region) -> Option<CodeChange> {
         if r.kind != RegionKind::Image { return None; }
         let pages = (r.size / 4096) as usize;
         let (mut bytes, mut first) = (0u64, 0u64);
+        let mut private: Vec<u64> = Vec::new();
         let mut page = 0usize;
         while page < pages {
             let n = (pages - page).min(4096);
@@ -178,11 +182,37 @@ impl MemorySource for WinProcess {
                 if e[1] & 1 == 1 && (e[1] >> 15) & 1 == 0 {
                     if bytes == 0 { first = e[0]; }
                     bytes += 4096;
+                    if private.len() < MAX_COMPARE_PAGES { private.push(e[0]); }
                 }
             }
             page += n;
         }
-        Some((bytes, first))
+        if bytes == 0 { return None; }
+        let unverified = Some(CodeChange { bytes, first, compared: false });
+        // Porównanie prywatnych stron z plikiem na dysku, z naniesionymi relokacjami dla adresu załadowania.
+        if (bytes / 4096) as usize > private.len() { return unverified; } // za dużo stron: bez porównania
+        let Some(path) = r.backing.as_deref() else { return unverified };
+        let open = if path.starts_with("\\Device\\") { format!("\\\\?\\GLOBALROOT{path}") } else { path.to_string() };
+        if !path_is_local(&open) { return unverified; }
+        // SAFETY: MEMORY_BASIC_INFORMATION to zwykła struktura danych; zero jest poprawną wartością.
+        let mut mbi: MEMORY_BASIC_INFORMATION = unsafe { zeroed() };
+        // SAFETY: wskaźnik na lokalną strukturę o podanym rozmiarze; adres jest tylko kluczem zapytania.
+        let n = unsafe { VirtualQueryEx(self.h.0, r.base as *const c_void, &mut mbi, size_of::<MEMORY_BASIC_INFORMATION>()) };
+        let image = mbi.AllocationBase as u64;
+        if n == 0 || image == 0 || image > r.base { return unverified; }
+        let Ok((file, _, _)) = crate::sysctx::read_file_range(&open, 0, crate::sysctx::MAX_COMPARE_BYTES) else { return unverified };
+        let Some(pe) = crate::pediff::Pe::parse(&file) else { return unverified };
+        let (mut diff, mut at) = (0u64, None);
+        let mut buf = [0u8; 4096];
+        for p in &private {
+            let Ok(rva) = u32::try_from(p - image) else { return unverified };
+            if self.read_at(*p, &mut buf).ok() != Some(4096) { continue; }
+            let want = pe.expected(rva, 4096, image);
+            let (k, i) = crate::sysctx::count_diff(&buf, &want);
+            if k > 0 && at.is_none() { at = Some(p + i.unwrap_or(0) as u64); }
+            diff += k;
+        }
+        Some(CodeChange { bytes: diff, first: at.unwrap_or(first), compared: true })
     }
 
     fn read_at(&self, addr: u64, buf: &mut [u8]) -> Result<usize> {

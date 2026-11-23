@@ -141,7 +141,8 @@ struct ImgMod;
 impl Detector for ImgMod {
     fn id(&self) -> &'static str { "img-mod" }
     fn scan(&self, r: &Region, _d: &[u8], ctx: &Ctx) -> Vec<Finding> {
-        let Some((bytes, first)) = ctx.modified else { return vec![] };
+        let Some(c) = ctx.modified else { return vec![] };
+        let (bytes, first) = (c.bytes, c.first);
         let name = r.backing.as_deref().unwrap_or("?");
         // Windows: strony obrazu przestają być współdzielone także z łagodnych powodów (relokacja
         // biblioteki bez ASLR, podpięcia piaskownicy Chromium w ntdll, samo środowisko .NET w clr.dll,
@@ -150,9 +151,18 @@ impl Detector for ImgMod {
         // reszta dostaje 10 punktów: razem z rzadkimi stronami o wysokiej entropii w tym samym kodzie
         // (ENT-X 10) nadal jest to "info" (przy 20 punktach dziesięć zwykłych procesów stawało się "podejrzane").
         let base = name.rsplit(['\\', '/']).next().unwrap_or(name).to_ascii_lowercase();
-        let weight = if ctx.info.os != "windows" || matches!(base.as_str(), "amsi.dll" | "wldp.dll") { 40 } else { 10 };
-        vec![ctx.finding(self.id(), "IMG-MOD", r, first.clamp(r.base, r.base.saturating_add(r.size.saturating_sub(1))), PAGE as u64, weight,
-            trf!("kod z pliku zmieniony w pamięci: {} KiB stron niewspółdzielonych z plikiem ({name})", "code from a file changed in memory: {} KiB of pages not shared with the file ({name})", bytes.div_ceil(1024)))]
+        let full = ctx.info.os != "windows" || matches!(base.as_str(), "amsi.dll" | "wldp.dll");
+        let addr = first.clamp(r.base, r.base.saturating_add(r.size.saturating_sub(1)));
+        // Po porównaniu z plikiem różnica jest faktem, a nie domysłem, ale waga zwykłej biblioteki Windows zostaje 10.
+        // Pomiar na stacji testowej 2026-11-23 (232 procesy): 26 regionów z potwierdzoną różnicą, z czego 10 to te same
+        // 12 bajtów w user32.dll we wszystkich procesach 32-bitowych, a 8 to te same 15 bajtów w clr.dll we wszystkich
+        // procesach .NET. Przy 20 punktach (razem z ENT-X 10) liczba procesów "podejrzanych" rosła z 5 do 14.
+        let (weight, reason) = if c.compared {
+            (if full { 40 } else { 10 }, trf!("kod w pamięci różni się od pliku na dysku: {bytes} bajtów, pierwszy pod adresem {addr:#x} ({name})", "code in memory differs from the file on disk: {bytes} bytes, the first at address {addr:#x} ({name})"))
+        } else {
+            (if full { 40 } else { 10 }, trf!("kod z pliku zmieniony w pamięci: {} KiB stron niewspółdzielonych z plikiem; treści nie porównano z plikiem ({name})", "code from a file changed in memory: {} KiB of pages not shared with the file; contents were not compared with the file ({name})", bytes.div_ceil(1024)))
+        };
+        vec![ctx.finding(self.id(), "IMG-MOD", r, addr, PAGE as u64, weight, reason)]
     }
 }
 
@@ -216,6 +226,18 @@ impl Detector for Hdr {
                 out.push(f);
                 if out.len() >= 8 { break; }
                 i += 64; // nagłówek znaleziony: kolejnego nie szukamy w jego wnętrzu
+            } else if aligned && (i == 0 || any_offset) {
+                // Nagłówek z wymazanymi sygnaturami: znaczniki formatu usunięte po załadowaniu, ale tablica
+                // sekcji albo segmentów została. Szukamy tylko na początku regionu i w regionach wykonywalnych.
+                if let Some(fmt) = wiped_header_kind(&d[i..(i + PAGE).min(d.len())]) {
+                    let addr = r.base + i as u64;
+                    let mut f = ctx.finding(self.id(), "HDR", r, addr, PAGE as u64, 40,
+                        trf!("nagłówek {fmt} z wymazaną sygnaturą w regionie bez pliku źródłowego: jest tablica sekcji obrazu, brak znacznika formatu", "{fmt} header with a wiped signature in a region not backed by a file: the image section table is present, the format marker is missing"));
+                    f.id = format!("{}:{:x}:HDR", ctx.pid_str(), addr);
+                    out.push(f);
+                    if out.len() >= 8 { break; }
+                    i += PAGE;
+                } else { i += 1; }
             } else { i += 1; }
         }
         out
@@ -230,6 +252,64 @@ fn u32_at(d: &[u8], o: usize, le: bool) -> Option<u32> {
     let b = d.get(o..o + 4)?;
     let a = [b[0], b[1], b[2], b[3]];
     Some(if le { u32::from_le_bytes(a) } else { u32::from_be_bytes(a) })
+}
+
+/// Tablica sekcji PE bez sygnatur: co najmniej dwa kolejne 40-bajtowe wpisy o nazwach jak w plikach
+/// wykonywalnych, adresach wyrównanych do strony i rosnących, z flagami pamięci, w tym jeden wykonywalny.
+fn pe_section_table(p: &[u8]) -> bool {
+    let entry = |o: usize| -> Option<(u32, u32)> {
+        let e = p.get(o..o + 40)?;
+        // nazwa: znaki drukowalne, potem same zera
+        if !(e[0] == b'.' || e[0].is_ascii_alphanumeric() || e[0] == b'_') { return None; }
+        let len = e[..8].iter().position(|c| *c == 0).unwrap_or(8);
+        if !e[..len].iter().all(|c| (0x21..0x7f).contains(c)) || !e[len..8].iter().all(|c| *c == 0) { return None; }
+        let (vsize, va, raw_size, raw, chars) = (u32_at(e, 8, true)?, u32_at(e, 12, true)?, u32_at(e, 16, true)?, u32_at(e, 20, true)?, u32_at(e, 36, true)?);
+        let ok = vsize > 0 && vsize < 0x4000_0000 && va != 0 && va % 0x1000 == 0 && raw_size % 0x200 == 0 && raw % 0x200 == 0
+            && chars & 0xe000_0000 != 0 && chars & 0x1f == 0;
+        ok.then_some((va, chars))
+    };
+    let mut o = 0x40;
+    while o + 80 <= p.len() {
+        let (mut n, mut last, mut exec, mut at) = (0u32, 0u32, false, o);
+        while let Some((va, chars)) = entry(at) {
+            if va <= last { break; }
+            last = va; n += 1; exec |= chars & 0x2000_0000 != 0; at += 40;
+        }
+        if n >= 2 && exec { return true; }
+        o += 8;
+    }
+    false
+}
+
+/// Tablica segmentów ELF (64 bity, little endian) w zwykłym miejscu za nagłówkiem, bez sygnatury:
+/// co najmniej dwa segmenty PT_LOAD o spójnych polach, w tym jeden wykonywalny.
+fn elf_program_table(p: &[u8]) -> bool {
+    let u64_at = |o: usize| p.get(o..o + 8).map(|b| u64::from_le_bytes(b.try_into().expect("8 bajtów")));
+    let (mut loads, mut exec, mut o) = (0u32, false, 64usize);
+    while o + 56 <= p.len() && o < 64 + 56 * 32 {
+        let Some(typ) = u32_at(p, o, true) else { break };
+        match typ {
+            1 => {
+                let (Some(flags), Some(off), Some(vaddr), Some(filesz), Some(memsz), Some(align)) = (u32_at(p, o + 4, true), u64_at(o + 8), u64_at(o + 16), u64_at(o + 32), u64_at(o + 40), u64_at(o + 48)) else { break };
+                if !(1..=7).contains(&flags) || memsz == 0 || filesz > memsz || !matches!(align, 0x1000 | 0x4000 | 0x1_0000 | 0x20_0000) || vaddr % align != off % align { break; }
+                loads += 1; exec |= flags & 1 != 0;
+            }
+            // inne znane typy segmentów mogą leżeć między segmentami ładowanymi
+            2..=7 | 0x6474_e550..=0x6474_e553 | 0x7000_0000..=0x7fff_ffff => {}
+            _ => break,
+        }
+        o += 56;
+    }
+    loads >= 2 && exec
+}
+
+/// Nagłówek obrazu, z którego usunięto znaczniki formatu (częsty zabieg po ręcznym załadowaniu
+/// programu do pamięci), rozpoznany po tablicy sekcji albo segmentów. Zwraca nazwę formatu.
+pub fn wiped_header_kind(p: &[u8]) -> Option<&'static str> {
+    if p.len() < 512 || header_kind(p).is_some() { return None; }
+    if pe_section_table(p) { return Some("PE"); }
+    if elf_program_table(p) { return Some("ELF"); }
+    None
 }
 
 /// Rozpoznaje nagłówek obrazu na początku strony; sama sygnatura nie wystarcza.
@@ -289,4 +369,56 @@ mod tests {
         assert_eq!(header_kind(&vec![0u8; PAGE]), None);
         assert_eq!(header_kind(b"MZ"), None);
     }
+    /// Strona z nagłówkiem PE: sygnatury i tablica sekcji (.text wykonywalna, .rdata, .data).
+    fn pe_page() -> Vec<u8> {
+        let mut p = vec![0u8; PAGE];
+        p[..2].copy_from_slice(b"MZ"); p[0x3c] = 0x80; p[0x80..0x84].copy_from_slice(b"PE\0\0");
+        p[0x84..0x86].copy_from_slice(&0x8664u16.to_le_bytes()); p[0x86] = 3;
+        for (i, (name, va, chars)) in [(&b".text"[..], 0x1000u32, 0x6000_0020u32), (b".rdata", 0x3000, 0x4000_0040), (b".data", 0x5000, 0xc000_0040)].iter().enumerate() {
+            let o = 0x188 + i * 40;
+            p[o..o + name.len()].copy_from_slice(name);
+            p[o + 8..o + 12].copy_from_slice(&0x1800u32.to_le_bytes()); p[o + 12..o + 16].copy_from_slice(&va.to_le_bytes());
+            p[o + 16..o + 20].copy_from_slice(&0x1800u32.to_le_bytes()); p[o + 20..o + 24].copy_from_slice(&(0x400 + i as u32 * 0x1800).to_le_bytes());
+            p[o + 36..o + 40].copy_from_slice(&chars.to_le_bytes());
+        }
+        p
+    }
+    /// Strona z nagłówkiem ELF 64-bit: sygnatura i trzy segmenty (PT_PHDR, PT_LOAD r-x, PT_LOAD rw-).
+    fn elf_page() -> Vec<u8> {
+        let mut p = elf();
+        for (i, (typ, flags, off, memsz)) in [(6u32, 4u32, 0x40u64, 0xa8u64), (1, 5, 0, 0x2000), (1, 6, 0x2000, 0x1000)].iter().enumerate() {
+            let o = 64 + i * 56;
+            p[o..o + 4].copy_from_slice(&typ.to_le_bytes()); p[o + 4..o + 8].copy_from_slice(&flags.to_le_bytes());
+            p[o + 8..o + 16].copy_from_slice(&off.to_le_bytes()); p[o + 16..o + 24].copy_from_slice(&(0x40_0000 + off).to_le_bytes());
+            p[o + 32..o + 40].copy_from_slice(&memsz.to_le_bytes()); p[o + 40..o + 48].copy_from_slice(&memsz.to_le_bytes()); p[o + 48..o + 56].copy_from_slice(&0x1000u64.to_le_bytes());
+        }
+        p
+    }
+
+    #[test]
+    fn header_with_wiped_signature_is_recognised_by_its_tables() {
+        // z sygnaturą: zwykły nagłówek, a nie "wymazany" (żeby nie zgłaszać tego samego dwa razy)
+        assert_eq!((header_kind(&pe_page()), wiped_header_kind(&pe_page())), (Some("PE"), None));
+        assert_eq!((header_kind(&elf_page()), wiped_header_kind(&elf_page())), (Some("ELF"), None));
+        // PE: wymazane MZ, wymazane PE, oba naraz, cały początek strony wyzerowany aż do tablicy sekcji
+        let mut a = pe_page(); a[..2].fill(0);
+        let mut b = pe_page(); b[0x80..0x84].fill(0);
+        let mut c = pe_page(); c[..0x188].fill(0);
+        for (n, p) in [("MZ", &a), ("PE", &b), ("all", &c)] { assert_eq!((header_kind(p), wiped_header_kind(p)), (None, Some("PE")), "{n}"); }
+        // ELF: wymazane pierwsze 16 bajtów albo sam typ pliku
+        let mut e = elf_page(); e[..16].fill(0);
+        let mut t = elf_page(); t[16] = 0;
+        for (n, p) in [("ident", &e), ("type", &t)] { assert_eq!((header_kind(p), wiped_header_kind(p)), (None, Some("ELF")), "{n}"); }
+        // kontrole: tylko jedna sekcja, żadna sekcja nie jest wykonywalna, adresy nierosnące, dane losowe, zera, tekst z nazwami sekcji
+        let mut one = c.clone(); one[0x188 + 40..0x188 + 120].fill(0);
+        let mut noexec = c.clone(); noexec[0x188 + 36..0x188 + 40].copy_from_slice(&0x4000_0040u32.to_le_bytes());
+        let mut order = c.clone(); order[0x188 + 40 + 12..0x188 + 40 + 16].copy_from_slice(&0x1000u32.to_le_bytes()); order[0x188 + 80 + 12..0x188 + 80 + 16].copy_from_slice(&0x1000u32.to_le_bytes());
+        let noise: Vec<u8> = (0..PAGE as u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
+        let mut text = vec![b' '; PAGE]; for (i, w) in [".text", ".rdata", ".data", ".reloc"].iter().cycle().take(200).enumerate() { text[i * 16..i * 16 + w.len()].copy_from_slice(w.as_bytes()); }
+        let mut one_load = e.clone(); one_load[64 + 2 * 56] = 4;
+        for (n, p) in [("one", &one), ("noexec", &noexec), ("order", &order), ("noise", &noise), ("zero", &vec![0u8; PAGE]), ("text", &text), ("one_load", &one_load)] {
+            assert_eq!(wiped_header_kind(p), None, "{n}");
+        }
+    }
+
 }

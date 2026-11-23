@@ -165,6 +165,18 @@ pub struct SourceInfo {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThreadInfo { pub tid: u32, pub addr: u64 }
 
+/// Zmiana kodu pochodzącego z pliku, stwierdzona przez backend dla jednego regionu.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CodeChange {
+    /// Gdy `compared`: liczba bajtów pamięci różnych od pliku na dysku. W przeciwnym razie: rozmiar
+    /// stron, które nie są już współdzielone z plikiem (wiadomo, że je zapisano, nie wiadomo czym).
+    pub bytes: u64,
+    /// Adres pierwszej różnicy (albo pierwszej takiej strony).
+    pub first: u64,
+    /// Treść pamięci została porównana z plikiem na dysku.
+    pub compared: bool,
+}
+
 pub trait MemorySource {
     fn info(&self) -> SourceInfo;
     fn regions(&self) -> Result<Vec<Region>>;
@@ -174,7 +186,7 @@ pub trait MemorySource {
     fn threads(&self) -> Vec<ThreadInfo> { Vec::new() }
     /// Ile bajtów kodu z pliku zostało w tym regionie zmienionych w pamięci (strony, które przestały
     /// być współdzielone z plikiem) i adres pierwszej takiej strony, jeśli znany. None: źródło tego nie wie.
-    fn modified_code(&self, _r: &Region) -> Option<(u64, u64)> { None }
+    fn modified_code(&self, _r: &Region) -> Option<CodeChange> { None }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]

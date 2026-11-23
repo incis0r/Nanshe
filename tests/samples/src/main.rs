@@ -14,12 +14,18 @@
 //!   hdr-corrupt   nagłówek ELF z e_type spoza zakresu (antyforenzyczne wymazanie po załadowaniu):
 //!                 HDR głuchy, zostaje X-PRIV
 //!   hdr-offset    prawdziwy nagłówek ELF w środku strony w regionie R-X: HDR znajduje go pod przesunięciem
+//!   hdr-wiped     nagłówek własnego programu z wyzerowaną sygnaturą (na Windows: pe-wiped): HDR rozpoznaje
+//!                 go po tablicy segmentów albo sekcji
 //! Red team: pokrycie detektorów:
 //!   delexec       wykonywalne mapowanie usuniętego pliku (DEL-EXEC)
 //!   execstack     stos RWX ([stack])
 //! Red team: wstrzyknięcie do warstwy LLM przez metadane (kanał pamięciowy pokrywa inject):
 //!   inject-memfd  instrukcja dla modelu w nazwie memfd (trafia do backing i reason)
 //!   inject-path   instrukcja dla modelu w nazwie usuniętego pliku (trafia do reason)
+//!
+//! Zmiana kodu biblioteki (IMG-MOD):
+//!   patch         jeden bajt nieużywanej funkcji biblioteki systemowej zmieniony w pamięci
+//!   touch         kontrola: ta sama strona zapisana tą samą treścią (prywatna kopia bez zmiany)
 //!
 //! Kontekst systemowy:
 //!   ctx           jak `all`, a do tego ślady poza pamięcią, które skan ma zebrać: gniazdo TCP
@@ -156,6 +162,18 @@ mod imp {
         mprotect_rx(p, d.len());
     }
 
+    /// Ewazja: początek własnego programu z wyzerowanymi pierwszymi 16 bajtami (sygnatura i opis formatu),
+    /// jak po ręcznym załadowaniu z zatarciem śladów. Tablica segmentów zostaje.
+    fn hdr_wiped() {
+        let me = std::fs::read("/proc/self/exe").expect("exe");
+        let len = 16 * 1024;
+        let mut d = me[..len.min(me.len())].to_vec();
+        d[..16].fill(0);
+        let p = anon(len, libc::PROT_READ | libc::PROT_WRITE);
+        fill(p, &d);
+        mprotect_rx(p, len);
+    }
+
     /// Ewazja: prawdziwy nagłówek ELF w środku strony; HDR sprawdza wyłącznie początki stron.
     fn hdr_offset() {
         let mut d = vec![0u8; 8192];
@@ -258,6 +276,17 @@ mod imp {
         }
     }
 
+    /// Zapis do strony kodu biblioteki libc: funkcja `ptsname`, której próbka nie wywołuje. `change`: zmienia
+    /// jeden bajt; w przeciwnym razie zapisuje ten sam bajt (strona staje się prywatną kopią bez zmiany treści).
+    fn patch_library(change: bool) {
+        let f = libc::ptsname as *const () as usize as *mut u8;
+        let page = (f as usize & !0xfff) as *mut u8;
+        mprotect_rwx(page, 4096);
+        // SAFETY: strona ma prawo zapisu; zmieniany jest bajt funkcji, której próbka nie wywołuje.
+        unsafe { let b = std::ptr::read_volatile(f); std::ptr::write_volatile(f, if change { b ^ 0xff } else { b }); }
+        mprotect_rx(page, 4096);
+    }
+
     pub fn main() {
         let mode = std::env::args().nth(1).unwrap_or_else(|| "clean".into());
         let pid = std::process::id();
@@ -276,7 +305,10 @@ mod imp {
             "rx-file" => rx_file(),
             "rwx-lowent" => rwx_lowent(),
             "rx-stage" => rx_stage(),
+            "patch" => patch_library(true),
+            "touch" => patch_library(false),
             "hdr-corrupt" => hdr_corrupt(),
+            "hdr-wiped" => hdr_wiped(),
             "hdr-offset" => hdr_offset(),
             "delexec" => delexec(&std::env::temp_dir().join(format!("ns-delexec-{pid}"))),
             "execstack" => execstack(),
@@ -440,6 +472,20 @@ mod imp {
         fill(p, &d);
         protect_rx(p, d.len());
     }
+    /// Ewazja: początek własnego programu z wyzerowanymi sygnaturami MZ i PE, jak po ręcznym załadowaniu
+    /// z zatarciem śladów. Tablica sekcji zostaje.
+    fn pe_wiped() {
+        let me = std::fs::read(std::env::current_exe().expect("exe")).expect("read");
+        let len = 16 * 1024;
+        let mut d = me[..len.min(me.len())].to_vec();
+        let pe = u32::from_le_bytes([d[0x3c], d[0x3d], d[0x3e], d[0x3f]]) as usize;
+        d[..2].fill(0);
+        if pe + 4 <= d.len() { d[pe..pe + 4].fill(0); }
+        let p = alloc(len, PAGE_READWRITE);
+        fill(p, &d);
+        protect_rx(p, len);
+    }
+
     /// Ewazja: prawdziwy nagłówek PE w środku strony; HDR sprawdza wyłącznie początki stron.
     fn pe_offset() {
         let mut d = vec![0u8; 8192];
@@ -554,6 +600,23 @@ mod imp {
         }
     }
 
+    /// Zapis do strony kodu biblioteki systemowej version.dll: funkcja GetFileVersionInfoSizeW, której próbka
+    /// nie wywołuje. `change`: zmienia jeden bajt; w przeciwnym razie zapisuje ten sam bajt (kontrola).
+    fn patch_library(change: bool) {
+        use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA};
+        // SAFETY: nazwy zakończone zerem; biblioteka systemowa ładowana z katalogu systemowego.
+        let f = unsafe {
+            let m = LoadLibraryA(c"version.dll".as_ptr() as *const u8);
+            assert!(!m.is_null(), "LoadLibraryA");
+            GetProcAddress(m, c"GetFileVersionInfoSizeW".as_ptr() as *const u8).expect("GetProcAddress") as usize as *mut u8
+        };
+        let page = (f as usize & !0xfff) as *mut u8;
+        protect(page, 4096, PAGE_EXECUTE_READWRITE);
+        // SAFETY: strona ma prawo zapisu; zmieniany jest bajt funkcji, której próbka nie wywołuje.
+        unsafe { let b = std::ptr::read_volatile(f); std::ptr::write_volatile(f, if change { b ^ 0xff } else { b }); }
+        protect(page, 4096, PAGE_EXECUTE_READ);
+    }
+
     pub fn main() {
         let mode = std::env::args().nth(1).unwrap_or_else(|| "clean".into());
         let api = b"\0\0\0\0LoadLibraryA\0GetProcAddress\0VirtualAlloc\0";
@@ -567,10 +630,13 @@ mod imp {
             "pe" => pe(),
             "xmap" => xmap(),
             "rx-stage" => rx_stage(),
+            "patch" => patch_library(true),
+            "touch" => patch_library(false),
             "thread" => thread_in_private(),
             "data-noise" => data_noise(),
             "rwx-lowent" => rwx_lowent(),
             "pe-corrupt" => pe_corrupt(),
+            "pe-wiped" => pe_wiped(),
             "pe-offset" => pe_offset(),
             "ximage" => ximage(),
             "guard" => guard(),

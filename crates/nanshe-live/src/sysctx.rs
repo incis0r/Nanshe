@@ -135,20 +135,85 @@ pub fn syscall_pc(line: &str) -> Option<u64> {
 
 /// Z /proc/<pid>/smaps: początek mapowania -> bajty stron anonimowych (pole "Anonymous").
 /// Dla mapowania pliku niezerowa wartość oznacza strony zmienione w pamięci (kopia przy zapisie).
-pub fn smaps_anonymous(smaps: &str) -> HashMap<u64, u64> {
-    let mut out = HashMap::new();
+/// Mapowanie wg smaps: rozmiar stron anonimowych (zapisanych przez proces) oraz skąd w pliku pochodzi.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct SmapsEntry {
+    pub anonymous: u64,
+    /// Przesunięcie początku mapowania w pliku.
+    pub offset: u64,
+    /// Urządzenie ("maj:min", szesnastkowo) i numer i-węzła pliku: do sprawdzenia, czy plik pod ścieżką to ten sam plik.
+    pub dev: String,
+    pub inode: u64,
+}
+
+pub fn smaps_anonymous(smaps: &str) -> HashMap<u64, SmapsEntry> {
+    let mut out: HashMap<u64, SmapsEntry> = HashMap::new();
     let mut base: Option<u64> = None;
     for l in smaps.lines() {
         if let Some(v) = l.strip_prefix("Anonymous:") {
-            if let (Some(b), Some(kb)) = (base, v.split_whitespace().next().and_then(|x| x.parse::<u64>().ok())) { out.insert(b, kb * 1024); }
-        } else if let Some((range, _)) = l.split_once(' ') {
-            // nagłówek mapowania: "start-end perms ..."; wiersze pól mają dwukropek w pierwszym słowie
+            if let (Some(b), Some(kb)) = (base, v.split_whitespace().next().and_then(|x| x.parse::<u64>().ok())) { out.entry(b).or_default().anonymous = kb * 1024; }
+        } else if let Some((range, rest)) = l.split_once(' ') {
+            // nagłówek mapowania: "start-end perms offset dev inode ..."; wiersze pól mają dwukropek w pierwszym słowie
             if let Some((a, b)) = range.split_once('-') {
-                if let (Ok(s), Ok(_)) = (u64::from_str_radix(a, 16), u64::from_str_radix(b, 16)) { base = Some(s); }
+                if let (Ok(s), Ok(_)) = (u64::from_str_radix(a, 16), u64::from_str_radix(b, 16)) {
+                    base = Some(s);
+                    let f: Vec<&str> = rest.split_whitespace().collect();
+                    let e = out.entry(s).or_default();
+                    e.offset = f.get(1).and_then(|x| u64::from_str_radix(x, 16).ok()).unwrap_or(0);
+                    e.dev = f.get(2).map(|x| x.to_string()).unwrap_or_default();
+                    e.inode = f.get(3).and_then(|x| x.parse().ok()).unwrap_or(0);
+                }
             }
         }
     }
     out
+}
+
+/// Otwiera zwykły plik z kontrolami jak przy liczeniu skrótu: najpierw zapytanie bez otwierania
+/// (urządzenia i potoki nie są otwierane), potem otwarcie i ponowna kontrola na otwartym uchwycie.
+fn open_regular(path: &str) -> std::result::Result<(std::fs::File, std::fs::Metadata), String> {
+    let before = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    if !before.is_file() { return Err(tr!("nie jest zwykłym plikiem", "not a regular file").into()); }
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(target_os = "linux")]
+    { use std::os::unix::fs::OpenOptionsExt; opts.custom_flags(0o4000 | 0o400); } // O_NONBLOCK | O_NOCTTY
+    let f = opts.open(path).map_err(|e| e.to_string())?;
+    let m = f.metadata().map_err(|e| e.to_string())?;
+    if !m.is_file() { return Err(tr!("nie jest zwykłym plikiem", "not a regular file").into()); }
+    #[cfg(unix)]
+    { use std::os::unix::fs::MetadataExt; if (m.dev(), m.ino()) != (before.dev(), before.ino()) { return Err(tr!("plik podmieniony między sprawdzeniem a otwarciem", "file replaced between check and open").into()); } }
+    Ok((f, m))
+}
+
+/// Największy fragment pliku czytany do porównania kodu z plikiem na dysku.
+pub const MAX_COMPARE_BYTES: u64 = 64 << 20;
+
+/// Czyta najwyżej `len` bajtów zwykłego pliku od przesunięcia `off` (krócej, jeśli plik się kończy).
+/// Zwraca też urządzenie i i-węzeł otwartego pliku (na systemach uniksowych), żeby wywołujący mógł
+/// sprawdzić, że to ten plik, o który chodziło.
+pub fn read_file_range(path: &str, off: u64, len: u64) -> std::result::Result<(Vec<u8>, u64, u64), String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let (mut f, m) = open_regular(path)?;
+    #[cfg(unix)]
+    let id = { use std::os::unix::fs::MetadataExt; (m.dev(), m.ino()) };
+    #[cfg(not(unix))]
+    let id = (0u64, 0u64);
+    let want = len.min(MAX_COMPARE_BYTES).min(m.len().saturating_sub(off.min(m.len())));
+    f.seek(SeekFrom::Start(off)).map_err(|e| e.to_string())?;
+    let mut buf = Vec::with_capacity(want as usize);
+    f.take(want).read_to_end(&mut buf).map_err(|e| e.to_string())?;
+    Ok((buf, id.0, id.1))
+}
+
+/// Liczba różnych bajtów i indeks pierwszego; krótszy bufor jest dopełniany zerami
+/// (część mapowania za końcem pliku system wypełnia zerami).
+pub fn count_diff(mem: &[u8], file: &[u8]) -> (u64, Option<usize>) {
+    let (mut n, mut first) = (0u64, None);
+    for (i, b) in mem.iter().enumerate() {
+        if *b != file.get(i).copied().unwrap_or(0) { n += 1; if first.is_none() { first = Some(i); } }
+    }
+    (n, first)
 }
 
 /// Wynik liczenia skrótu: rozmiar wg otwartego uchwytu i skrót albo powód jego braku.
@@ -162,17 +227,7 @@ pub struct Hashed { pub size: u64, pub sha256: Option<String>, pub why: Option<S
 pub fn sha256_open(path: &str) -> std::result::Result<Hashed, String> {
     use sha2::{Digest, Sha256};
     use std::io::Read;
-    let before = std::fs::metadata(path).map_err(|e| e.to_string())?;
-    if !before.is_file() { return Err(tr!("nie jest zwykłym plikiem", "not a regular file").into()); }
-    let mut opts = std::fs::OpenOptions::new();
-    opts.read(true);
-    #[cfg(target_os = "linux")]
-    { use std::os::unix::fs::OpenOptionsExt; opts.custom_flags(0o4000 | 0o400); } // O_NONBLOCK | O_NOCTTY
-    let f = opts.open(path).map_err(|e| e.to_string())?;
-    let m = f.metadata().map_err(|e| e.to_string())?;
-    if !m.is_file() { return Err(tr!("nie jest zwykłym plikiem", "not a regular file").into()); }
-    #[cfg(unix)]
-    { use std::os::unix::fs::MetadataExt; if (m.dev(), m.ino()) != (before.dev(), before.ino()) { return Err(tr!("plik podmieniony między sprawdzeniem a otwarciem", "file replaced between check and open").into()); } }
+    let (f, m) = open_regular(path)?;
     if m.len() > MAX_HASH_BYTES { return Ok(Hashed { size: m.len(), sha256: None, why: Some(tr!("plik większy niż limit 512 MiB", "file larger than the 512 MiB limit").into()) }); }
     let mut h = Sha256::new();
     let mut buf = vec![0u8; 1 << 16];
@@ -330,7 +385,13 @@ mod tests {
         let smaps = "55d0c3a02000-55d0c3a06000 r-xp 00002000 fd:01 1234 /usr/bin/cat\nSize:                 16 kB\nRss:                  16 kB\nAnonymous:             4 kB\nVmFlags: rd ex mr\n7f1000000000-7f1000010000 r-xp 00000000 fd:01 77 /usr/lib/libc.so.6\nSize:                 64 kB\nAnonymous:             0 kB\nAnonHugePages:         0 kB\n";
 
         let m = smaps_anonymous(smaps);
-        assert_eq!((m.get(&0x55d0c3a02000), m.get(&0x7f1000000000), m.len()), (Some(&4096), Some(&0), 2));
+        assert_eq!((m[&0x55d0c3a02000].anonymous, m[&0x7f1000000000].anonymous, m.len()), (4096, 0, 2));
+        assert_eq!(m[&0x55d0c3a02000], SmapsEntry { anonymous: 4096, offset: 0x2000, dev: "fd:01".into(), inode: 1234 });
+        // porównanie treści: różnice liczone bajt po bajcie, koniec pliku to zera
+        assert_eq!(count_diff(b"abcdef", b"abcdef"), (0, None));
+        assert_eq!(count_diff(b"abXdeY", b"abcdef"), (2, Some(2)));
+        assert_eq!(count_diff(&[1, 2, 0, 0], &[1, 2]), (0, None));
+        assert_eq!(count_diff(&[1, 2, 0, 9], &[1, 2]), (1, Some(3)));
         assert!(smaps_anonymous("śmieci\nAnonymous: 4 kB\n").is_empty(), "pole bez nagłówka mapowania jest ignorowane");
     }
 

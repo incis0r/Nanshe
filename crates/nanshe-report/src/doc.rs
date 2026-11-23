@@ -277,6 +277,7 @@ pub fn build(scan: &ScanResult, llm: Option<&Value>, o: &Options) -> Doc {
                 (tr!("Plik programu", "Program file").to_string(), match &p.info.exe { Some(e) => format!("{}{}", clean(e), if p.info.exe_deleted { tr!(" (usunięty z dysku)", " (deleted from disk)") } else { "" }), None => tr!("nieznany", "unknown").into() }),
                 (tr!("Regiony", "Regions").to_string(), trf!("{} łącznie, {} nieodczytanych, przeskanowano {}", "{} total, {} not read, {} scanned", p.regions_total, p.regions_unreadable, size_h(p.bytes_scanned))),
             ];
+            if p.info.source_type == "dump" { kv.push((tr!("Źródło danych", "Data source").into(), tr!("zrzut pamięci procesu (stan z chwili wykonania zrzutu, nie z chwili analizy)", "process memory dump (state at the time the dump was taken, not at analysis time)").into())); }
             if let Some(e) = &p.error { kv.push((tr!("Błąd", "Error").into(), clean(e))); }
             if let Some(c) = &p.context { context_keyvals(&mut kv, c); }
             b.push(Block::KeyVals(kv));
@@ -285,7 +286,8 @@ pub fn build(scan: &ScanResult, llm: Option<&Value>, o: &Options) -> Doc {
             b.push(Block::KeyVals(vec![(tr!("Priorytet weryfikacji", "Verification priority").into(), format!("{prio}: {}", match prio { "P1" => tr!("w pierwszej kolejności", "verify first"), "P2" => tr!("w drugiej kolejności", "verify second"), _ => tr!("przy okazji", "when convenient") })),
                 (tr!("Uzasadnienie", "Rationale").into(), reasons.join(" ")), (tr!("Pierwszy krok", "First step").into(), step)]));
             identity(&mut b, &kb, p, scan.host_info.as_ref().and_then(|h| h.system_drive.as_deref()));
-            if let Some(c) = &p.context { context_blocks(&mut b, &kb, p, c); }
+            let from_dump = p.info.source_type == "dump";
+            if let Some(c) = p.context.as_ref().filter(|_| !from_dump) { context_blocks(&mut b, &kb, p, c); }
             if let Some(l) = &p.layout { modules(&mut b, &kb, p, l, &scan.files); }
             if let Some(rows) = mem_map(p, o.min) {
                 b.push(Block::H2(tr!("Mapa przestrzeni adresowej", "Address space map").into()));
@@ -302,7 +304,7 @@ pub fn build(scan: &ScanResult, llm: Option<&Value>, o: &Options) -> Doc {
                 b.push(Block::Para(trf!("Każdy punkt to jeden z {} regionów ze znaleziskiem w tym procesie (także o wadze „info\"). Punkt wysoko (entropia od 7,2) albo daleko od reszty to region odstający.", "Each point is one of the {} regions with a finding in this process (including severity \"info\"). A point high up (entropy of 7.2 or more) or far from the rest is an outlier region.", pts.len())));
                 b.push(Block::Scatter(pts));
             }
-            if let Some(c) = &p.context { flow(&mut b, p, c, &regs); }
+            if let Some(c) = p.context.as_ref().filter(|_| !from_dump) { flow(&mut b, p, c, &regs); }
             b.push(Block::H2(tr!("Regiony ze znaleziskami", "Regions with findings").into()));
 
             let rows = regs.iter().map(|r| vec![
@@ -354,7 +356,7 @@ pub fn build(scan: &ScanResult, llm: Option<&Value>, o: &Options) -> Doc {
     gaps.push(tr!("Skan obejmuje pamięć procesów w chwili skanu; nie obejmuje jądra, treści plików na dysku ani zawartości ruchu sieciowego.", "The scan covers process memory at scan time; it does not cover the kernel, the contents of files on disk or the contents of network traffic.").into());
     if scan.files.is_empty() { gaps.push(tr!("Wynik nie zawiera skrótów SHA-256 plików (skan z --no-hashes albo starsza wersja narzędzia).", "The result contains no SHA-256 file hashes (scan with --no-hashes or an older tool version).").into()); }
     else { gaps.push(trf!("Plik wyniku zawiera skróty SHA-256 {} plików (programy wszystkich procesów i pliki zmapowane w procesach ze znaleziskami); raport pokazuje tylko część. Raport nie sprawdza skrótów w zewnętrznych bazach.", "The result file contains SHA-256 hashes of {} files (programs of all processes and files mapped in processes with findings); the report shows only some. The report does not check hashes against external databases.", scan.files.len())); }
-    gaps.push(tr!("Znalezisko THR-PRIV opiera się na adresie startu wątku (Windows) albo na miejscu wywołania jądra przez wątki czekające (Linux); wątek, który w chwili skanu coś liczył, nie jest na Linuksie oceniany. IMG-MOD mówi, że kod z pliku zmieniono w pamięci, ale nie pokazuje różnic.", "The THR-PRIV finding relies on the thread start address (Windows) or on the place where waiting threads call the kernel (Linux); a thread that was computing at scan time is not assessed on Linux. IMG-MOD states that code from a file was changed in memory, but does not show the differences.").into());
+    gaps.push(tr!("Znalezisko THR-PRIV opiera się na adresie startu wątku (Windows) albo na miejscu wywołania jądra przez wątki czekające (Linux); wątek, który w chwili skanu coś liczył, nie jest na Linuksie oceniany. IMG-MOD podaje, ile bajtów kodu różni się od pliku na dysku i gdzie jest pierwszy; podgląd pokazuje bajty z pamięci, bez treści z pliku do porównania.", "The THR-PRIV finding relies on the thread start address (Windows) or on the place where waiting threads call the kernel (Linux); a thread that was computing at scan time is not assessed on Linux. IMG-MOD states how many bytes of code differ from the file on disk and where the first one is; the preview shows the bytes from memory, without the file contents to compare against.").into());
     if llm.is_some() { gaps.push(tr!("Model nie widział kontekstu systemowego ani mapy pamięci; jego hipotezy opierają się wyłącznie na danych regionów.", "The model did not see the system context or the memory map; its hypotheses rely solely on region data.").into()); }
     if llm.is_none() { gaps.push(tr!("Brak interpretacji LLM (raport wyłącznie z danych deterministycznych).", "No LLM interpretation (report built from deterministic data only).").into()); }
     b.push(Block::Bullets(gaps));
@@ -760,8 +762,9 @@ pub fn header_facts(b: &[u8]) -> Option<Vec<(String, String)>> {
         let pe = u32le(0x3c)? as usize;
         if b.get(pe..pe + 4)? != b"PE\0\0" { return None; }
         let machine = match u16le(pe + 4)? { 0x14c => "x86".into(), 0x8664 => "x86-64".into(), 0xaa64 => "ARM64".into(), m => trf!("kod {m:#x}", "code {m:#x}") };
-        let ch = u16le(pe + 22)?;
-        return Some(vec![("Format".into(), format!("PE, {machine}, {}", if ch & 0x2000 != 0 { tr!("biblioteka DLL", "DLL library") } else { tr!("program EXE", "EXE program") })),
+        // pole Characteristics leży 22 bajty za sygnaturą: przy nagłówku blisko końca podglądu może go nie być
+        let kind = match u16le(pe + 22) { Some(ch) if ch & 0x2000 != 0 => tr!(", biblioteka DLL", ", DLL library"), Some(_) => tr!(", program EXE", ", EXE program"), None => "" };
+        return Some(vec![("Format".into(), format!("PE, {machine}{kind}")),
             (tr!("Sekcje", "Sections").into(), u16le(pe + 6)?.to_string()),
             (tr!("Znacznik czasu kompilacji", "Build timestamp").into(), match u32le(pe + 8)? { 0 => tr!("0 (wyzerowany)", "0 (zeroed)").into(), t => rfc3339(t as i64) })]);
     }
@@ -1083,6 +1086,13 @@ mod tests {
         pe[0x84..0x86].copy_from_slice(&0x8664u16.to_le_bytes()); pe[0x86] = 5; pe[0x88..0x8c].copy_from_slice(&951782400u32.to_le_bytes()); pe[0x96..0x98].copy_from_slice(&0x2022u16.to_le_bytes());
         let f = header_facts(&pe).unwrap();
         assert_eq!((f[0].1.as_str(), f[1].1.as_str(), f[2].1.as_str()), ("PE, x86-64, biblioteka DLL", "5", "2000-02-29T00:00:00Z"));
+        // nagłówek PE pod przesunięciem 0xf0 w podglądzie 256 bajtów: pole z rodzajem pliku jest już poza
+        // podglądem, ale format, liczba sekcji i znacznik czasu nadal są odczytywane
+        let mut late = vec![0u8; 256];
+        late[..2].copy_from_slice(b"MZ"); late[0x3c] = 0xf0; late[0xf0..0xf4].copy_from_slice(b"PE\0\0");
+        late[0xf4..0xf6].copy_from_slice(&0x8664u16.to_le_bytes()); late[0xf6] = 7; late[0xf8..0xfc].copy_from_slice(&951782400u32.to_le_bytes());
+        let f = header_facts(&late).unwrap();
+        assert_eq!((f[0].1.as_str(), f[1].1.as_str(), f[2].1.as_str()), ("PE, x86-64", "7", "2000-02-29T00:00:00Z"));
         // kontrole: sama sygnatura MZ, obcięty ELF, losowe dane
         pe[0x80] = b'X';
         assert!(header_facts(&pe).is_none());
@@ -1266,7 +1276,7 @@ pub fn priority(p: &ProcessReport, kb: &Kb, min: Severity) -> (&'static str, Vec
 
     let prio = if !strong.is_empty() || patched_guard {
         let mut names: Vec<String> = strong.iter().map(|t| format!("{t} ({})", kb.tags.get(*t).map(|i| i.name.as_str()).unwrap_or(""))).collect();
-        if patched_guard { names.push(tr!("IMG-MOD w module ochronnym", "IMG-MOD in a protection module").into()); }
+        if patched_guard { names.push(tr!("IMG-MOD (kod biblioteki różni się od pliku na dysku)", "IMG-MOD (library code differs from the file on disk)").into()); }
         why.push(trf!("Występuje cecha, której nie tłumaczy środowisko kompilujące kod w locie: {}.", "A characteristic is present that a just-in-time (JIT) runtime does not explain: {}.", names.join(", ")));
         "P1"
     } else if p.max_severity >= Severity::High && runtime == Some(None) {
