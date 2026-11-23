@@ -17,6 +17,7 @@ llm = ["dep:nanshe-llm"]
 nanshe-core = { path = "../nanshe-core" }
 nanshe-analyze = { path = "../nanshe-analyze" }
 nanshe-live = { path = "../nanshe-live" }
+nanshe-dump = { path = "../nanshe-dump" }
 nanshe-report = { path = "../nanshe-report" }
 nanshe-llm = { path = "../nanshe-llm", optional = true }
 clap.workspace = true

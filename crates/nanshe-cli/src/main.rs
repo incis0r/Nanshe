@@ -44,10 +44,10 @@ enum Cmd {
     },
     /// Lista procesów
     Ps,
-    /// Skan żywego procesu (zrzuty: etap M2)
+    /// Skan żywego procesu (--pid, --all) albo zrzutu pamięci procesu (plik core ELF, minidump Windows)
     Scan {
-        /// Plik zrzutu (jeszcze nieobsługiwane)
-        dump: Option<PathBuf>,
+        /// Plik zrzutu pamięci procesu: core (Linux) albo minidump (Windows)
+        #[arg(conflicts_with_all = ["pid", "all"])] dump: Option<PathBuf>,
         #[arg(long, conflicts_with = "all")] pid: Option<u32>,
         /// Wszystkie dostępne procesy
         #[arg(long)] all: bool,
@@ -133,11 +133,25 @@ pub fn now_rfc3339() -> String {
 
 #[allow(clippy::too_many_arguments)]
 fn scan(dump: Option<PathBuf>, pid: Option<u32>, all: bool, json: Option<PathBuf>, heatmap: bool, no_bytes: bool, min: Min, max_region_mib: u64, no_context: bool, no_hashes: bool) -> Result<ExitCode> {
-    if let Some(d) = dump {
-        return Err(Error::Unsupported(trf!("analiza zrzutów ({}) to etap M2; na razie --pid / --all", "dump analysis ({}) is stage M2; for now use --pid / --all", d.display())));
-    }
     let mut cfg = nanshe_analyze::Config { heatmap, max_region_bytes: max_region_mib << 20, keep_layout: !no_context, ..Default::default() };
     if no_bytes { cfg.preview_bytes = 0; }
+    if let Some(d) = dump {
+        // Zrzut pamięci jednego procesu: te same detektory, bez kontekstu systemowego (zrzut go nie zawiera).
+        let src = nanshe_dump::open(&d)?;
+        let mut rep = nanshe_analyze::scan_source(&src, &cfg);
+        let file = d.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let mut notes = vec![trf!("źródło: zrzut pamięci procesu ({file}); sieć, otwarte pliki i drzewo procesów nie są dostępne ze zrzutu, a obniżka wagi dla środowisk JIT nie jest stosowana, bo pliku programu nie da się sprawdzić",
+            "source: process memory dump ({file}); network, open files and the process tree are not available from a dump, and the severity reduction for JIT runtimes is not applied because the program file cannot be verified")];
+        notes.extend(src.notes.iter().cloned());
+        rep.context = Some(ProcessContext { cmdline: src.cmdline.clone(), ppid: src.ppid, notes, ..Default::default() });
+        let partial = rep.regions_unreadable > 0 || rep.error.is_some();
+        let result = ScanResult {
+            schema_version: SCHEMA_VERSION, tool_version: env!("CARGO_PKG_VERSION").into(), timestamp: now_rfc3339(),
+            host: tr!("nieznany (analiza zrzutu)", "unknown (dump analysis)").into(), heat_cell_bytes: cfg.heat_cell, partial, processes: vec![rep],
+            lang: Some(lang::get().code().to_string()), host_info: None, files: vec![],
+        };
+        return finish(&result, &json, min.into(), partial);
+    }
     if let Some(w) = nanshe_live::prepare() { eprintln!("{}", trf!("nanshe: ostrzeżenie: {w}", "nanshe: warning: {w}")); }
     let me = std::process::id();
     let pids: Vec<u32> = match (pid, all) {
@@ -183,11 +197,15 @@ fn scan(dump: Option<PathBuf>, pid: Option<u32>, all: bool, json: Option<PathBuf
         host_info: snapshot.as_ref().map(|s| s.host()),
         files: hashes.map(|h| h.into_files()).unwrap_or_default(),
     };
-    let min: Severity = min.into();
-    match &json {
-        Some(p) if p.as_os_str() == "-" => println!("{}", nanshe_report::to_json(&result)),
-        Some(p) => { std::fs::write(p, nanshe_report::to_json(&result))?; eprint!("{}", nanshe_report::to_text(&result, min)); }
-        None => print!("{}", nanshe_report::to_text(&result, min)),
+    finish(&result, &json, min.into(), partial)
+}
+
+/// Zapis wyniku, wydruk i kod wyjścia: wspólne dla skanu na żywo i analizy zrzutu.
+fn finish(result: &ScanResult, json: &Option<PathBuf>, min: Severity, partial: bool) -> Result<ExitCode> {
+    match json {
+        Some(p) if p.as_os_str() == "-" => println!("{}", nanshe_report::to_json(result)),
+        Some(p) => { std::fs::write(p, nanshe_report::to_json(result))?; eprint!("{}", nanshe_report::to_text(result, min)); }
+        None => print!("{}", nanshe_report::to_text(result, min)),
     }
     Ok(if result.max_severity() >= min { ExitCode::from(1) } else if partial { ExitCode::from(3) } else { ExitCode::SUCCESS })
 }
@@ -270,7 +288,7 @@ fn main() -> ExitCode {
             Ok(ExitCode::SUCCESS)
         })(),
         Cmd::Formats => {
-            println!("źródła żywe:   linux (/proc/<pid>/maps + mem), windows (VirtualQueryEx + ReadProcessMemory)\nzrzuty:        brak (etap M2 i dalej)\nraport:        Markdown, PDF (nanshe report)\ndetektory:     RWX X-PRIV X-MAP GUARD-X MEMFD DEL-EXEC X-TMP ENT-X HDR THR-PRIV IMG-MOD\nwarstwa LLM:   {}",
+            println!("źródła żywe:   linux (/proc/<pid>/maps + mem), windows (VirtualQueryEx + ReadProcessMemory)\nzrzuty:        plik core ELF 64-bit (Linux), minidump (Windows)\nraport:        Markdown, PDF (nanshe report)\ndetektory:     RWX X-PRIV X-MAP GUARD-X MEMFD DEL-EXEC X-TMP ENT-X HDR THR-PRIV IMG-MOD\nwarstwa LLM:   {}",
                 if cfg!(feature = "llm") { "wbudowana (ollama; chmura za --allow-cloud: nous, anthropic, google, openai)" } else { "niewbudowana (build z --features llm)" });
             Ok(ExitCode::SUCCESS)
         }

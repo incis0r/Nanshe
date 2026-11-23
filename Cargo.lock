@@ -434,6 +434,7 @@ dependencies = [
  "clap",
  "nanshe-analyze",
  "nanshe-core",
+ "nanshe-dump",
  "nanshe-live",
  "nanshe-llm",
  "nanshe-report",
@@ -448,6 +449,13 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
+]
+
+[[package]]
+name = "nanshe-dump"
+version = "0.1.0"
+dependencies = [
+ "nanshe-core",
 ]
 
 [[package]]
