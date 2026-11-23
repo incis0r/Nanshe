@@ -25,7 +25,10 @@ jobs:
       - name: End-to-end tests (synthetic samples, live scan inside the container)
         run: |
           docker run --rm --cap-add SYS_PTRACE -v "$PWD":/src -v nanshe-target:/target -e CARGO_TARGET_DIR=/target -w /src \
-            docker.io/library/rust:1-slim-bookworm sh -c "apt-get update -qq && apt-get install -y -qq gdb >/dev/null && sh scripts/e2e.sh /target/e2e-out"
+            docker.io/library/rust:1-slim-bookworm sh -c "apt-get update -qq && apt-get install -y -qq gdb >/dev/null && sh scripts/e2e.sh /target/e2e-out" | tee e2e.log; rc=${PIPESTATUS[0]}
+          # failing lines become annotations of the run, readable without opening the log
+          grep -E "FAIL|ROZNE|POMIN" e2e.log | head -40 | while IFS= read -r line; do echo "::error title=e2e::$line"; done
+          exit $rc
 
   windows:
     name: "Windows: build and unit tests"

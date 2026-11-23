@@ -17,7 +17,14 @@ check() { # nazwa, oczekiwany kod, oczekiwane tagi (posortowane, po przecinku)
   det=ok; [ "$a" = "$b" ] || det=ROZNE
   res=OK; { [ "$rc" = "$want_rc" ] && [ "$tags" = "$want_tags" ] && [ $det = ok ]; } || { res=FAIL; fail=1; }
   printf '%-7s %-4s kod=%s (oczek. %s) tagi=[%s] (oczek. [%s]) powtarzalność=%s\n' "$mode" "$res" "$rc" "$want_rc" "$tags" "$want_tags" "$det"
+  # przy niezgodności: regiony ze znaleziskami (adres, rozmiar, uprawnienia, tagi, źródło), żeby log wskazywał przyczynę
+  [ $res = OK ] || regions "$OUT/$mode.txt" "$mode"
   kill "$pid" 2>/dev/null
+}
+# Wypisuje regiony ze znaleziskami od wagi "podejrzane" z wydruku skanu (adres, rozmiar, uprawnienia,
+# waga, tagi, źródło): po jednym wierszu "FAIL-REGION ..." na region.
+regions() {
+  grep -E '^  0x' "$1" | sed "s/^ */FAIL-REGION $2: /" | cut -c1-220
 }
 check clean  0 "ENT-X"
 check rwx    1 "ENT-X,RWX,X-PRIV"
@@ -185,9 +192,9 @@ if command -v gcore >/dev/null 2>&1; then
     rm -f "$OUT/core-$mode".*
     gcore -o "$OUT/core-$mode" "$pid" >/dev/null 2>&1
     kill "$pid" 2>/dev/null
-    $N scan "$OUT/core-$mode.$pid" --json "$OUT/dump-$mode.json" >/dev/null 2>&1; rc=$?
+    $N scan "$OUT/core-$mode.$pid" --json "$OUT/dump-$mode.json" >/dev/null 2>"$OUT/dump-$mode.txt"; rc=$?
     tags=$(grep -o '"tag": "[A-Z-]*"' "$OUT/dump-$mode.json" | cut -d'"' -f4 | sort -u | paste -sd, -)
-    { [ "$rc" = "$want_rc" ] && [ "$tags" = "$want" ]; } || { res=FAIL; echo "  zrzut $mode: kod=$rc (oczek. $want_rc) tagi=[$tags] (oczek. [$want])"; }
+    { [ "$rc" = "$want_rc" ] && [ "$tags" = "$want" ]; } || { res=FAIL; echo "  zrzut $mode: kod=$rc (oczek. $want_rc) tagi=[$tags] (oczek. [$want])"; regions "$OUT/dump-$mode.txt" "zrzut-$mode"; }
     grep -q '"source_type": "dump"' "$OUT/dump-$mode.json" || { res=FAIL; echo "  zrzut $mode: brak source_type dump"; }
     rm -f "$OUT/core-$mode.$pid"
   done
