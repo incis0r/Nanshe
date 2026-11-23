@@ -18,7 +18,7 @@ Exit code of the e2e scripts: 0 when everything matches, 1 when anything deviate
 
 | Layer | Result |
 |---|---|
-| Unit tests | 128 pass (analyze 24, core 3, dump 5, kb 7, live 20, llm 40, report 29) |
+| Unit tests | 129 pass (analyze 25, core 3, dump 5, kb 7, live 20, llm 40, report 29) |
 | e2e Linux (aarch64, container) | 16 static samples, 2 dynamic and 8 groups of additional assertions |
 | e2e Windows (test host, x64) | 14 samples, the context sample, 2 dynamic and 8 groups of additional assertions |
 | Local model, live | `gemma3:12b` on a local Ollama |
@@ -85,6 +85,8 @@ The backend is a mock in these tests, so no network is needed.
 New in this version (analysis and live reading):
 
 - `header_with_wiped_signature_is_recognised_by_its_tables` (analyze): a PE header without `MZ`, without `PE` or with the start of the page zeroed, and an ELF header without its signature, are recognised by the section table or the program header table; a header with its signature is not reported a second time; controls: a single section, no executable section, non-increasing addresses, random data, zeros, text containing section names, a single loadable segment.
+- `wiped_header_is_reported_only_in_executable_regions` (analyze): a section table without a signature is reported only in an executable region; a copy of a file header on the heap and a wiped header in non-executable data are not (controls). The test was added after a measurement on the test host, where the earlier version raised two false alerts on the heap.
+- `toc_page_numbers_are_stable_between_passes` (report) now also covers links: every table-of-contents entry is a link to its chapter, and anchor positions are the same in both layout passes.
 - `modified_code_of_a_file_is_flagged_only_in_read_only_executable_mappings` (analyze) now also covers the result of the comparison with the file: the byte count and address in the description, 10 points for an ordinary Windows library and 40 for a security module; control: a comparison without differences produces no finding.
 - `relocated_image_matches_the_file_and_a_patch_is_counted` (live, `pediff`): a PE image relocated to three different addresses does not differ from the file; five changed bytes are counted with the address of the first; controls: without applying relocations, and for a file without a relocation table, the differences are visible.
 - `garbage_and_truncated_files_do_not_panic` (live, `pediff`): garbage, every truncation of the file and every header byte set to 0xff cause no crash; a damaged relocation table (a block outside the table, an unknown entry type) means no comparison after loading at a different address; a relocation directory declaring 4 GiB does not occupy the scanner (time limit in the test).

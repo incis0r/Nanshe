@@ -1,6 +1,6 @@
 //! Raport w Markdown. Cała treść jest traktowana jako dane: znaki o znaczeniu w Markdown
 //! i HTML są neutralizowane, bo nazwy procesów, ścieżki i tekst modelu nie są zaufane.
-use crate::doc::{class_label, size_h, Block, Doc, MapClass};
+use crate::doc::{class_label, size_h, Block, Doc, MapClass, CODE};
 use nanshe_core::{tr, trf};
 use std::fmt::Write;
 
@@ -25,6 +25,16 @@ pub fn esc(s: &str) -> String {
     o
 }
 
+/// Tekst jako kod w wierszu: bez znaków, które zamknęłyby zakres kodu albo rozbiły komórkę tabeli.
+/// Treść pochodzi z badanej stacji, więc znaczniki HTML są neutralizowane tak jak w zwykłym tekście.
+pub fn code(s: &str) -> String {
+    let t: String = s.chars().map(|c| match c { '`' => '\'', '|' => '\u{00a6}', '\n' | '\r' => ' ', c => c }).collect();
+    format!("`{}`", t.replace('<', "&lt;").replace('>', "&gt;"))
+}
+
+/// Komórka tabeli pól: wartość oznaczona jako kod jest wyróżniana, reszta to zwykły tekst.
+fn value(v: &str) -> String { match v.strip_prefix(CODE) { Some(c) => code(c), None => esc(v) } }
+
 fn table(o: &mut String, head: &[String], rows: &[Vec<String>]) {
     let _ = writeln!(o, "| {} |", head.iter().map(|h| esc(h)).collect::<Vec<_>>().join(" | "));
     let _ = writeln!(o, "|{}|", head.iter().map(|_| "---").collect::<Vec<_>>().join("|"));
@@ -45,13 +55,33 @@ pub fn render(d: &Doc) -> String {
             Block::Note(t) => { let _ = writeln!(o, "> {}\n", esc(t)); }
             Block::Bullets(l) => { for i in l { let _ = writeln!(o, "- {}", esc(i)); } o.push('\n'); }
             Block::Table { head, rows, .. } => table(&mut o, head, rows),
-            Block::KeyVals(kv) => table(&mut o, &[tr!("Pole", "Field").to_string(), tr!("Wartość", "Value").to_string()], &kv.iter().map(|(k, v)| vec![k.clone(), v.clone()]).collect::<Vec<_>>()),
+            Block::KeyVals(kv) => {
+                let _ = writeln!(o, "| {} | {} |\n|---|---|", tr!("Pole", "Field"), tr!("Wartość", "Value"));
+                for (k, v) in kv { let _ = writeln!(o, "| {} | {} |", esc(k), value(v)); }
+                o.push('\n');
+            }
+            Block::Anchor(id) => { let _ = writeln!(o, "<a id=\"{}\"></a>\n", id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect::<String>()); }
+            Block::Steps(steps) => {
+                for (i, s) in steps.iter().enumerate() {
+                    let _ = writeln!(o, "{}. {}", i + 1, esc(&s.what).trim_start_matches('\\'));
+                    if !s.cmd.is_empty() { let _ = writeln!(o, "   {}", code(&s.cmd)); }
+                    if !s.look.is_empty() { let _ = writeln!(o, "   {} {}", tr!("Jak czytać wynik:", "How to read the result:"), esc(&s.look)); }
+                }
+                o.push('\n');
+            }
             Block::MemMap(rows) => {
-                let head = [tr!("Początek", "Start"), tr!("Koniec", "End"), tr!("Rozmiar", "Size"), tr!("Prawa", "Perms"), tr!("Rodzaj", "Type"), tr!("Zawartość", "Contents"), tr!("Uwagi", "Notes")].map(String::from);
-                let body: Vec<Vec<String>> = rows.iter().map(|r| vec![format!("{:#x}", r.start), format!("{:#x}", r.end), size_h(r.size),
-                    if r.prot.is_empty() { "-".into() } else { r.prot.clone() }, class_label(r.class).to_string(), r.what.clone(),
-                    if matches!(r.class, MapClass::Finding(_)) { format!("<<< {}", r.note) } else { r.note.clone() }]).collect();
-                table(&mut o, &head, &body);
+                let head = [tr!("Początek", "Start"), tr!("Koniec", "End"), tr!("Rozmiar", "Size"), tr!("Prawa", "Perms"), tr!("Rodzaj", "Type"), tr!("Zawartość", "Contents"), tr!("Uwagi", "Notes")];
+                let _ = writeln!(o, "| {} |\n|{}|", head.join(" | "), head.iter().map(|_| "---").collect::<Vec<_>>().join("|"));
+                for r in rows {
+                    let note = if matches!(r.class, MapClass::Finding(_)) { format!("<<< {}", r.note) } else { r.note.clone() };
+                    // wiersz znaleziska z własnym opisem dalej w raporcie prowadzi do tego opisu
+                    let (start, note) = match &r.link {
+                        Some(a) => (format!("[{:#x}](#{a})", r.start), format!("[{}](#{a})", esc(&note))),
+                        None => (format!("{:#x}", r.start), esc(&note)),
+                    };
+                    let _ = writeln!(o, "| {} | {:#x} | {} | {} | {} | {} | {} |", start, r.end, size_h(r.size), if r.prot.is_empty() { "-".to_string() } else { esc(&r.prot) }, class_label(r.class), esc(&r.what), note);
+                }
+                o.push('\n');
             }
             Block::Tree(nodes) => {
                 for n in nodes { let _ = writeln!(o, "{}- {}{}", "  ".repeat(n.depth as usize), if n.mark { "=> " } else { "" }, esc(&n.text)); }
@@ -101,7 +131,7 @@ pub fn render(d: &Doc) -> String {
             }
             Block::Toc(items) => {
                 let _ = writeln!(o, "**{}**\n", tr!("Spis treści", "Contents"));
-                for i in items { let _ = writeln!(o, "- {}", esc(i).replacen("\\. ", ". ", 1)); }
+                for (t, a) in items { let _ = writeln!(o, "- [{}](#{a})", esc(t).replacen("\\. ", ". ", 1)); }
                 o.push('\n');
             }
             Block::Bars(items) => {

@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "tool_version": "0.1.0",
-  "timestamp": "2026-11-23T12:08:46Z",
-  "host": "1a3b4982fe9e",
+  "timestamp": "2026-11-23T14:46:32Z",
+  "host": "6996d75bf01b",
   "heat_cell_bytes": 65536,
   "partial": false,
   "processes": [
@@ -10,7 +10,7 @@
       "info": {
         "os": "linux",
         "arch": "aarch64",
-        "pid": 2050,
+        "pid": 678,
         "name": "nanshe-sample",
         "source_type": "live",
         "exe": "/target/debug/nanshe-sample",
@@ -24,7 +24,7 @@
       "regions": [
         {
           "region": {
-            "base": 281472832700416,
+            "base": 281473603928064,
             "size": 65536,
             "prot": "rwx",
             "kind": "private",
@@ -42,10 +42,10 @@
           "severity": "high",
           "findings": [
             {
-              "id": "2050:ffff80350000:RWX",
+              "id": "678:ffffae2d0000:RWX",
               "detector": "rwx",
               "tag": "RWX",
-              "addr": 281472832700416,
+              "addr": 281473603928064,
               "size": 65536,
               "prot": "rwx",
               "entropy": null,
@@ -54,10 +54,10 @@
               "bytes_hex": "000000004c6f61644c696272617279410047657450726f6341646472657373005669727475616c416c6c6f6300aca8070a25f299efb9bc68f4c64b49aae57cc1f6999747588a8dd3e7b225127f26768f8b5c175f2e5d002a93816aa763ff742725018baa07d1212624e81024c7d5d6a9cd69ce1b23d544409b4a15da26f4be5088f2e280c86db1b815f4dd7f16df94246bfea370f940ecead09432a704315e19a3fe16b52ae69d397e40758072b87a39f1ae7f7339a40090f4c3da225a48cec53d8f13d77208756ae0ae7852aac36cd3c3e408784e2f22757789a5d072c7f3aff852d8e26470fdb90870fe2e23e1f6671375193f7d27fe5193829537e129b80d"
             },
             {
-              "id": "2050:ffff80350000:X-PRIV",
+              "id": "678:ffffae2d0000:X-PRIV",
               "detector": "x-priv",
               "tag": "X-PRIV",
-              "addr": 281472832700416,
+              "addr": 281473603928064,
               "size": 65536,
               "prot": "rwx",
               "entropy": null,
@@ -66,10 +66,10 @@
               "bytes_hex": "000000004c6f61644c696272617279410047657450726f6341646472657373005669727475616c416c6c6f6300aca8070a25f299efb9bc68f4c64b49aae57cc1f6999747588a8dd3e7b225127f26768f8b5c175f2e5d002a93816aa763ff742725018baa07d1212624e81024c7d5d6a9cd69ce1b23d544409b4a15da26f4be5088f2e280c86db1b815f4dd7f16df94246bfea370f940ecead09432a704315e19a3fe16b52ae69d397e40758072b87a39f1ae7f7339a40090f4c3da225a48cec53d8f13d77208756ae0ae7852aac36cd3c3e408784e2f22757789a5d072c7f3aff852d8e26470fdb90870fe2e23e1f6671375193f7d27fe5193829537e129b80d"
             },
             {
-              "id": "2050:ffff80350000:ENT-X",
+              "id": "678:ffffae2d0000:ENT-X",
               "detector": "ent-x",
               "tag": "ENT-X",
-              "addr": 281472832720896,
+              "addr": 281473603948544,
               "size": 4096,
               "prot": "rwx",
               "entropy": 7.96,
@@ -106,7 +106,7 @@
         },
         {
           "region": {
-            "base": 281472832765952,
+            "base": 281473603993600,
             "size": 1622016,
             "prot": "r-x",
             "kind": "mapped",
@@ -124,10 +124,10 @@
           "severity": "info",
           "findings": [
             {
-              "id": "2050:ffff80360000:ENT-X",
+              "id": "678:ffffae2e0000:ENT-X",
               "detector": "ent-x",
               "tag": "ENT-X",
-              "addr": 281472832778240,
+              "addr": 281473604005888,
               "size": 4096,
               "prot": "r-x",
               "entropy": 7.92,
@@ -241,7 +241,7 @@
         },
         {
           "region": {
-            "base": 281472834945024,
+            "base": 281473606189056,
             "size": 16384,
             "prot": "r-x",
             "kind": "private",
@@ -252,35 +252,35 @@
           },
           "bytes_read": 16384,
           "truncated": false,
-          "entropy_max": 4.06,
-          "entropy_mean": 2.85,
+          "entropy_max": 4.08,
+          "entropy_mean": 2.83,
           "zero_pages": 0,
           "score": 70,
           "severity": "high",
           "findings": [
             {
-              "id": "2050:ffff80574000:X-PRIV",
+              "id": "678:ffffae4f8000:X-PRIV",
               "detector": "x-priv",
               "tag": "X-PRIV",
-              "addr": 281472834945024,
+              "addr": 281473606189056,
               "size": 16384,
               "prot": "r-x",
               "entropy": null,
               "weight": 30,
               "reason": "wykonywalna pamięć prywatna/anonimowa bez pliku źródłowego",
-              "bytes_hex": "7f454c460201010000000000000000000300b7000100000080b10000000000004000000000000000a0f350000000000000000000400038000a00400029002800060000000400000040000000000000004000000000000000400000000000000030020000000000003002000000000000080000000000000003000000040000007002000000000000700200000000000070020000000000001b000000000000001b0000000000000001000000000000000100000005000000000000000000000000000000000000000000000000000000ccc3060000000000ccc306000000000000000100000000000100000006000000c8ca060000000000c8ca070000000000"
+              "bytes_hex": "7f454c460201010000000000000000000300b7000100000080b20000000000004000000000000000580752000000000000000000400038000a00400029002800060000000400000040000000000000004000000000000000400000000000000030020000000000003002000000000000080000000000000003000000040000007002000000000000700200000000000070020000000000001b000000000000001b000000000000000100000000000000010000000500000000000000000000000000000000000000000000000000000064cd06000000000064cd0600000000000000010000000000010000000600000030ca07000000000030ca070000000000"
             },
             {
-              "id": "2050:ffff80574000:HDR",
+              "id": "678:ffffae4f8000:HDR",
               "detector": "hdr",
               "tag": "HDR",
-              "addr": 281472834945024,
+              "addr": 281473606189056,
               "size": 4096,
               "prot": "r-x",
               "entropy": null,
               "weight": 40,
               "reason": "nagłówek ELF w regionie bez pliku źródłowego",
-              "bytes_hex": "7f454c460201010000000000000000000300b7000100000080b10000000000004000000000000000a0f350000000000000000000400038000a00400029002800060000000400000040000000000000004000000000000000400000000000000030020000000000003002000000000000080000000000000003000000040000007002000000000000700200000000000070020000000000001b000000000000001b0000000000000001000000000000000100000005000000000000000000000000000000000000000000000000000000ccc3060000000000ccc306000000000000000100000000000100000006000000c8ca060000000000c8ca070000000000"
+              "bytes_hex": "7f454c460201010000000000000000000300b7000100000080b20000000000004000000000000000580752000000000000000000400038000a00400029002800060000000400000040000000000000004000000000000000400000000000000030020000000000003002000000000000080000000000000003000000040000007002000000000000700200000000000070020000000000001b000000000000001b000000000000000100000000000000010000000500000000000000000000000000000000000000000000000000000064cd06000000000064cd0600000000000000010000000000010000000600000030ca07000000000030ca070000000000"
             }
           ],
           "profile": [
@@ -331,11 +331,11 @@
             "memfd_create",
             "posix_spawnattr_setflags"
           ],
-          "sha256": "4063392c86a10c8e77471f136ce93dc116b19f38a46082e4b8b5078cc17fcb1b"
+          "sha256": "71b1a8c08ea742d8aabbbb45c2a2244a872e25ae13bc5af1adbeb0b50671b8ca"
         },
         {
           "region": {
-            "base": 281472834990080,
+            "base": 281473606234112,
             "size": 8192,
             "prot": "r-x",
             "kind": "mapped",
@@ -353,10 +353,10 @@
           "severity": "high",
           "findings": [
             {
-              "id": "2050:ffff8057f000:MEMFD",
+              "id": "678:ffffae503000:MEMFD",
               "detector": "memfd",
               "tag": "MEMFD",
-              "addr": 281472834990080,
+              "addr": 281473606234112,
               "size": 8192,
               "prot": "r-x",
               "entropy": null,
@@ -365,10 +365,10 @@
               "bytes_hex": "ea1c58d897be9d5012c9a76e43b5af76c2a0727d39913d6590d84fa37fc74f6f092549a6b7010da5403e2889cdaca8070a25f299efb9bc68f4c64b49aae57cc1f6999747588a8dd3e7b225127f26768f8b5c175f2e5d002a93816aa763ff742725018baa07d1212624e81024c7d5d6a9cd69ce1b23d544409b4a15da26f4be5088f2e280c86db1b815f4dd7f16df94246bfea370f940ecead09432a704315e19a3fe16b52ae69d397e40758072b87a39f1ae7f7339a40090f4c3da225a48cec53d8f13d77208756ae0ae7852aac36cd3c3e408784e2f22757789a5d072c7f3aff852d8e26470fdb90870fe2e23e1f6671375193f7d27fe5193829537e129b80d"
             },
             {
-              "id": "2050:ffff8057f000:ENT-X",
+              "id": "678:ffffae503000:ENT-X",
               "detector": "ent-x",
               "tag": "ENT-X",
-              "addr": 281472834990080,
+              "addr": 281473606234112,
               "size": 4096,
               "prot": "r-x",
               "entropy": 7.95,
@@ -389,7 +389,7 @@
       ],
       "layout": [
         {
-          "base": 187650359164928,
+          "base": 187650581594112,
           "size": 446464,
           "prot": "r-x",
           "kind": "mapped",
@@ -399,7 +399,7 @@
           "readable": true
         },
         {
-          "base": 187650359672832,
+          "base": 187650582102016,
           "size": 16384,
           "prot": "r--",
           "kind": "mapped",
@@ -409,7 +409,7 @@
           "readable": true
         },
         {
-          "base": 187650359689216,
+          "base": 187650582118400,
           "size": 4096,
           "prot": "rw-",
           "kind": "mapped",
@@ -419,7 +419,7 @@
           "readable": true
         },
         {
-          "base": 187651175325696,
+          "base": 187650916065280,
           "size": 135168,
           "prot": "rw-",
           "kind": "heap",
@@ -429,7 +429,7 @@
           "readable": true
         },
         {
-          "base": 281472832700416,
+          "base": 281473603928064,
           "size": 65536,
           "prot": "rwx",
           "kind": "private",
@@ -439,7 +439,7 @@
           "readable": true
         },
         {
-          "base": 281472832765952,
+          "base": 281473603993600,
           "size": 1622016,
           "prot": "r-x",
           "kind": "mapped",
@@ -449,7 +449,7 @@
           "readable": true
         },
         {
-          "base": 281472834387968,
+          "base": 281473605615616,
           "size": 65536,
           "prot": "---",
           "kind": "mapped",
@@ -459,7 +459,7 @@
           "readable": false
         },
         {
-          "base": 281472834453504,
+          "base": 281473605681152,
           "size": 16384,
           "prot": "r--",
           "kind": "mapped",
@@ -469,7 +469,7 @@
           "readable": true
         },
         {
-          "base": 281472834469888,
+          "base": 281473605697536,
           "size": 8192,
           "prot": "rw-",
           "kind": "mapped",
@@ -479,7 +479,7 @@
           "readable": true
         },
         {
-          "base": 281472834478080,
+          "base": 281473605705728,
           "size": 53248,
           "prot": "rw-",
           "kind": "private",
@@ -489,7 +489,7 @@
           "readable": true
         },
         {
-          "base": 281472834535424,
+          "base": 281473605763072,
           "size": 81920,
           "prot": "r-x",
           "kind": "mapped",
@@ -499,7 +499,7 @@
           "readable": true
         },
         {
-          "base": 281472834617344,
+          "base": 281473605844992,
           "size": 110592,
           "prot": "---",
           "kind": "mapped",
@@ -509,7 +509,7 @@
           "readable": false
         },
         {
-          "base": 281472834727936,
+          "base": 281473605955584,
           "size": 4096,
           "prot": "r--",
           "kind": "mapped",
@@ -519,7 +519,7 @@
           "readable": true
         },
         {
-          "base": 281472834732032,
+          "base": 281473605959680,
           "size": 4096,
           "prot": "rw-",
           "kind": "mapped",
@@ -529,7 +529,7 @@
           "readable": true
         },
         {
-          "base": 281472834777088,
+          "base": 281473606021120,
           "size": 159744,
           "prot": "r-x",
           "kind": "mapped",
@@ -539,7 +539,7 @@
           "readable": true
         },
         {
-          "base": 281472834945024,
+          "base": 281473606189056,
           "size": 16384,
           "prot": "r-x",
           "kind": "private",
@@ -549,7 +549,7 @@
           "readable": true
         },
         {
-          "base": 281472834961408,
+          "base": 281473606205440,
           "size": 4096,
           "prot": "---",
           "kind": "private",
@@ -559,7 +559,7 @@
           "readable": false
         },
         {
-          "base": 281472834965504,
+          "base": 281473606209536,
           "size": 16384,
           "prot": "rw-",
           "kind": "private",
@@ -569,7 +569,7 @@
           "readable": true
         },
         {
-          "base": 281472834981888,
+          "base": 281473606225920,
           "size": 8192,
           "prot": "rw-",
           "kind": "private",
@@ -579,7 +579,7 @@
           "readable": true
         },
         {
-          "base": 281472834990080,
+          "base": 281473606234112,
           "size": 8192,
           "prot": "r-x",
           "kind": "mapped",
@@ -589,7 +589,7 @@
           "readable": true
         },
         {
-          "base": 281472834998272,
+          "base": 281473606242304,
           "size": 8192,
           "prot": "rw-",
           "kind": "private",
@@ -599,7 +599,7 @@
           "readable": true
         },
         {
-          "base": 281472835006464,
+          "base": 281473606250496,
           "size": 16384,
           "prot": "r--",
           "kind": "unknown",
@@ -609,7 +609,7 @@
           "readable": true
         },
         {
-          "base": 281472835022848,
+          "base": 281473606266880,
           "size": 8192,
           "prot": "r-x",
           "kind": "unknown",
@@ -619,7 +619,7 @@
           "readable": true
         },
         {
-          "base": 281472835031040,
+          "base": 281473606275072,
           "size": 8192,
           "prot": "r--",
           "kind": "mapped",
@@ -629,7 +629,7 @@
           "readable": true
         },
         {
-          "base": 281472835039232,
+          "base": 281473606283264,
           "size": 8192,
           "prot": "rw-",
           "kind": "mapped",
@@ -639,7 +639,7 @@
           "readable": true
         },
         {
-          "base": 281474164436992,
+          "base": 281474271924224,
           "size": 135168,
           "prot": "rw-",
           "kind": "stack",
@@ -650,36 +650,30 @@
         }
       ],
       "context": {
-        "ppid": 1356,
+        "ppid": 1,
         "user": "root (uid 0)",
-        "started": "2026-11-23T12:08:45Z",
+        "started": "2026-11-23T14:46:31Z",
         "cmdline": "/target/debug/nanshe-sample ctx 60",
         "cwd": "/src",
         "threads": 1,
         "exe_file": {
-          "size": 5307872,
-          "modified": "2026-11-22T15:30:04Z",
+          "size": 5378456,
+          "modified": "2026-11-23T14:42:49Z",
           "owner": "root (uid 0)",
           "mode": "0755",
-          "sha256": "b30029f0ef4af73cfdac3069fc66c732cf4ea1f2b8f453c7c29b75f33100ef67"
+          "sha256": "e73e6df025136d2b02d1fc3a530130a62ed5fde9f234c994cb5770c207935dbb"
         },
         "ancestors": [
-          {
-            "pid": 1356,
-            "name": "sh",
-            "exe": "/usr/bin/dash",
-            "cmdline": "sh scripts/example.sh /src/docs/przyklady"
-          },
           {
             "pid": 1,
             "name": "sh",
             "exe": "/usr/bin/dash",
-            "cmdline": "sh -c cargo test --workspace --features nanshe-cli/llm 2>&1 | grep -E \"^test result: .* [1-9][0-9]* passed|FAILED|^error|^warning: unused\" ; sh scripts/example.sh /src/docs/przyklady 2>&1 | tail -3; sh scripts/e2e.sh /target/e2e-out 2>&1 | tail -5"
+            "cmdline": "sh scripts/example.sh /src/docs/examples"
           }
         ],
         "children": [
           {
-            "pid": 2052,
+            "pid": 680,
             "name": "nanshe-sample",
             "exe": "/target/debug/nanshe-sample",
             "cmdline": "/target/debug/nanshe-sample clean 600"
@@ -688,19 +682,19 @@
         "sockets": [
           {
             "proto": "tcp",
-            "local": "127.0.0.1:42551",
+            "local": "127.0.0.1:42603",
             "state": "LISTEN"
           },
           {
             "proto": "tcp",
-            "local": "127.0.0.1:56108",
-            "remote": "127.0.0.1:42551",
+            "local": "127.0.0.1:37332",
+            "remote": "127.0.0.1:42603",
             "state": "ESTABLISHED"
           },
           {
             "proto": "tcp",
-            "local": "127.0.0.1:42551",
-            "remote": "127.0.0.1:56108",
+            "local": "127.0.0.1:42603",
+            "remote": "127.0.0.1:37332",
             "state": "ESTABLISHED"
           }
         ],
@@ -714,13 +708,13 @@
           {
             "fd": 1,
             "kind": "file",
-            "target": "/src/docs/przyklady/sample.pid",
+            "target": "/src/docs/examples/sample.pid",
             "deleted": false
           },
           {
             "fd": 2,
             "kind": "pipe",
-            "target": "pipe:[1467153]",
+            "target": "pipe:[1517073]",
             "deleted": false
           },
           {
@@ -732,31 +726,31 @@
           {
             "fd": 4,
             "kind": "socket",
-            "target": "socket:[1467201]",
+            "target": "socket:[1516522]",
             "deleted": false
           },
           {
             "fd": 5,
             "kind": "socket",
-            "target": "socket:[1467202]",
+            "target": "socket:[1516523]",
             "deleted": false
           },
           {
             "fd": 6,
             "kind": "socket",
-            "target": "socket:[1467203]",
+            "target": "socket:[1516524]",
             "deleted": false
           },
           {
             "fd": 7,
             "kind": "file",
-            "target": "/tmp/ns-ctx-2050.dat",
+            "target": "/tmp/ns-ctx-678.dat",
             "deleted": false
           },
           {
             "fd": 8,
             "kind": "file",
-            "target": "/tmp/ns-ctx-2050.gone",
+            "target": "/tmp/ns-ctx-678.gone",
             "deleted": true
           }
         ],
@@ -791,8 +785,8 @@
   "files": [
     {
       "path": "/target/debug/nanshe-sample",
-      "size": 5307872,
-      "sha256": "b30029f0ef4af73cfdac3069fc66c732cf4ea1f2b8f453c7c29b75f33100ef67"
+      "size": 5378456,
+      "sha256": "e73e6df025136d2b02d1fc3a530130a62ed5fde9f234c994cb5770c207935dbb"
     },
     {
       "path": "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
@@ -813,7 +807,7 @@
       "note": "skrót pliku pod tą ścieżką w systemie skanera (bez dostępu do map_files); dla procesu w kontenerze może to być inny plik"
     },
     {
-      "path": "memfd:payload (proces 2050)",
+      "path": "memfd:payload (proces 678)",
       "size": 0,
       "note": "plik niedostępny: Operation not permitted (os error 1)"
     }

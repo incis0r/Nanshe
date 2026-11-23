@@ -1,7 +1,7 @@
 //! Raport w PDF, pisany bez zewnętrznych programów: A4, czcionka DejaVu osadzona w pliku
 //! (polskie znaki, tekst da się zaznaczać i przeszukiwać). Wynik jest deterministyczny:
 //! ten sam dokument daje ten sam plik, bez znaczników czasu.
-use crate::doc::{class_label, size_h, Block, Doc, MapClass, MapRow, TreeNode};
+use crate::doc::{class_label, size_h, Block, Doc, MapClass, MapRow, StepLine, TreeNode, CODE};
 use nanshe_core::Severity;
 use nanshe_core::{tr, trf};
 use std::collections::BTreeMap;
@@ -108,9 +108,36 @@ struct Layout<'a> {
     y: f32,
     /// Numer strony każdego rozdziału głównego, w kolejności (do spisu treści).
     h1_pages: Vec<usize>,
+    /// Cele odnośników: kotwica -> (indeks strony, wysokość na stronie).
+    anchors: BTreeMap<String, (usize, f32)>,
+    /// Klikalne obszary: (indeks strony, prostokąt, kotwica celu).
+    links: Vec<(usize, [f32; 4], String)>,
+    /// Kotwica czekająca na najbliższy nagłówek.
+    pending: Option<String>,
+}
+
+/// To, co pierwszy przebieg układu ustala dla drugiego: strony rozdziałów i położenie kotwic.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct PassInfo { pub h1_pages: Vec<usize>, pub anchors: BTreeMap<String, (usize, f32)> }
+
+/// Tło poleceń i wierszy poleceń.
+const CODE_BG: Rgb = (0.94, 0.94, 0.95);
+
+/// Kolor dla wartości z ustalonego zbioru (priorytet, waga), żeby dało się je wyłowić wzrokiem.
+fn value_color(text: &str) -> Option<Rgb> {
+    let t = text.trim();
+    let head = t.split(':').next().unwrap_or(t);
+    match head {
+        "P1" => Some(RED), "P2" => Some(ORANGE), "P3" => Some(GREY),
+        _ => match t { "wysokie" | "high" => Some(RED), "podejrzane" | "suspicious" => Some(ORANGE), _ => None },
+    }
 }
 
 impl<'a> Layout<'a> {
+    /// Zapisuje położenie kotwicy czekającej na nagłówek: tuż nad nagłówkiem, który właśnie narysowano.
+    fn anchor_here(&mut self, above: f32) {
+        if let Some(id) = self.pending.take() { self.anchors.insert(id, (self.pages.len(), (self.y + above).min(PAGE_H - TOP + 10.0))); }
+    }
     fn new_page(&mut self) {
         self.pages.push(std::mem::take(&mut self.cur));
         self.y = PAGE_H - TOP;
@@ -268,7 +295,8 @@ impl<'a> Layout<'a> {
         for r in rows {
             let mut cells = r.clone();
             cells.resize(n, String::new());
-            self.row(&cells, &widths, &body, Some((head, &hs)));
+            let st: Vec<(usize, Rgb, Option<Rgb>)> = cells.iter().zip(&body).map(|(c, b)| match value_color(c) { Some(col) => (B, col, b.2), None => *b }).collect();
+            self.row(&cells, &widths, &st, Some((head, &hs)));
         }
         self.y -= 8.0;
     }
@@ -292,6 +320,8 @@ impl<'a> Layout<'a> {
             self.ensure(h + 1.0);
             let y = self.y - h;
             if finding { self.fill(LEFT, y, WIDTH, h, if r.class == MapClass::Finding(Severity::High) { RED_LIGHT } else { ORANGE_LIGHT }); }
+            // wiersz znaleziska z własnym opisem dalej w raporcie jest odnośnikiem do tego opisu
+            if let Some(a) = &r.link { self.links.push((self.pages.len(), [LEFT, y, LEFT + WIDTH, y + h], a.clone())); }
             match r.class {
                 MapClass::Gap | MapClass::Collapsed => {
                     // przerwa w osi: dwie krótkie kreski zamiast bloku
@@ -558,12 +588,12 @@ impl<'a> Layout<'a> {
     /// Spis treści. `pages`: numery stron rozdziałów z poprzedniego przebiegu układu; pusty w pierwszym
     /// przebiegu. Wysokość zależy tylko od liczby pozycji, więc numery stron z pierwszego przebiegu
     /// pozostają prawdziwe w drugim.
-    fn toc(&mut self, items: &[String], pages: &[usize]) {
+    fn toc(&mut self, items: &[(String, String)], pages: &[usize]) {
         const ROW: f32 = 12.5;
         self.ensure(20.0 + ROW * items.len().min(12) as f32);
         self.text(B, 10.0, ACCENT_DARK, LEFT, self.y - 10.0, tr!("Spis treści", "Contents"));
         self.y -= 17.0;
-        for (i, t) in items.iter().enumerate() {
+        for (i, (t, anchor)) in items.iter().enumerate() {
             self.ensure(ROW);
             let num = pages.get(i).map(|p| p.to_string()).unwrap_or_default();
             let nw = self.fonts[R].width(&num, 9.0);
@@ -572,14 +602,46 @@ impl<'a> Layout<'a> {
             self.text(R, 9.0, INK, LEFT + 6.0, self.y - 9.0, &label);
             self.text(R, 9.0, INK, PAGE_W - RIGHT - nw, self.y - 9.0, &num);
             if !num.is_empty() { self.line(LEFT + 6.0 + lw + 5.0, self.y - 8.0, PAGE_W - RIGHT - nw - 5.0, BORDER); }
+            self.links.push((self.pages.len(), [LEFT, self.y - ROW + 1.0, PAGE_W - RIGHT, self.y + 1.0], anchor.clone()));
             self.y -= ROW;
         }
         self.y -= 8.0;
     }
+    /// Kroki sprawdzenia: numer i opis, polecenie na szarym tle, wskazówka do odczytania wyniku.
+    fn steps(&mut self, steps: &[StepLine]) {
+        let (ind, w) = (LEFT + 14.0, WIDTH - 14.0);
+        for (i, s) in steps.iter().enumerate() {
+            self.ensure(34.0);
+            self.text(B, 9.0, ACCENT_DARK, LEFT, self.y - 9.0, &format!("{}.", i + 1));
+            self.paragraph(R, 9.0, INK, ind, w, &s.what);
+            if !s.cmd.is_empty() {
+                let lines = self.wrap(R, 8.0, &s.cmd, w - 10.0);
+                let h = lines.len() as f32 * 10.6 + 6.0;
+                self.ensure(h + 2.0);
+                self.y -= 2.0;
+                self.fill(ind, self.y - h, w, h, CODE_BG);
+                self.stroke(ind, self.y - h, w, h, BORDER);
+                let mut base = self.y - 10.4;
+                for l in &lines { self.text(R, 8.0, INK, ind + 5.0, base, l); base -= 10.6; }
+                self.y -= h + 3.0;
+            }
+            if !s.look.is_empty() {
+                self.paragraph(R, 8.4, GREY, ind, w, &format!("{} {}", tr!("Jak czytać wynik:", "How to read the result:"), s.look));
+            }
+            self.y -= 5.0;
+        }
+        self.y -= 3.0;
+    }
     fn keyvals(&mut self, kv: &[(String, String)]) {
         let widths = [WIDTH * 0.24, WIDTH * 0.76];
-        let st = [(B, ACCENT_DARK, Some(ACCENT_LIGHT)), (R, INK, None)];
-        for (k, v) in kv { self.row(&[k.clone(), v.clone()], &widths, &st, None); }
+        for (k, v) in kv {
+            // wartość oznaczona jako kod (wiersz poleceń) dostaje szare tło; wartość z ustalonego zbioru kolor
+            let (text, style) = match v.strip_prefix(CODE) {
+                Some(c) => (c.to_string(), (R, INK, Some(CODE_BG))),
+                None => (v.clone(), match value_color(v) { Some(col) => (B, col, None), None => (R, INK, None) }),
+            };
+            self.row(&[k.clone(), text], &widths, &[(B, ACCENT_DARK, Some(ACCENT_LIGHT)), style], None);
+        }
         self.y -= 8.0;
     }
 }
@@ -616,15 +678,16 @@ fn to_unicode(used: &BTreeMap<u16, char>) -> Vec<u8> {
 }
 
 pub fn render(d: &Doc) -> Vec<u8> {
-    // dwa przebiegi układu: pierwszy ustala, na której stronie zaczyna się każdy rozdział,
-    // drugi wpisuje te numery do spisu treści
-    let has_toc = d.blocks.iter().any(|b| matches!(b, Block::Toc(_)));
-    let pages = if has_toc { render_pass(d, &[]).1 } else { Vec::new() };
-    render_pass(d, &pages).0
+    // dwa przebiegi układu: pierwszy ustala, na której stronie zaczyna się każdy rozdział i gdzie leżą
+    // cele odnośników, drugi wpisuje numery stron do spisu treści i dodaje odnośniki
+    let two = d.blocks.iter().any(|b| matches!(b, Block::Toc(_) | Block::Anchor(_)));
+    let info = if two { render_pass(d, &PassInfo::default()).1 } else { PassInfo::default() };
+    render_pass(d, &info).0
 }
 
-fn render_pass(d: &Doc, toc_pages: &[usize]) -> (Vec<u8>, Vec<usize>) {
-    let mut l = Layout { fonts: [Font::new(REGULAR, "DejaVuSans"), Font::new(BOLD, "DejaVuSans-Bold")], pages: Vec::new(), cur: String::new(), y: PAGE_H - TOP, h1_pages: Vec::new() };
+pub(crate) fn render_pass(d: &Doc, prev: &PassInfo) -> (Vec<u8>, PassInfo) {
+    let toc_pages: &[usize] = &prev.h1_pages;
+    let mut l = Layout { fonts: [Font::new(REGULAR, "DejaVuSans"), Font::new(BOLD, "DejaVuSans-Bold")], pages: Vec::new(), cur: String::new(), y: PAGE_H - TOP, h1_pages: Vec::new(), anchors: BTreeMap::new(), links: Vec::new(), pending: None };
 
     // tytuł na pierwszej stronie
     const MARK: f32 = 40.0;
@@ -650,10 +713,12 @@ fn render_pass(d: &Doc, toc_pages: &[usize]) -> (Vec<u8>, Vec<usize>) {
             l.ensure(30.0 + next);
         }
         match b {
-            Block::H1(t) => { l.heading(1, t); l.h1_pages.push(l.pages.len() + 1); }
+            Block::H1(t) => { l.heading(1, t); l.h1_pages.push(l.pages.len() + 1); l.anchor_here(36.0); }
             Block::Toc(items) => l.toc(items, toc_pages),
-            Block::H2(t) => l.heading(2, t),
-            Block::H3(t) => l.heading(3, t),
+            Block::H2(t) => { l.heading(2, t); l.anchor_here(30.0); }
+            Block::H3(t) => { l.heading(3, t); l.anchor_here(20.0); }
+            Block::Anchor(id) => l.pending = Some(id.clone()),
+            Block::Steps(steps) => l.steps(steps),
             Block::Para(t) => { l.paragraph(R, 9.5, INK, LEFT, WIDTH, t); l.y -= 6.0; }
             Block::Note(t) => l.note(t),
             Block::Bullets(i) => l.bullets(i),
@@ -721,7 +786,11 @@ fn render_pass(d: &Doc, toc_pages: &[usize]) -> (Vec<u8>, Vec<usize>) {
     for (i, c) in contents.iter().enumerate() {
         let cid = page_base + 2 * i;
         objs.push((cid, stream("", c.as_bytes())));
-        objs.push((cid + 1, format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {PAGE_W} {PAGE_H}] /Resources << /Font << /F1 {} 0 R /F2 {} 0 R >> >> /Contents {cid} 0 R >>",
+        // odnośniki na tej stronie do kotwic, których położenie ustalił poprzedni przebieg układu
+        let annots: String = l.links.iter().filter(|k| k.0 == i).filter_map(|(_, r, a)| prev.anchors.get(a).map(|(tp, ty)|
+            format!("<< /Type /Annot /Subtype /Link /Rect [{:.1} {:.1} {:.1} {:.1}] /Border [0 0 0] /Dest [{} 0 R /XYZ 0 {:.1} 0] >>", r[0], r[1], r[2], r[3], page_base + 2 * tp + 1, ty))).collect::<Vec<_>>().join(" ");
+        let annots = if annots.is_empty() { String::new() } else { format!(" /Annots [{annots}]") };
+        objs.push((cid + 1, format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {PAGE_W} {PAGE_H}] /Resources << /Font << /F1 {} 0 R /F2 {} 0 R >> >> /Contents {cid} 0 R{annots} >>",
             font_base(R) + 4, font_base(B) + 4).into_bytes()));
     }
     objs.push((info_id, format!("<< /Title <{}> /Producer (nanshe {}) >>", utf16_hex(&d.title), env!("CARGO_PKG_VERSION")).into_bytes()));
@@ -739,7 +808,7 @@ fn render_pass(d: &Doc, toc_pages: &[usize]) -> (Vec<u8>, Vec<usize>) {
     out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
     for o in &offsets { out.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes()); }
     out.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R /Info {info_id} 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).as_bytes());
-    (out, l.h1_pages)
+    (out, PassInfo { h1_pages: l.h1_pages, anchors: l.anchors })
 }
 
 #[cfg(test)]
@@ -785,7 +854,7 @@ mod tests {
         assert!(pages(&many) >= 4, "{}", pages(&many));
         assert_eq!(render(&doc(60)), many, "ten sam dokument, ten sam plik");
         // znak projektu jest rysowany raz, na pierwszej stronie
-        let mut l = Layout { fonts: [Font::new(REGULAR, "r"), Font::new(BOLD, "b")], pages: vec![], cur: String::new(), y: 0.0, h1_pages: Vec::new() };
+        let mut l = Layout { fonts: [Font::new(REGULAR, "r"), Font::new(BOLD, "b")], pages: vec![], cur: String::new(), y: 0.0, h1_pages: Vec::new(), anchors: BTreeMap::new(), links: Vec::new(), pending: None };
         l.symbol(10.0, 800.0, 40.0);
         assert!(l.cur.starts_with("q 0.1562 0 0 -0.1562 10.00 800.00 cm") && l.cur.contains("f*") && l.cur.ends_with("Q\n"));
     }
@@ -794,25 +863,31 @@ mod tests {
     /// (drugi przebieg układu daje te same strony co pierwszy).
     #[test]
     fn toc_page_numbers_are_stable_between_passes() {
-        let titles: Vec<String> = (1..=12).map(|i| format!("{i}. Rozdział {i}")).collect();
+        let titles: Vec<(String, String)> = (1..=12).map(|i| (format!("{i}. Rozdział {i}"), format!("ch-{i}"))).collect();
         let mut blocks = vec![Block::Para("wstęp".into()), Block::Toc(titles.clone())];
-        for t in &titles { blocks.push(Block::H1(t.clone())); for _ in 0..5 { blocks.push(Block::Para("słowo ".repeat(120))); } }
+        for (t, a) in &titles { blocks.push(Block::Anchor(a.clone())); blocks.push(Block::H1(t.clone())); for _ in 0..5 { blocks.push(Block::Para("słowo ".repeat(120))); } }
         let d = Doc { title: "t".into(), subtitle: "s".into(), footer: "f".into(), blocks };
-        let (first, pages) = render_pass(&d, &[]);
+        let (first, info) = render_pass(&d, &PassInfo::default());
+        let pages = &info.h1_pages;
         assert_eq!(pages.len(), 12);
         assert!(pages.windows(2).all(|w| w[0] <= w[1]) && pages[0] >= 1 && *pages.last().unwrap() > 2, "{pages:?}");
-        let (second, again) = render_pass(&d, &pages);
-        assert_eq!(pages, again, "numery stron w spisie muszą odpowiadać stronom rozdziałów");
-        assert_ne!(first, second, "drugi przebieg wpisuje numery stron");
+        let (second, again) = render_pass(&d, &info);
+        assert_eq!(info, again, "numery stron i położenie kotwic muszą być takie same w obu przebiegach");
+        assert_ne!(first, second, "drugi przebieg wpisuje numery stron i odnośniki");
         assert_eq!(render(&d), second);
-        // dokument bez spisu: jeden przebieg, wynik jak dotąd
-        let plain = Doc { blocks: d.blocks.iter().filter(|b| !matches!(b, Block::Toc(_))).cloned().collect(), ..d.clone() };
-        assert_eq!(render(&plain), render_pass(&plain, &[]).0);
+        // każdy wpis spisu jest odnośnikiem do swojego rozdziału: 12 odnośników, cel na stronie rozdziału
+        assert_eq!(find(&second, b"/Subtype /Link"), 12);
+        assert_eq!(find(&first, b"/Subtype /Link"), 0, "pierwszy przebieg nie zna jeszcze celów");
+        for (i, (_, a)) in titles.iter().enumerate() { assert_eq!(info.anchors[a].0 + 1, pages[i], "kotwica rozdziału {} na jego stronie", i + 1); }
+        // dokument bez spisu i kotwic: jeden przebieg, bez odnośników
+        let plain = Doc { blocks: d.blocks.iter().filter(|b| !matches!(b, Block::Toc(_) | Block::Anchor(_))).cloned().collect(), ..d.clone() };
+        assert_eq!(render(&plain), render_pass(&plain, &PassInfo::default()).0);
+        assert_eq!(find(&render(&plain), b"/Subtype /Link"), 0);
     }
 
     #[test]
     fn long_token_is_broken_and_unknown_glyph_replaced() {
-        let l = Layout { fonts: [Font::new(REGULAR, "r"), Font::new(BOLD, "b")], pages: vec![], cur: String::new(), y: 0.0, h1_pages: Vec::new() };
+        let l = Layout { fonts: [Font::new(REGULAR, "r"), Font::new(BOLD, "b")], pages: vec![], cur: String::new(), y: 0.0, h1_pages: Vec::new(), anchors: BTreeMap::new(), links: Vec::new(), pending: None };
         let lines = l.wrap(R, 8.0, &"a".repeat(300), 100.0);
         assert!(lines.len() > 5);
         assert!(lines.iter().all(|x| l.fonts[R].width(x, 8.0) <= 100.0));

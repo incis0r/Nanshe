@@ -32,7 +32,7 @@ Katalog musi zawierać `common.json`; plik systemu jest opcjonalny. Dla raportu 
 | „Pliki zmapowane do pamięci", kolumna opisu | `modules` | czym jest biblioteka; moduły środowisk JIT są zawsze pokazane, bo tłumaczą znaleziska |
 | „Co oznaczają znaleziska w tym procesie" | `combos`, `tags` | każdy zestaw cech raz: co oznacza, łagodne i niepokojące wyjaśnienia, wskazówka zależna od tego, czy w procesie jest środowisko JIT, podstawa techniczna i powiązane techniki ATT&CK |
 | „Ocena" i „Podsumowanie dla decydenta" | `modules` (rozpoznanie środowiska JIT), nazwy cech | priorytet weryfikacji procesu z uzasadnieniem; reguły priorytetu są w kodzie raportu, baza dostarcza nazwy i rozpoznanie środowisk |
-| „Jak sprawdzić ten region" | `verify` | gotowe polecenia z wstawionym numerem procesu i adresami regionu |
+| „Jak sprawdzić ten region" | `verify` | kroki: co zrobić, gotowe polecenie z wstawionym numerem procesu i adresami regionu oraz wskazówka, jak czytać wynik (co jest zwykłe, co powinno zaniepokoić, co zrobić dalej) |
 | „Procesy i cechy", „Rozmiar i entropia regionów", „Skróty SHA-256" | `sections` | opis, jak czytać macierz, wykres rozrzutu i tabele skrótów |
 | „Słowniczek" i „Legenda" | `terms`, `tags` | pojęcia użyte w raporcie |
 
@@ -58,7 +58,7 @@ Każdy plik to jeden obiekt JSON. Plik systemu jest nakładany na wspólny: obie
   "combos": [ { "tags": ["RWX", "X-PRIV"], "title": "...", "meaning": "...",
                 "benign": ["..."], "malicious": ["..."],
                 "hints": [ { "runtime": true, "text": "... {runtime} ..." }, { "runtime": false, "text": "..." } ] } ],
-  "verify": { "*": ["krok dla każdego regionu: {pid} {start} {end} {start_plain} {size}"], "HDR": ["krok tylko dla tego tagu"] },
+  "verify": { "*": [{ "do": "co zrobić", "cmd": "polecenie {pid} {start} {end} {start_plain} {size}", "look": "jak czytać wynik" }], "HDR": [{ "do": "krok tylko dla tego tagu", "cmd": "", "look": "..." }] },
   "processes": [ { "names": ["svchost.exe"], "what": "...", "paths": ["\\windows\\system32\\svchost.exe"], "parents": ["services.exe"] } ],
   "modules":   [ { "names": ["clr.dll"], "what": "...", "runtime": ".NET Framework" } ],
   "flags":   { "seccomp": "objaśnienie; klucz jest początkiem nazwy cechy" },

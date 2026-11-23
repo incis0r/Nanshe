@@ -109,33 +109,77 @@
  ],
  "verify": {
   "*": [
-   "Zobacz region w programie System Informer (dawniej Process Hacker): proces {pid}, zakładka Memory, adres {start}; można tam zapisać region do pliku.",
-   "Sprawdź właściciela, rodzica i wiersz poleceń: Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\" | Select-Object Name,ParentProcessId,CommandLine,CreationDate",
-   "Zrób pełny zrzut pamięci procesu do dalszej analizy (Sysinternals): procdump -ma {pid} C:\\Temp\\proc_{pid}.dmp"
+   {
+    "do": "Otwórz region pamięci w programie System Informer (dawniej Process Hacker): proces {pid}, zakładka Memory, adres {start}; można tam zapisać region do pliku",
+    "cmd": "",
+    "look": "Spójrz na kolumny Type, Protection i Use. Wpis typu Image z nazwą pliku w kolumnie Use to zwykle biblioteka wczytana z dysku, czyli przypadek typowy. Typ Private z ochroną zawierającą X (wykonywanie) i pustą kolumną Use oznacza wykonywalną pamięć bez pliku, co sugeruje dalszą weryfikację: zapisz region do pliku i przejdź do kolejnych kroków."
+   },
+   {
+    "do": "Sprawdź właściciela, proces nadrzędny i wiersz poleceń procesu",
+    "cmd": "Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\" | Select-Object Name,ParentProcessId,CommandLine,CreationDate",
+    "look": "Porównaj Name, ParentProcessId i CommandLine z tym, czego oczekujesz po tym programie: np. przeglądarka uruchomiona przez explorer.exe z krótkim wierszem poleceń wygląda zwyczajnie. Niepokoić powinien nietypowy proces nadrzędny (np. program biurowy uruchamiający powershell.exe), długi zakodowany ciąg znaków w CommandLine albo ścieżka w Temp lub AppData. W takim przypadku sprawdź w ten sam sposób proces nadrzędny i zrób zrzut pamięci."
+   },
+   {
+    "do": "Zrób pełny zrzut pamięci procesu do dalszej analizy narzędziem procdump (Sysinternals)",
+    "cmd": "procdump -ma {pid} C:\\Temp\\proc_{pid}.dmp",
+    "look": "Ten krok niczego nie rozstrzyga, tylko zabezpiecza materiał: narzędzie powinno wypisać \"Dump 1 complete\", a plik .dmp pojawić się w C:\\Temp. Zrób to, zanim proces zostanie zamknięty lub komputer uruchomiony ponownie, i przekaż plik osobie, która będzie analizować znalezisko."
+   }
   ],
   "HDR": [
-   "Wydobądź ukryte programy z pamięci procesu narzędziem pe-sieve: pe-sieve64.exe /pid {pid} /dump_mode 3"
+   {
+    "do": "Wydobądź z pamięci procesu ukryte programy narzędziem pe-sieve",
+    "cmd": "pe-sieve64.exe /pid {pid} /dump_mode 3",
+    "look": "Przeczytaj podsumowanie na końcu: same zera w wierszach Implanted PE, Replaced i Total suspicious są zgodne z przypadkiem niegroźnym. Wartość większa od zera w Implanted PE (program wstawiony do pamięci bez pliku na dysku) lub Replaced sugeruje wstrzyknięty kod. Wtedy zachowaj katalog z zapisanymi plikami i policz ich skróty SHA256 do sprawdzenia w bazach znanych plików."
+   }
   ],
   "RWX": [
-   "Sprawdź, czy proces ma środowisko .NET albo przeglądarkowe: Get-Process -Id {pid} -Module | Where-Object ModuleName -match \"clr|coreclr|clrjit|msedge|chrome|jvm|v8\""
+   {
+    "do": "Sprawdź, czy proces korzysta ze środowiska .NET, Javy albo silnika przeglądarki",
+    "cmd": "Get-Process -Id {pid} -Module | Where-Object ModuleName -match \"clr|coreclr|clrjit|msedge|chrome|jvm|v8\"",
+    "look": "Jeśli na liście są biblioteki takie jak clr.dll, coreclr.dll, clrjit.dll, jvm.dll albo pliki chrome lub msedge, pamięć jednocześnie zapisywalna i wykonywalna jest zgodna z normalną pracą kompilatora JIT (tworzy kod w trakcie działania programu). Pusty wynik oznacza brak takiego wyjaśnienia i znalezisko zasługuje na większą uwagę: zapisz region pamięci do pliku i zrób zrzut procesu."
+   }
   ],
   "X-PRIV": [
-   "Sprawdź, czy plik programu jest podpisany (Sysinternals): sigcheck -nobanner ŚCIEŻKA_PLIKU_PROGRAMU"
+   {
+    "do": "Sprawdź narzędziem sigcheck (Sysinternals), czy plik programu ma podpis cyfrowy; w miejsce PROGRAM_FILE_PATH wstaw pełną ścieżkę pliku programu",
+    "cmd": "sigcheck -nobanner PROGRAM_FILE_PATH",
+    "look": "Spójrz na pola Verified i Publisher. Wartość Signed ze znanym wydawcą jest zgodna z legalnym programem, choć nie wyklucza kodu wstrzykniętego do niego później. Wartość Unsigned lub nieznany wydawca, zwłaszcza przy pliku w Temp, AppData lub Downloads, powinna budzić niepokój: policz skrót pliku i sprawdź go w bazach znanych plików."
+   }
   ],
   "X-MAP": [
-   "Wypisz sekcje i ich właścicieli (WinDbg po podłączeniu do procesu): !address {start}"
+   {
+    "do": "Podłącz WinDbg do procesu i wypisz informacje o regionie pamięci pod tym adresem",
+    "cmd": "!address {start}",
+    "look": "Spójrz na pola Usage, Type i Protect oraz na to, czy pojawia się nazwa pliku (Mapped file lub Image). Region z nazwą znanego pliku jest zgodny ze zwykłym mapowaniem pliku przez program. Wykonywalny region typu MEM_MAPPED bez nazwy pliku sugeruje kod umieszczony we współdzielonej sekcji pamięci, co wymaga dalszej analizy: zrób zrzut procesu i przekaż go do analizy."
+   }
   ],
   "GUARD-X": [
-   "Treść regionu jest w pełnym zrzucie procesu (procdump -ma); przeglądanie go w debugerze na żywym procesie zdejmie stronę strażnika."
+   {
+    "do": "Zrób pełny zrzut procesu (procdump -ma) i treść regionu pamięci oglądaj w zrzucie, a nie w debugerze na żywym procesie, bo to zdejmie stronę strażnika",
+    "cmd": "",
+    "look": "Strona strażnika (jednorazowy alarm przy pierwszym dostępie do pamięci) na stosie wątku jest czymś zwyczajnym. Na regionie wykonywalnym bez pliku bywa stosowana do ukrywania kodu przed skanerami, więc jest to zgodne z próbą ukrycia, ale samo w sobie tego nie przesądza. Jeśli w zrzucie region zawiera kod lub nagłówek programu (litery MZ na początku), przekaż zrzut do analizy."
+   }
   ],
   "ENT-X": [
-   "Po zapisaniu regionu policz skrót i porównaj z bazami znanych plików: Get-FileHash PLIK -Algorithm SHA256"
+   {
+    "do": "Po zapisaniu regionu pamięci do pliku policz jego skrót SHA256 i porównaj z bazami znanych plików (np. VirusTotal); w miejsce FILE wstaw ścieżkę zapisanego pliku",
+    "cmd": "Get-FileHash FILE -Algorithm SHA256",
+    "look": "Skopiuj wartość z kolumny Hash i wyszukaj ją w bazie. Brak trafienia jest wynikiem typowym i niczego nie rozstrzyga, bo treść pamięci rzadko zgadza się co do bajta z plikiem z dysku. Trafienie oznaczone przez wiele silników jako złośliwe sugeruje znane złośliwe oprogramowanie: zabezpiecz zrzut procesu i zgłoś znalezisko."
+   }
   ],
   "THR-PRIV": [
-   "Zobacz wątek i jego stos w System Informer: proces {pid}, zakładka Threads; kolumna Start address pokaże adres bez nazwy modułu."
+   {
+    "do": "Otwórz wątek i jego stos w System Informer: proces {pid}, zakładka Threads, kolumna Start address",
+    "cmd": "",
+    "look": "Zwykły wątek ma w kolumnie Start address nazwę biblioteki i funkcji, np. ntdll.dll!RtlUserThreadStart. Sam adres liczbowy (np. 0x1f0000) bez nazwy modułu oznacza wątek uruchomiony z pamięci bez pliku, co jest zgodne ze wstrzykniętym kodem, ale zdarza się też w programach .NET i Java. Kliknij wątek dwukrotnie, obejrzyj stos i jeśli również tam są adresy bez nazw, zrób zrzut procesu."
+   }
   ],
   "IMG-MOD": [
-   "Wypisz zmienione funkcje narzędziem pe-sieve (pokazuje podpięcia i łatki z nazwami funkcji): pe-sieve64.exe /pid {pid} /shellc 0 /iat 1"
+   {
+    "do": "Wypisz zmienione funkcje narzędziem pe-sieve, które pokazuje podpięcia i łatki (zmiany w kodzie biblioteki) z nazwami funkcji",
+    "cmd": "pe-sieve64.exe /pid {pid} /shellc 0 /iat 1",
+    "look": "Spójrz na wiersze Hooked i IAT Hooked w podsumowaniu oraz na pliki .tag w katalogu wyników, gdzie są nazwy zmienionych funkcji i cel przekierowania. Przekierowania do biblioteki programu antywirusowego lub EDR są zgodne z normalną pracą ochrony. Przekierowanie do pamięci bez pliku albo łatki w funkcjach takich jak AmsiScanBuffer lub EtwEventWrite sugerują próbę wyłączenia zabezpieczeń: zrób zrzut procesu i zgłoś znalezisko."
+   }
   ]
  },
  "terms": {

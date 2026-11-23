@@ -78,6 +78,27 @@ pub struct ModInfo {
     pub runtime: Option<String>,
 }
 
+/// Krok sprawdzenia regionu: co zrobić, jakim poleceniem i jak czytać wynik.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Step {
+    /// Co zrobić, jednym zdaniem.
+    pub what: String,
+    /// Polecenie do uruchomienia; puste, gdy krok polega na obejrzeniu czegoś w narzędziu graficznym.
+    pub cmd: String,
+    /// Jak czytać wynik: co jest zwykłe, co powinno zaniepokoić, co zrobić dalej.
+    pub look: String,
+}
+
+impl<'de> Deserialize<'de> for Step {
+    /// Krok jako obiekt {"do", "cmd", "look"} albo, w starszych plikach, jako sam tekst.
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Any { Text(String), Full { #[serde(rename = "do")] what: String, #[serde(default)] cmd: String, #[serde(default)] look: String } }
+        Ok(match Any::deserialize(d)? { Any::Text(what) => Step { what, ..Default::default() }, Any::Full { what, cmd, look } => Step { what, cmd, look } })
+    }
+}
+
 #[derive(Deserialize, Clone, Debug, Default)]
 struct Raw {
     #[serde(default)] version: String,
@@ -87,7 +108,7 @@ struct Raw {
     #[serde(default)] tags: BTreeMap<String, TagInfo>,
     #[serde(default)] combos: Vec<Combo>,
     #[serde(default)] terms: Map<String, Value>,
-    #[serde(default)] verify: BTreeMap<String, Vec<String>>,
+    #[serde(default)] verify: BTreeMap<String, Vec<Step>>,
     #[serde(default)] flags: Map<String, Value>,
     #[serde(default)] handles: Map<String, Value>,
     #[serde(default)] socket_states: Map<String, Value>,
@@ -105,7 +126,7 @@ pub struct Kb {
     pub tags: BTreeMap<String, TagInfo>,
     pub combos: Vec<Combo>,
     pub terms: Vec<(String, String)>,
-    pub verify: BTreeMap<String, Vec<String>>,
+    pub verify: BTreeMap<String, Vec<Step>>,
     pub flags: Vec<(String, String)>,
     pub handles: Vec<(String, String)>,
     pub socket_states: Vec<(String, String)>,
@@ -225,13 +246,14 @@ impl Kb {
     }
 
     /// Kroki sprawdzenia regionu: ogólne i dla jego tagów, z wstawionym numerem procesu i adresami.
-    pub fn verify_steps(&self, tags: &[&str], pid: u32, start: u64, end: u64) -> Vec<String> {
-        let mut out: Vec<String> = Vec::new();
+    pub fn verify_steps(&self, tags: &[&str], pid: u32, start: u64, end: u64) -> Vec<Step> {
+        let fill = |s: &str| s.replace("{pid}", &pid.to_string()).replace("{start_plain}", &format!("{start:x}"))
+            .replace("{start}", &format!("{start:#x}")).replace("{end}", &format!("{end:#x}")).replace("{size}", &end.saturating_sub(start).to_string());
+        let mut out: Vec<Step> = Vec::new();
         let keys = std::iter::once("*").chain(tags.iter().copied());
         for k in keys {
             for s in self.verify.get(k).into_iter().flatten() {
-                let t = s.replace("{pid}", &pid.to_string()).replace("{start_plain}", &format!("{start:x}"))
-                    .replace("{start}", &format!("{start:#x}")).replace("{end}", &format!("{end:#x}")).replace("{size}", &end.saturating_sub(start).to_string());
+                let t = Step { what: fill(&s.what), cmd: fill(&s.cmd), look: fill(&s.look) };
                 if !out.contains(&t) { out.push(t); }
             }
         }
@@ -265,7 +287,9 @@ mod tests {
             for (t, i) in &pl.tags { let e = &en.tags[t]; assert_eq!((&i.en, &i.attack, i.tech.is_empty()), (&e.en, &e.attack, e.tech.is_empty()), "{os}/{t}"); }
             assert_eq!(pl.combos.iter().map(|c| (&c.tags, c.benign.len(), c.malicious.len(), c.hints.iter().map(|h| h.runtime).collect::<Vec<_>>())).collect::<Vec<_>>(),
                 en.combos.iter().map(|c| (&c.tags, c.benign.len(), c.malicious.len(), c.hints.iter().map(|h| h.runtime).collect::<Vec<_>>())).collect::<Vec<_>>(), "{os}");
-            assert_eq!(pl.verify.iter().map(|(k, v)| (k, v.len())).collect::<Vec<_>>(), en.verify.iter().map(|(k, v)| (k, v.len())).collect::<Vec<_>>(), "{os}");
+            // te same kroki z tymi samymi poleceniami; opis i wskazówka są w obu językach
+            assert_eq!(pl.verify.iter().map(|(k, v)| (k, v.iter().map(|s| &s.cmd).collect::<Vec<_>>())).collect::<Vec<_>>(), en.verify.iter().map(|(k, v)| (k, v.iter().map(|s| &s.cmd).collect::<Vec<_>>())).collect::<Vec<_>>(), "{os}");
+            for v in pl.verify.values().chain(en.verify.values()) { for s in v { assert!(!s.what.is_empty() && !s.look.is_empty(), "{os}: krok bez opisu albo wskazówki: {s:?}"); } }
             assert_eq!(pl.processes.iter().map(|p| (&p.names, &p.paths, &p.parents)).collect::<Vec<_>>(), en.processes.iter().map(|p| (&p.names, &p.paths, &p.parents)).collect::<Vec<_>>(), "{os}");
             assert_eq!(pl.modules.iter().map(|m| (&m.names, &m.runtime)).collect::<Vec<_>>(), en.modules.iter().map(|m| (&m.names, &m.runtime)).collect::<Vec<_>>(), "{os}");
             assert_eq!((pl.guide.len(), pl.sections.len(), pl.terms.len(), pl.flags.len()), (en.guide.len(), en.sections.len(), en.terms.len(), en.flags.len()), "{os}");
@@ -337,15 +361,22 @@ mod tests {
         let kb = Kb::embedded("linux");
         let steps = kb.verify_steps(&["HDR", "X-PRIV"], 663, 0xffff_a420_3000, 0xffff_a420_7000);
         assert!(steps.len() >= 4);
-        assert!(steps.iter().any(|s| s.contains("gdb -p 663") && s.contains("0xffffa4203000 0xffffa4207000")), "{steps:?}");
-        assert!(steps.iter().any(|s| s.contains("readelf -h /tmp/region_ffffa4203000.bin")));
-        assert!(steps.iter().all(|s| !s.contains('{')), "niewypełnione pole: {steps:?}");
+        assert!(steps.iter().any(|s| s.cmd.contains("gdb -p 663") && s.cmd.contains("0xffffa4203000 0xffffa4207000")), "{steps:?}");
+        assert!(steps.iter().any(|s| s.cmd.contains("readelf -h /tmp/region_ffffa4203000.bin")));
+        let all = |s: &Step| format!("{} {} {}", s.what, s.cmd, s.look);
+        assert!(steps.iter().all(|s| !all(s).contains('{')), "niewypełnione pole: {steps:?}");
+        // każdy krok mówi, co zrobić i jak czytać wynik; polecenie może być puste tylko dla kroku w narzędziu graficznym
+        assert!(steps.iter().all(|s| s.what.len() > 15 && s.look.len() > 40), "{steps:?}");
         // kontrola: krok dla innego tagu się nie pojawia
-        assert!(!steps.iter().any(|s| s.contains("memfd")));
+        let memfd = kb.verify_steps(&["MEMFD"], 663, 0xffff_a420_3000, 0xffff_a420_7000);
+        assert!(memfd.iter().any(|m| !steps.contains(m)) && memfd.iter().filter(|m| !steps.contains(m)).all(|m| !steps.iter().any(|s| s.cmd == m.cmd && !m.cmd.is_empty())));
+        // starszy zapis kroku (sam tekst) nadal się wczytuje
+        let old = Kb::build(r#"{"verify":{"*":["Zrób coś: polecenie {pid}"]}}"#, None, "linux").unwrap();
+        assert_eq!(old.verify_steps(&[], 7, 0, 0), vec![Step { what: "Zrób coś: polecenie 7".into(), cmd: String::new(), look: String::new() }]);
         for os in SYSTEMS {
             let kb = Kb::embedded(os);
             let tags: Vec<&str> = kb.tags.keys().map(String::as_str).collect();
-            assert!(kb.verify_steps(&tags, 1, 0x1000, 0x2000).iter().all(|s| !s.contains('{')), "{os}");
+            assert!(kb.verify_steps(&tags, 1, 0x1000, 0x2000).iter().all(|s| !format!("{} {} {}", s.what, s.cmd, s.look).contains('{')), "{os}");
         }
     }
 

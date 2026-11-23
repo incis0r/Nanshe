@@ -132,7 +132,7 @@ mod tests {
     fn report_without_llm_lists_findings_and_gaps() {
         let raw = scan_json();
         let (md, pdf) = build_report(&raw, None, Severity::Suspicious, Some("wynik.json".into())).unwrap();
-        for want in ["# Nanshe: raport triage pamięci", "**Spis treści**", "- 1. Podsumowanie dla decydenta", "WYNIK CZĘŚCIOWY", "próbka", "0x7f000000", "RWX, X-PRIV", "Proces 7 niedostępny: odmowa dostępu",
+        for want in ["# Nanshe: raport triage pamięci", "**Spis treści**", "- [1. Podsumowanie dla decydenta](#ch-1)", "WYNIK CZĘŚCIOWY", "próbka", "0x7f000000", "RWX, X-PRIV", "Proces 7 niedostępny: odmowa dostępu",
             "1 regionów ze znaleziskami poniżej poziomu", "Brak interpretacji LLM", &sha256_hex(&raw)] {
             assert!(md.contains(want), "brak: {want}\n{md}");
         }
@@ -165,11 +165,11 @@ mod tests {
         l = serde_json::from_str(&text).unwrap();
         for with_llm in [false, true] {
             let (md, pdf) = build_report_lang(&raw, with_llm.then_some(&l), Severity::Suspicious, Some("result.json".into()), None, None).unwrap();
-            for want in ["# Nanshe: memory triage report", "**Contents**", "- 1. Executive summary", "Executive summary", "PARTIAL RESULT", "How to read this report", "Process 5: sample", "Assessment", "What the findings mean in this process",
+            for want in ["# Nanshe: memory triage report", "**Contents**", "- [1. Executive summary](#ch-1)", "Executive summary", "PARTIAL RESULT", "How to read this report", "Process 5: sample", "Assessment", "What the findings mean in this process",
                 "Process 7 inaccessible: access denied", "What this report does not cover", "Glossary", "Legend", "Triage, not a verdict."] {
                 assert!(md.contains(want), "brak: {want}\n{md}");
             }
-            if with_llm { for want in ["LLM interpretation (requires verification)", "packer (packed or encrypted code)", "assessed", "Hypothesis 1, for: high entropy", "Model summary: Packed code."] { assert!(md.contains(want), "brak: {want}"); } }
+            if with_llm { for want in ["LLM interpretation (requires verification)", "packer (packed or encrypted code)", "model's judgement", "| Hypothesis 1: what supports it | What undermines it |", "| high entropy | no header |", "Model summary: Packed code."] { assert!(md.contains(want), "brak: {want}"); } }
             let polish: Vec<&str> = md.lines().filter(|l| l.chars().any(|c| "ąćęłńóśźżĄĆĘŁŃÓŚŹŻ„".contains(c))).collect();
             assert!(polish.is_empty(), "polski tekst w raporcie angielskim: {polish:#?}");
             assert!(!md.contains('\u{2014}') && !md.contains('\u{2013}'));
@@ -197,7 +197,7 @@ mod tests {
         let raw = scan_json();
         let l = llm(&sha256_hex(&raw));
         let (md, _) = build_report(&raw, Some(&l), Severity::Suspicious, None).unwrap();
-        for want in ["Interpretacja LLM (do weryfikacji)", "packer (kod spakowany lub zaszyfrowany)", "ocena", "Hipoteza 1, za: wysoka entropia", "Hipoteza 1, przeciw: brak nagłówka",
+        for want in ["Interpretacja LLM (do weryfikacji)", "packer (kod spakowany lub zaszyfrowany)", "osąd modelu", "| Hipoteza 1: co ją wspiera | Co ją podważa |", "| wysoka entropia | brak nagłówka |",
             "Podsumowanie modelu: Spakowany kod.", "chmura, poza własną infrastrukturą", "tekst wyglądający na instrukcję", "Proponowana kolejność przeglądu: 0x7f000000.", "Zrzucić region.", "niedeterministyczne"] {
             assert!(md.contains(want), "brak: {want}\n{md}");
         }

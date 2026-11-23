@@ -103,33 +103,77 @@
  ],
  "verify": {
   "*": [
-   "See what this region is in the process memory map: grep -n {start_plain} /proc/{pid}/maps",
-   "Save the region content to a file (requires gdb, pauses the process briefly): gdb -p {pid} -batch -ex \"dump memory /tmp/region_{start_plain}.bin {start} {end}\"",
-   "Check who started the process and with what command: ps -o pid,ppid,user,lstart,cmd -p {pid}"
+   {
+    "do": "See what this memory region is in the process memory map",
+    "cmd": "grep -n {start_plain} /proc/{pid}/maps",
+    "look": "The output is one line: address range, permissions (e.g. r-xp, the letter x means executable code) and, at the end, a file path. Benign case: the line ends with the path of a library or program in a system directory such as /usr/lib. Be concerned if there is no path (memory not backed by a file), a memfd: entry, a (deleted) note, or a path in /tmp or /dev/shm together with the letter x in the permissions: in that case save the region to a file (next step)."
+   },
+   {
+    "do": "Save the memory region content to a file (requires gdb, pauses the process briefly)",
+    "cmd": "gdb -p {pid} -batch -ex \"dump memory /tmp/region_{start_plain}.bin {start} {end}\"",
+    "look": "Expected result: the command ends without an error and a file /tmp/region_... appears, with a size equal to the size of the region. The messages \"Operation not permitted\" or \"Cannot access memory\" mean missing permissions (run as root) or that the region no longer exists: on their own they do not indicate a threat. The saved file is the input for the next steps and a piece of evidence, do not run it."
+   },
+   {
+    "do": "Check who started the process and with what command",
+    "cmd": "ps -o pid,ppid,user,lstart,cmd -p {pid}",
+    "look": "Look at the columns PPID (parent process), USER, STARTED (start time) and CMD (command). Benign case: the user and the command fit the role of this server, and PPID is 1 (systemd) or a known service manager. Be concerned if the command was started from /tmp or /dev/shm, if a shell (sh, bash) was started by a web server or a database, or if the start time matches the suspected incident: in that case check the parent process with the same command, using its PPID."
+   }
   ],
   "HDR": [
-   "After saving the region, check what kind of executable file it is: file /tmp/region_{start_plain}.bin and readelf -h /tmp/region_{start_plain}.bin"
+   {
+    "do": "After saving the memory region, check what kind of executable file it is",
+    "cmd": "file /tmp/region_{start_plain}.bin ; readelf -h /tmp/region_{start_plain}.bin",
+    "look": "If file prints the word ELF (the format of Linux programs) and readelf shows a header without errors (fields Type, Machine, Entry point address), the region holds a whole program or library loaded without a file on disk, which suggests code loaded straight into memory. If file prints only \"data\" and readelf reports an error, it is just a fragment or an accidental resemblance and the finding is weaker. In the first case compute the file hash (sha256sum), keep the file as evidence and hand it over for analysis."
+   }
   ],
   "ENT-X": [
-   "After saving the region, compare its SHA-256 hash against databases of known files: sha256sum /tmp/region_{start_plain}.bin"
+   {
+    "do": "After saving the memory region, compute its SHA-256 hash and compare it against databases of known files",
+    "cmd": "sha256sum /tmp/region_{start_plain}.bin",
+    "look": "The output is 64 hexadecimal characters (the hash, a fingerprint of the file): look it up in the file reputation database your organization uses, searching by the hash only, without uploading the file. No match is typical for a memory dump and settles nothing, while a match flagged as malicious suggests known malware. On a malicious match, or when other findings concern the same process, keep the file and hand it over for analysis."
+   }
   ],
   "MEMFD": [
-   "Find the memfd file descriptor and copy the whole file: ls -l /proc/{pid}/fd | grep memfd, then cp /proc/{pid}/fd/NUMBER /tmp/memfd_{pid}.bin"
+   {
+    "do": "Find the memfd file descriptor (a file that exists only in memory) and copy the whole file, replacing NUMBER with the descriptor number from the first command",
+    "cmd": "ls -l /proc/{pid}/fd | grep memfd ; cp /proc/{pid}/fd/NUMBER /tmp/memfd_{pid}.bin",
+    "look": "The first command prints lines like \"5 -> /memfd:name (deleted)\": the number before the arrow is the descriptor number, and the (deleted) note is normal here. Benign case: the name points to a known use, e.g. graphics or sound buffers in programs with a graphical interface. Be concerned about an empty or random name in a server process: in that case check the copied file with the file command, and if it prints ELF (a program), this is consistent with running code without writing it to disk, so keep the file and hand it over for analysis."
+   }
   ],
   "DEL-EXEC": [
-   "Recover the deleted program file while the process is still running: cp /proc/{pid}/exe /tmp/exe_{pid}.bin (for a library, use the entry from /proc/{pid}/map_files/)"
+   {
+    "do": "Recover the deleted program file while the process is still running (for a library, copy the matching entry from the map_files directory of this process in /proc instead)",
+    "cmd": "cp /proc/{pid}/exe /tmp/exe_{pid}.bin",
+    "look": "Expected result: the copy is created without an error; once the process ends, recovery is no longer possible. Benign case: the program or library comes from a system directory and was updated recently, so the process is simply still running the old version. Be concerned about a file that was located in /tmp, /dev/shm or a home directory and is unrelated to an update, because this is consistent with a program deleting itself after start: in that case compute the hash of the copy (sha256sum) and keep it as evidence."
+   }
   ],
   "X-TMP": [
-   "Check the file owner, date and hash: ls -l --time-style=full-iso FILE and sha256sum FILE (the file path is in the region table)"
+   {
+    "do": "Check the file owner, date and hash, replacing FILE with the file path from the memory region table",
+    "cmd": "ls -l --time-style=full-iso FILE ; sha256sum FILE",
+    "look": "Look at the owner (third column), the modification date and the hash (64 hexadecimal characters). Benign case: the file belongs to a user who knowingly runs the program and the date fits its start, since some programs (e.g. Java, Python) unpack their libraries into /tmp. Be concerned if the owner is a service account (e.g. www-data), the date matches the suspected incident, or the hash is flagged as malicious in a file reputation database: in that case copy the file as evidence before it disappears."
+   }
   ],
   "RWX": [
-   "Check whether the program has a JIT runtime: grep -E \"libjvm|libnode|libv8|libmono|libcoreclr|libjs\" /proc/{pid}/maps"
+   {
+    "do": "Check whether the program has a JIT runtime (a mechanism that creates code while running, e.g. Java, Node.js, .NET)",
+    "cmd": "grep -E \"libjvm|libnode|libv8|libmono|libcoreclr|libjs\" /proc/{pid}/maps",
+    "look": "If the command prints lines with the names of such libraries, the program creates code in memory itself, and a region that is both writable and executable is usually normal for it. No output means none of the typical JIT runtimes was found (the list is not complete), so such a region is harder to explain and is consistent with injected code. In that case save the region to a file and check it with the file and sha256sum commands."
+   }
   ],
   "THR-PRIV": [
-   "See what the thread is doing (call stack of all threads): gdb -p {pid} -batch -ex \"thread apply all bt\""
+   {
+    "do": "See what the threads of the process are doing (call stack of all threads, pauses the process briefly)",
+    "cmd": "gdb -p {pid} -batch -ex \"thread apply all bt\"",
+    "look": "For each thread a list of frames is printed, in the form \"#0 0x... in function () from /path/of/library\". Benign case: the frames have a function name and a library path. Be concerned about frames with only an address and \"?? ()\" without a library, especially at the bottom of the list (the start of the thread), if the address lies within the range of the region from the finding, because this suggests a thread running code from memory not backed by a file (\"??\" alone can also result from missing symbols): in that case save that region to a file."
+   }
   ],
   "IMG-MOD": [
-   "Compare the code in memory with the file: save the region (command above) and compare it with the corresponding part of the library file (the offset is in /proc/{pid}/maps); the differences will show the overwritten functions."
+   {
+    "do": "Compare the code in memory with the file: save the memory region (command above) and compare it with the corresponding part of the library file (the offset is in /proc/{pid}/maps)",
+    "cmd": "",
+    "look": "Benign case: no differences, or the library file on disk is newer than the process (updated after it started), which explains the mismatch. Be concerned about a few changed bytes at the start of functions, usually a jump to another place in memory (a so-called hook, a redirect of the function), because this is consistent with overwritten library code. In that case note which functions the differences concern, keep the saved region and hand it over for analysis."
+   }
   ]
  },
  "terms": {

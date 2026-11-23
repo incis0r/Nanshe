@@ -34,9 +34,20 @@ pub enum Block {
     /// Łańcuch pamięć -> proces -> sieć: regiony ze znaleziskami (opis, waga), proces, połączenia
     /// (opis, czy połączenie z adresem zdalnym).
     Flow { regions: Vec<(String, Severity)>, process: String, endpoints: Vec<(String, bool)> },
-    /// Spis treści: tytuły rozdziałów głównych w kolejności. W PDF dostaje numery stron.
-    Toc(Vec<String>),
+    /// Spis treści: (tytuł rozdziału głównego, kotwica) w kolejności. W PDF dostaje numery stron.
+    Toc(Vec<(String, String)>),
+    /// Kroki sprawdzenia: co zrobić, polecenie (wyróżnione) i jak czytać wynik.
+    Steps(Vec<StepLine>),
+    /// Cel odnośnika wewnątrz dokumentu; dotyczy nagłówka, który następuje po nim.
+    Anchor(String),
 }
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct StepLine { pub what: String, pub cmd: String, pub look: String }
+
+/// Znak na początku wartości w tabeli pól: wartość jest poleceniem albo wierszem poleceń
+/// i ma być wyróżniona jako kod.
+pub const CODE: char = '\u{1}';
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MapClass { Code, File, Anon, Heap, Stack, Special, Gap, Collapsed, Finding(Severity) }
@@ -51,7 +62,12 @@ pub struct MapRow {
     pub what: String,
     pub note: String,
     pub class: MapClass,
+    /// Kotwica opisu tego regionu w dalszej części raportu (dla regionów ze szczegółowym opisem).
+    pub link: Option<String>,
 }
+
+/// Kotwica opisu regionu.
+pub fn region_anchor(pid: &str, base: u64) -> String { format!("r-{pid}-{base:x}") }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TreeNode { pub depth: u8, pub text: String, pub mark: bool }
@@ -133,7 +149,7 @@ fn label_gloss(l: &str) -> &'static str {
 }
 
 fn confidence_pl(c: &str) -> &str {
-    match c { "established" => tr!("ustalone", "established"), "assessed" => tr!("ocena", "assessed"), "unconfirmed" => tr!("niepotwierdzone", "unconfirmed"), x => x }
+    match c { "established" => tr!("ustalone z danych", "established from data"), "assessed" => tr!("osąd modelu", "model's judgement"), "unconfirmed" => tr!("niepotwierdzone", "unconfirmed"), x => x }
 }
 
 fn strs(v: &Value) -> Vec<String> {
@@ -321,6 +337,7 @@ pub fn build(scan: &ScanResult, llm: Option<&Value>, o: &Options) -> Doc {
                 b.push(Block::Para(trf!("Poniżej szczegóły {DETAIL_PER_PROCESS} regionów o najwyższym wyniku z {}; pozostałe są w tabeli powyżej i w pliku wyniku.", "Details follow for the {DETAIL_PER_PROCESS} highest-scoring regions out of {}; the rest are in the table above and in the result file.", regs.len())));
             }
             for r in regs.iter().take(DETAIL_PER_PROCESS) {
+                b.push(Block::Anchor(region_anchor(&pid_s(p), r.region.base)));
                 b.push(Block::H2(trf!("Region {:#x} ({}, {} pkt)", "Region {:#x} ({}, {} pts)", r.region.base, crate::sev_label(r.severity), r.score)));
                 let tags: Vec<&str> = r.findings.iter().map(|f| f.tag.as_str()).collect();
                 b.push(Block::Para(trf!("W skrócie: {}. Wyjaśnienie jest wyżej, w części „Co oznaczają znaleziska w tym procesie\".", "In short: {}. The explanation is above, in the section \"What the findings mean in this process\".", combo_title(&kb, &tags))));
@@ -331,7 +348,7 @@ pub fn build(scan: &ScanResult, llm: Option<&Value>, o: &Options) -> Doc {
                 let steps = kb.verify_steps(&tags, p.info.pid.unwrap_or(0), r.region.base, r.region.base.saturating_add(r.region.size));
                 if !steps.is_empty() {
                     b.push(Block::H3(tr!("Jak sprawdzić ten region", "How to verify this region").into()));
-                    b.push(Block::Bullets(steps));
+                    b.push(Block::Steps(steps.into_iter().map(|s| StepLine { what: s.what, cmd: s.cmd, look: s.look }).collect()));
                 }
                 if llm.is_some() { region_llm(&mut b, lp, r.region.base); }
             }
@@ -376,7 +393,7 @@ pub fn build(scan: &ScanResult, llm: Option<&Value>, o: &Options) -> Doc {
     }
     b.push(Block::Para(tr!("Waga regionu wynika z sumy punktów jego znalezisk: poniżej 30 „info\", 30-59 „podejrzane\", od 60 „wysokie\".", "Region severity follows from the sum of points of its findings: below 30 \"info\", 30-59 \"suspicious\", 60 and above \"high\".").into()));
     if llm.is_some() {
-        b.push(Block::Para(tr!("Pewność hipotez LLM: „ustalone\" wynika wprost z danych deterministycznych; „ocena\" to osąd modelu; „niepotwierdzone\" jest możliwe, ale wymaga sprawdzenia przez człowieka. Hipoteza łagodna nigdy nie ma pewności „ustalone\".", "Confidence of LLM hypotheses: \"established\" follows directly from deterministic data; \"assessed\" is the model's judgement; \"unconfirmed\" is possible but requires checking by a human. A benign hypothesis never has confidence \"established\".").into()));
+        b.push(Block::Para(tr!("Pewność hipotez LLM: „ustalone z danych\" wynika wprost z danych deterministycznych; „osąd modelu\" to ocena modelu; „niepotwierdzone\" jest możliwe, ale wymaga sprawdzenia przez człowieka. Hipoteza łagodna nigdy nie ma pewności „ustalone z danych\".", "Confidence of LLM hypotheses: \"established from data\" follows directly from deterministic data; \"model's judgement\" is the model's assessment; \"unconfirmed\" is possible but requires checking by a human. A benign hypothesis never has confidence \"established from data\".").into()));
 
     }
 
@@ -384,7 +401,13 @@ pub fn build(scan: &ScanResult, llm: Option<&Value>, o: &Options) -> Doc {
     let mut n = 0;
     for blk in b.iter_mut() { if let Block::H1(t) = blk { n += 1; *t = format!("{n}. {t}"); } }
     // spis treści przed pierwszym rozdziałem: przy raporcie z wielu procesów pozwala trafić do procesu bez przewijania
-    let chapters: Vec<String> = b.iter().filter_map(|x| if let Block::H1(t) = x { Some(t.clone()) } else { None }).collect();
+    let chapters: Vec<(String, String)> = b.iter().filter_map(|x| if let Block::H1(t) = x { Some(t.clone()) } else { None }).enumerate().map(|(i, t)| (t, format!("ch-{}", i + 1))).collect();
+    // kotwica przed każdym rozdziałem: cel odnośników ze spisu treści
+    let mut with_anchors: Vec<Block> = Vec::with_capacity(b.len() + chapters.len());
+    let mut k = 0;
+    for blk in b { if matches!(blk, Block::H1(_)) { k += 1; with_anchors.push(Block::Anchor(format!("ch-{k}"))); } with_anchors.push(blk); }
+    let mut b = with_anchors;
+    // spis stoi przed kotwicą pierwszego rozdziału
     b.insert(toc_at, Block::Toc(chapters));
     Doc { title: tr!("Nanshe: raport triage pamięci", "Nanshe: memory triage report").into(),
         subtitle: trf!("host {} | skan {}", "host {} | scan {}", clean(&scan.host), clean(&scan.timestamp)),
@@ -425,10 +448,14 @@ fn region_llm(b: &mut Vec<Block>, lp: Option<&Value>, base: u64) {
                 // identyfikator znaleziska to pid:adres:TAG; w raporcie wystarcza tag
                 strs(&h["evidence"]).iter().map(|id| id.rsplit(':').next().unwrap_or(id).to_string()).collect::<Vec<_>>().join(", ")]
         }).collect(), widths: vec![0.5, 3.6, 1.6, 2.4] });
+    b.push(Block::Para(tr!("Pewność: „ustalone z danych\" wynika wprost z danych skanu; „osąd modelu\" to ocena modelu, którą trzeba sprawdzić; „niepotwierdzone\" jest możliwe, ale bez oparcia w danych.",
+        "Confidence: \"established from data\" follows directly from the scan data; \"model's judgement\" is the model's assessment and must be checked; \"unconfirmed\" is possible but not supported by the data.").into()));
+    // argumenty każdej hipotezy w dwóch kolumnach: wspierające obok podważających
     for (i, h) in hyps.iter().enumerate() {
-        let mut items: Vec<String> = strs(&h["for"]).into_iter().map(|s| trf!("Hipoteza {}, za: {s}", "Hypothesis {}, for: {s}", i + 1)).collect();
-        items.extend(strs(&h["against"]).into_iter().map(|s| trf!("Hipoteza {}, przeciw: {s}", "Hypothesis {}, against: {s}", i + 1)));
-        if !items.is_empty() { b.push(Block::Bullets(items)); }
+        let (pro, con) = (strs(&h["for"]), strs(&h["against"]));
+        if pro.is_empty() && con.is_empty() { continue; }
+        let rows = (0..pro.len().max(con.len())).map(|k| vec![pro.get(k).cloned().unwrap_or_default(), con.get(k).cloned().unwrap_or_default()]).collect();
+        b.push(Block::Table { head: vec![trf!("Hipoteza {}: co ją wspiera", "Hypothesis {}: what supports it", i + 1), tr!("Co ją podważa", "What undermines it").into()], rows, widths: vec![1.0, 1.0] });
     }
     b.push(Block::Para(trf!("Podsumowanie modelu: {}", "Model summary: {}", clean(e["summary"].as_str().unwrap_or("")))));
     let notes = strs(&r["validator_notes"]);
@@ -480,7 +507,7 @@ fn in_system_dir(path: &str) -> bool {
 const PLAIN_ROWS: usize = 8;
 
 fn context_keyvals(kv: &mut Vec<(String, String)>, c: &ProcessContext) {
-    if let Some(v) = &c.cmdline { kv.push((tr!("Wiersz poleceń", "Command line").into(), clean(v))); }
+    if let Some(v) = &c.cmdline { kv.push((tr!("Wiersz poleceń", "Command line").into(), format!("{CODE}{}", clean(v)))); }
     if let Some(v) = &c.user { kv.push((tr!("Użytkownik", "User").into(), clean(v))); }
     if let Some(v) = &c.started { kv.push((tr!("Uruchomiony", "Started").into(), clean(v))); }
     if let Some(v) = c.ppid { kv.push((tr!("Proces nadrzędny", "Parent process").into(), match c.ancestors.first() { Some(a) => format!("{v} ({})", clean(&a.name)), None => v.to_string() })); }
@@ -627,6 +654,8 @@ const MAP_FINDINGS_MAX: usize = 12;
 pub fn mem_map(p: &ProcessReport, min: Severity) -> Option<Vec<MapRow>> {
     let mut layout: Vec<&Region> = p.layout.as_ref()?.iter().collect();
     if layout.is_empty() { return None; }
+    // regiony, które mają dalej własny opis: tylko do nich prowadzi odnośnik z mapy
+    let detailed: Vec<u64> = shown_regions(p, min).iter().take(DETAIL_PER_PROCESS).map(|r| r.region.base).collect();
     layout.sort_by_key(|r| r.base);
     struct G { row: MapRow, prots: Vec<String>, n: u32, cls: MapClass }
     let mut gs: Vec<G> = Vec::new();
@@ -636,7 +665,7 @@ pub fn mem_map(p: &ProcessReport, min: Severity) -> Option<Vec<MapRow>> {
         let end = r.base.saturating_add(r.size);
         if let Some(f) = fr {
             let tags = f.findings.iter().map(|x| x.tag.as_str()).collect::<Vec<_>>().join(", ");
-            gs.push(G { row: MapRow { start: r.base, end, size: r.size, prot: prot.clone(), what: owner(r), note: trf!("{tags} ({} pkt)", "{tags} ({} pts)", f.score), class: MapClass::Finding(f.severity) }, prots: vec![prot], n: 1, cls: MapClass::Finding(f.severity) });
+            gs.push(G { row: MapRow { start: r.base, end, size: r.size, prot: prot.clone(), what: owner(r), note: trf!("{tags} ({} pkt)", "{tags} ({} pts)", f.score), class: MapClass::Finding(f.severity), link: detailed.contains(&r.base).then(|| region_anchor(&pid_s(p), r.base)) }, prots: vec![prot], n: 1, cls: MapClass::Finding(f.severity) });
             continue;
         }
         let (o, cls) = (owner(r), class_of(r));
@@ -647,7 +676,7 @@ pub fn mem_map(p: &ProcessReport, min: Severity) -> Option<Vec<MapRow>> {
                 // wiersz z kodem i danymi tego samego pliku pokazujemy jako kod
                 if cls == MapClass::Code { g.cls = MapClass::Code; g.row.class = MapClass::Code; }
             }
-            _ => gs.push(G { row: MapRow { start: r.base, end, size: r.size, prot: String::new(), what: o, note: String::new(), class: cls }, prots: vec![prot], n: 1, cls }),
+            _ => gs.push(G { row: MapRow { start: r.base, end, size: r.size, prot: String::new(), what: o, note: String::new(), class: cls, link: None }, prots: vec![prot], n: 1, cls }),
         }
     }
     let mut rows: Vec<MapRow> = Vec::new();
@@ -657,7 +686,7 @@ pub fn mem_map(p: &ProcessReport, min: Severity) -> Option<Vec<MapRow>> {
         if row.note.is_empty() && g.n > 1 { row.note = trf!("mapowań: {}", "mappings: {}", g.n); }
         if let Some(prev) = rows.last() {
             let gap = row.start.saturating_sub(prev.end);
-            if gap >= GAP_MIN { rows.push(MapRow { start: prev.end, end: row.start, size: gap, prot: String::new(), what: tr!("nieużywany zakres adresów", "unused address range").into(), note: String::new(), class: MapClass::Gap }); }
+            if gap >= GAP_MIN { rows.push(MapRow { start: prev.end, end: row.start, size: gap, prot: String::new(), what: tr!("nieużywany zakres adresów", "unused address range").into(), note: String::new(), class: MapClass::Gap, link: None }); }
         }
         rows.push(row);
     }
@@ -692,7 +721,7 @@ pub fn mem_map(p: &ProcessReport, min: Severity) -> Option<Vec<MapRow>> {
                 what: if hidden > 0 { trf!("{} wierszy zwiniętych, w tym {} ze znaleziskami o niższym wyniku (są w tabeli regionów)", "{} rows collapsed, including {} with lower-scoring findings (listed in the regions table)", run.len(), hidden) }
                     else { trf!("{} wierszy zwiniętych: {} plików, {} pozostałych", "{} rows collapsed: {} files, {} other", run.len(), files, run.len() - files) },
                 note: if names.is_empty() { String::new() } else { trf!("m.in. {}{}", "incl. {}{}", names.join(", "), if more > 0 { trf!(" i {more} innych", " and {more} more") } else { String::new() }) },
-                class: MapClass::Collapsed });
+                class: MapClass::Collapsed, link: None });
         }
         i = j;
     }
@@ -877,7 +906,8 @@ mod tests {
             Block::H1(t) | Block::H2(t) | Block::H3(t) | Block::Para(t) | Block::Note(t) => t.clone(),
             Block::Bullets(v) => v.join("\n"),
             Block::Table { rows, .. } => rows.iter().map(|r| r.join(" | ")).collect::<Vec<_>>().join("\n"),
-            Block::KeyVals(kv) => kv.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join("\n"),
+            Block::KeyVals(kv) => kv.iter().map(|(k, v)| format!("{k}: {}", v.trim_start_matches(CODE))).collect::<Vec<_>>().join("\n"),
+            Block::Steps(v) => v.iter().map(|s| format!("{}\n{}\n{}", s.what, s.cmd, s.look)).collect::<Vec<_>>().join("\n"),
             _ => String::new(),
         }).collect::<Vec<_>>().join("\n")
     }

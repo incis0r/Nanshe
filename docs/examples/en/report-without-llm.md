@@ -1,11 +1,11 @@
 # Nanshe: memory triage report
 
-host 1a3b4982fe9e \| scan 2026-11-23T12:08:46Z
+host 6996d75bf01b \| scan 2026-11-23T14:46:32Z
 
 | Field | Value |
 |---|---|
-| Host | 1a3b4982fe9e |
-| Scan time | 2026-11-23T12:08:46Z |
+| Host | 6996d75bf01b |
+| Scan time | 2026-11-23T14:46:32Z |
 | Tool | nanshe 0.1.0 |
 | Processes | 1 scanned, 1 with findings at severity "suspicious" or above |
 | Findings | 8 |
@@ -16,7 +16,7 @@ host 1a3b4982fe9e \| scan 2026-11-23T12:08:46Z
 | Scanner privileges | root; CAP\_SYS\_PTRACE: yes |
 | Classification | Confidential: this document contains data from the examined host; share only with those conducting the analysis |
 | Result file | scan-result.json |
-| Result SHA-256 | d96d2b877596e77fd19ed00a943a1c04f4fe05ede37b3375c46138e8b7ec16c6 |
+| Result SHA-256 | 4a0b0804674a06aff3ffe85cc97a6e4ab6c828381709dd78bd5da6fce1e1ed67 |
 
 > This is a triage result, not a verdict. Findings point to places that merit manual analysis; their absence does not prove a process is clean. Process names, paths and descriptions come from the examined system and may be controlled by an attacker.
 
@@ -24,13 +24,15 @@ host 1a3b4982fe9e \| scan 2026-11-23T12:08:46Z
 
 **Contents**
 
-- 1. Executive summary
-- 2. How to read this report
-- 3. Process overview
-- 4. Process 2050: nanshe-sample
-- 5. What this report does not cover
-- 6. Glossary
-- 7. Legend
+- [1. Executive summary](#ch-1)
+- [2. How to read this report](#ch-2)
+- [3. Process overview](#ch-3)
+- [4. Process 678: nanshe-sample](#ch-4)
+- [5. What this report does not cover](#ch-5)
+- [6. Glossary](#ch-6)
+- [7. Legend](#ch-7)
+
+<a id="ch-1"></a>
 
 ## 1. Executive summary
 
@@ -38,7 +40,7 @@ Overall assessment. At least one process has characteristics that a known runtim
 
 | Field | Value |
 |---|---|
-| Scope | 1 process(es) on host 1a3b4982fe9e, state as of 2026-11-23T12:08:46Z |
+| Scope | 1 process(es) on host 6996d75bf01b, state as of 2026-11-23T14:46:32Z |
 | Completeness | complete for processes accessible to the scanner |
 | Processes to verify | 1 (P1: 1, P2: 0, P3: 0) at severity "suspicious" or above |
 
@@ -46,13 +48,15 @@ Overall assessment. At least one process has characteristics that a known runtim
 
 | Priority | Process | Why |
 |---|---|---|
-| P1 | 2050 nanshe-sample | A characteristic is present that a just-in-time (JIT) runtime does not explain: HDR (an entire program hidden in memory), MEMFD (code from a file that exists only in memory). |
+| P1 | 678 nanshe-sample | A characteristic is present that a just-in-time (JIT) runtime does not explain: HDR (an entire program hidden in memory), MEMFD (code from a file that exists only in memory). |
 
 #### Recommended actions
 
 - For P1 processes: secure a memory dump of the process and do not restart the host before verification is complete; memory is the only medium holding these traces.
 
 Limitations of the assessment: the review concerns the state of memory at a single moment, does not cover processes protected by the system or kernel memory, and relies on characteristics that also have benign causes. Details are in the chapter "What this report does not cover".
+
+<a id="ch-2"></a>
 
 ## 2. How to read this report
 
@@ -90,11 +94,13 @@ Recommended reading order: the executive summary, the process table with priorit
 | SHA-256 hashes | fingerprints of files and of region contents. The same hash means identical content, so it can be looked up in databases of known files or compared between hosts. |
 | From memory to network | on the left the regions with findings, in the middle the process, on the right its network connections at the time of the scan. The diagram shows that the suspicious code and the connection are in the same process; it does not prove that this code opened the connection. |
 
+<a id="ch-3"></a>
+
 ## 3. Process overview
 
 | Priority | PID | Process | Severity | Regions | Max pts | Tags |
 |---|---|---|---|---|---|---|
-| P1 | 2050 | nanshe-sample | high | 3 | 90 | ENT-X, HDR, MEMFD, RWX, X-PRIV |
+| P1 | 678 | nanshe-sample | high | 3 | 90 | ENT-X, HDR, MEMFD, RWX, X-PRIV |
 
 Priority is the order of verification (P1 first), derived from the type of findings and the process context. It is not an assessment of maliciousness; the rationale is in the "Assessment" section of each process.
 
@@ -114,23 +120,25 @@ Number of regions with a given characteristic in each process; the cell colour i
 
 | Process | ENT-X | X-PRIV | HDR | MEMFD | RWX |
 |---|---|---|---|---|---|
-| 2050 nanshe-sample | 2 (high) | 2 (high) | 1 (high) | 1 (high) | 1 (high) |
+| 678 nanshe-sample | 2 (high) | 2 (high) | 1 (high) | 1 (high) | 1 (high) |
 
-## 4. Process 2050: nanshe-sample
+<a id="ch-4"></a>
+
+## 4. Process 678: nanshe-sample
 
 | Field | Value |
 |---|---|
 | System | linux/aarch64 |
 | Program file | /target/debug/nanshe-sample |
 | Regions | 26 total, 0 not read, 2.7 MiB scanned |
-| Command line | /target/debug/nanshe-sample ctx 60 |
+| Command line | `/target/debug/nanshe-sample ctx 60` |
 | User | root (uid 0) |
-| Started | 2026-11-23T12:08:45Z |
-| Parent process | 1356 (sh) |
+| Started | 2026-11-23T14:46:31Z |
+| Parent process | 1 (sh) |
 | Working directory | /src |
 | Threads | 1 |
-| Program file: metadata | 5.1 MiB, modified 2026-11-22T15:30:04Z, owner root (uid 0), mode 0755 |
-| Program file: SHA-256 | b30029f0ef4af73cfdac3069fc66c732cf4ea1f2b8f453c7c29b75f33100ef67 |
+| Program file: metadata | 5.1 MiB, modified 2026-11-23T14:42:49Z, owner root (uid 0), mode 0755 |
+| Program file: SHA-256 | e73e6df025136d2b02d1fc3a530130a62ed5fde9f234c994cb5770c207935dbb |
 | effective capabilities (CapEff) | 00000000800c05fb |
 | seccomp | filter |
 | no\_new\_privs | 0 |
@@ -141,7 +149,7 @@ Number of regions with a given characteristic in each process; the cell colour i
 |---|---|
 | Verification priority | P1: verify first |
 | Rationale | A characteristic is present that a just-in-time (JIT) runtime does not explain: HDR (an entire program hidden in memory), MEMFD (code from a file that exists only in memory). The program file is located outside system directories. The process runs with high privileges, so compromising it would mean control of the host. The process has connections to remote addresses at scan time. |
-| First step | Secure a full memory dump of process 2050 before making any change on the host, then follow the steps in "How to verify this region" for the highest-scoring regions. |
+| First step | Secure a full memory dump of process 678 before making any change on the host, then follow the steps in "How to verify this region" for the highest-scoring regions. |
 
 ### What this program is
 
@@ -157,18 +165,17 @@ A program named nanshe-sample is usually: Test program of the Nanshe tool. It de
 
 ### Process tree
 
-- 1 sh: sh -c cargo test --workspace --features nanshe-cli/llm 2&gt;&amp;1 \| grep -E "^test result: .\* \[1-9\]\[0-9\]\* passed\|FAI
-  - 1356 sh: sh scripts/example.sh /src/docs/przyklady
-    - => 2050 nanshe-sample: /target/debug/nanshe-sample ctx 60 (examined process)
-      - 2052 nanshe-sample: /target/debug/nanshe-sample clean 600
+- 1 sh: sh scripts/example.sh /src/docs/examples
+  - => 678 nanshe-sample: /target/debug/nanshe-sample ctx 60 (examined process)
+    - 680 nanshe-sample: /target/debug/nanshe-sample clean 600
 
 ### Network
 
 | Protocol | Local address | Remote address | State |
 |---|---|---|---|
-| tcp | 127.0.0.1:42551 | - | LISTEN |
-| tcp | 127.0.0.1:56108 | 127.0.0.1:42551 | ESTABLISHED |
-| tcp | 127.0.0.1:42551 | 127.0.0.1:56108 | ESTABLISHED |
+| tcp | 127.0.0.1:42603 | - | LISTEN |
+| tcp | 127.0.0.1:37332 | 127.0.0.1:42603 | ESTABLISHED |
+| tcp | 127.0.0.1:42603 | 127.0.0.1:37332 | ESTABLISHED |
 
 ### Open files and handles
 
@@ -177,9 +184,9 @@ Total descriptors or handles: 9. Recorded with a name: 9 (memfd: 1, file: 3, soc
 | No. | Type | Object | Notes |
 |---|---|---|---|
 | 0x3 | memfd | memfd:payload | in memory only |
-| 0x1 | file | /src/docs/przyklady/sample.pid | outside system directories |
-| 0x7 | file | /tmp/ns-ctx-2050.dat | temporary directory |
-| 0x8 | file | /tmp/ns-ctx-2050.gone | deleted from disk, temporary directory |
+| 0x1 | file | /src/docs/examples/sample.pid | outside system directories |
+| 0x7 | file | /tmp/ns-ctx-678.dat | temporary directory |
+| 0x8 | file | /tmp/ns-ctx-678.gone | deleted from disk, temporary directory |
 
 ### Files mapped into memory
 
@@ -195,7 +202,7 @@ Total descriptors or handles: 9. Recorded with a name: 9 (memfd: 1, file: 3, soc
 
 | File | SHA-256 |
 |---|---|
-| nanshe-sample | b30029f0ef4af73cfdac3069fc66c732cf4ea1f2b8f453c7c29b75f33100ef67 |
+| nanshe-sample | e73e6df025136d2b02d1fc3a530130a62ed5fde9f234c994cb5770c207935dbb |
 | memfd:payload | none: file inaccessible: Operation not permitted (os error 1) |
 | ld-linux-aarch64.so.1 | 17538b8f9889a470c061f69a8fea8124da89627311cd16546c133a89f09056df |
 | libc.so.6 | e4ac8ae1d81e4865e3aadedb962879cf9415903b3f2ba81ec75e9962b86ab8b0 |
@@ -207,24 +214,24 @@ All 26 regions of the process from the lowest address. Adjacent mappings of the 
 
 | Start | End | Size | Perms | Type | Contents | Notes |
 |---|---|---|---|---|---|---|
-| 0xaaaac1000000 | 0xaaaac1081000 | 456 KiB | r-x r-- rw- | code from file | /target/debug/nanshe-sample | mappings: 3 |
-| 0xaaaac1081000 | 0xaaaaf1a5a000 | 777.8 MiB | - | gap | unused address range |  |
-| 0xaaaaf1a5a000 | 0xaaaaf1a7b000 | 132 KiB | rw- | heap | \[heap\] |  |
-| 0xaaaaf1a7b000 | 0xffff80350000 | 85.3 TiB | - | gap | unused address range |  |
-| 0xffff80350000 | 0xffff80360000 | 64 KiB | rwx | FINDING (high) | anonymous memory | &lt;&lt;&lt; RWX, X-PRIV, ENT-X (90 pts) |
-| 0xffff80360000 | 0xffff80502000 | 1.6 MiB | r-x --- r-- rw- | code from file | /usr/lib/aarch64-linux-gnu/libc.so.6 | mappings: 4 |
-| 0xffff80502000 | 0xffff8050f000 | 52 KiB | rw- | anonymous memory | anonymous memory |  |
-| 0xffff80510000 | 0xffff80541000 | 196 KiB | r-x --- r-- rw- | code from file | /usr/lib/aarch64-linux-gnu/libgcc\_s.so.1 | mappings: 4 |
-| 0xffff8054b000 | 0xffff80572000 | 156 KiB | r-x | code from file | /usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1 |  |
-| 0xffff80574000 | 0xffff80578000 | 16 KiB | r-x | FINDING (high) | anonymous memory | &lt;&lt;&lt; X-PRIV, HDR (70 pts) |
-| 0xffff80578000 | 0xffff8057f000 | 28 KiB | --- rw- | anonymous memory | anonymous memory | mappings: 3 |
-| 0xffff8057f000 | 0xffff80581000 | 8 KiB | r-x | FINDING (high) | memfd:payload | &lt;&lt;&lt; MEMFD, ENT-X (70 pts) |
-| 0xffff80581000 | 0xffff80583000 | 8 KiB | rw- | anonymous memory | anonymous memory |  |
-| 0xffff80583000 | 0xffff80587000 | 16 KiB | r-- | kernel region | \[vvar\] |  |
-| 0xffff80587000 | 0xffff80589000 | 8 KiB | r-x | kernel region | \[vdso\] |  |
-| 0xffff80589000 | 0xffff8058d000 | 16 KiB | r-- rw- | data from file | /usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1 | mappings: 2 |
-| 0xffff8058d000 | 0xffffcf95b000 | 1.2 GiB | - | gap | unused address range |  |
-| 0xffffcf95b000 | 0xffffcf97c000 | 132 KiB | rw- | stack | \[stack\] |  |
+| 0xaaaace420000 | 0xaaaace4a1000 | 456 KiB | r-x r-- rw- | code from file | /target/debug/nanshe-sample | mappings: 3 |
+| 0xaaaace4a1000 | 0xaaaae231a000 | 318.5 MiB | - | gap | unused address range |  |
+| 0xaaaae231a000 | 0xaaaae233b000 | 132 KiB | rw- | heap | \[heap\] |  |
+| 0xaaaae233b000 | 0xffffae2d0000 | 85.3 TiB | - | gap | unused address range |  |
+| [0xffffae2d0000](#r-678-ffffae2d0000) | 0xffffae2e0000 | 64 KiB | rwx | FINDING (high) | anonymous memory | [&lt;&lt;&lt; RWX, X-PRIV, ENT-X (90 pts)](#r-678-ffffae2d0000) |
+| 0xffffae2e0000 | 0xffffae482000 | 1.6 MiB | r-x --- r-- rw- | code from file | /usr/lib/aarch64-linux-gnu/libc.so.6 | mappings: 4 |
+| 0xffffae482000 | 0xffffae48f000 | 52 KiB | rw- | anonymous memory | anonymous memory |  |
+| 0xffffae490000 | 0xffffae4c1000 | 196 KiB | r-x --- r-- rw- | code from file | /usr/lib/aarch64-linux-gnu/libgcc\_s.so.1 | mappings: 4 |
+| 0xffffae4cf000 | 0xffffae4f6000 | 156 KiB | r-x | code from file | /usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1 |  |
+| [0xffffae4f8000](#r-678-ffffae4f8000) | 0xffffae4fc000 | 16 KiB | r-x | FINDING (high) | anonymous memory | [&lt;&lt;&lt; X-PRIV, HDR (70 pts)](#r-678-ffffae4f8000) |
+| 0xffffae4fc000 | 0xffffae503000 | 28 KiB | --- rw- | anonymous memory | anonymous memory | mappings: 3 |
+| [0xffffae503000](#r-678-ffffae503000) | 0xffffae505000 | 8 KiB | r-x | FINDING (high) | memfd:payload | [&lt;&lt;&lt; MEMFD, ENT-X (70 pts)](#r-678-ffffae503000) |
+| 0xffffae505000 | 0xffffae507000 | 8 KiB | rw- | anonymous memory | anonymous memory |  |
+| 0xffffae507000 | 0xffffae50b000 | 16 KiB | r-- | kernel region | \[vvar\] |  |
+| 0xffffae50b000 | 0xffffae50d000 | 8 KiB | r-x | kernel region | \[vdso\] |  |
+| 0xffffae50d000 | 0xffffae511000 | 16 KiB | r-- rw- | data from file | /usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1 | mappings: 2 |
+| 0xffffae511000 | 0xffffd5fdd000 | 634.8 MiB | - | gap | unused address range |  |
+| 0xffffd5fdd000 | 0xffffd5ffe000 | 132 KiB | rw- | stack | \[stack\] |  |
 
 ### What the findings mean in this process
 
@@ -287,19 +294,21 @@ Regions with findings, the process and its network connections at scan time. The
 
 | Region in memory | Process | Network |
 |---|---|---|
-| 0xffff80350000 RWX, X-PRIV, ENT-X (90 pts) | =&gt; 2050 nanshe-sample, root (uid 0) =&gt; | tcp 127.0.0.1:56108 -&gt; 127.0.0.1:42551 (ESTABLISHED) |
-| 0xffff80574000 X-PRIV, HDR (70 pts) |  | tcp 127.0.0.1:42551 -&gt; 127.0.0.1:56108 (ESTABLISHED) |
-| 0xffff8057f000 MEMFD, ENT-X (70 pts) |  | listening tcp 127.0.0.1:42551 |
+| 0xffffae2d0000 RWX, X-PRIV, ENT-X (90 pts) | =&gt; 678 nanshe-sample, root (uid 0) =&gt; | tcp 127.0.0.1:37332 -&gt; 127.0.0.1:42603 (ESTABLISHED) |
+| 0xffffae4f8000 X-PRIV, HDR (70 pts) |  | tcp 127.0.0.1:42603 -&gt; 127.0.0.1:37332 (ESTABLISHED) |
+| 0xffffae503000 MEMFD, ENT-X (70 pts) |  | listening tcp 127.0.0.1:42603 |
 
 ### Regions with findings
 
 | Address | Size | Perms | Severity | Pts | Entropy | Tags | Source |
 |---|---|---|---|---|---|---|---|
-| 0xffff80350000 | 64 KiB | rwx | high | 90 | 7.96 | RWX, X-PRIV, ENT-X | no file |
-| 0xffff80574000 | 16 KiB | r-x | high | 70 | 4.06 | X-PRIV, HDR | no file |
-| 0xffff8057f000 | 8 KiB | r-x | high | 70 | 7.95 | MEMFD, ENT-X | memfd:payload |
+| 0xffffae2d0000 | 64 KiB | rwx | high | 90 | 7.96 | RWX, X-PRIV, ENT-X | no file |
+| 0xffffae4f8000 | 16 KiB | r-x | high | 70 | 4.08 | X-PRIV, HDR | no file |
+| 0xffffae503000 | 8 KiB | r-x | high | 70 | 7.95 | MEMFD, ENT-X | memfd:payload |
 
-### Region 0xffff80350000 (high, 90 pts)
+<a id="r-678-ffffae2d0000"></a>
+
+### Region 0xffffae2d0000 (high, 90 pts)
 
 In short: encrypted or packed code created at run time. The explanation is above, in the section "What the findings mean in this process".
 
@@ -309,32 +318,32 @@ In short: encrypted or packed code created at run time. The explanation is above
 
 | Field | Value |
 |---|---|
-| Address range | 0xffff80350000 - 0xffff80360000 (64 KiB, 64 KiB read) |
+| Address range | 0xffffae2d0000 - 0xffffae2e0000 (64 KiB, 64 KiB read) |
 | Type and source | private memory; not backed by a file |
 | Entropy | maximum 7.96, mean 7.95 (scale 0-8); zero pages: 0 |
 | Content SHA-256 | 2e043edf3a68f7b9549ebdbc0770ec807dd4eaaa83f3aea3eb459103b1c3566e |
-| Neighbour below | 0xaaaaf1a5a000 rw- \[heap\] (gap 85.3 TiB) |
-| Neighbour above | 0xffff80360000 r-x /usr/lib/aarch64-linux-gnu/libc.so.6 (adjacent) |
+| Neighbour below | 0xaaaae231a000 rw- \[heap\] (gap 85.3 TiB) |
+| Neighbour above | 0xffffae2e0000 r-x /usr/lib/aarch64-linux-gnu/libc.so.6 (adjacent) |
 
 #### Region entropy profile
 
 ```text
-0xffff80350000 ████████████████ 0xffff80360000
+0xffffae2d0000 ████████████████ 0xffffae2e0000
 ```
 
 Segment entropy (0-8): lowest 8.0, highest 8.0; 16 segments of 4 KiB.
 
-#### Byte preview from 0xffff80350000
+#### Byte preview from 0xffffae2d0000
 
 ```text
-0xffff80350000  00 00 00 00 4c 6f 61 64 4c 69 62 72 61 72 79 41  ....LoadLibraryA
-0xffff80350010  00 47 65 74 50 72 6f 63 41 64 64 72 65 73 73 00  .GetProcAddress.
-0xffff80350020  56 69 72 74 75 61 6c 41 6c 6c 6f 63 00 ac a8 07  VirtualAlloc....
-0xffff80350030  0a 25 f2 99 ef b9 bc 68 f4 c6 4b 49 aa e5 7c c1  .%.....h..KI..|.
-0xffff80350040  f6 99 97 47 58 8a 8d d3 e7 b2 25 12 7f 26 76 8f  ...GX.....%..&v.
-0xffff80350050  8b 5c 17 5f 2e 5d 00 2a 93 81 6a a7 63 ff 74 27  .\._.].*..j.c.t'
-0xffff80350060  25 01 8b aa 07 d1 21 26 24 e8 10 24 c7 d5 d6 a9  %.....!&$..$....
-0xffff80350070  cd 69 ce 1b 23 d5 44 40 9b 4a 15 da 26 f4 be 50  .i..#.D@.J..&..P
+0xffffae2d0000  00 00 00 00 4c 6f 61 64 4c 69 62 72 61 72 79 41  ....LoadLibraryA
+0xffffae2d0010  00 47 65 74 50 72 6f 63 41 64 64 72 65 73 73 00  .GetProcAddress.
+0xffffae2d0020  56 69 72 74 75 61 6c 41 6c 6c 6f 63 00 ac a8 07  VirtualAlloc....
+0xffffae2d0030  0a 25 f2 99 ef b9 bc 68 f4 c6 4b 49 aa e5 7c c1  .%.....h..KI..|.
+0xffffae2d0040  f6 99 97 47 58 8a 8d d3 e7 b2 25 12 7f 26 76 8f  ...GX.....%..&v.
+0xffffae2d0050  8b 5c 17 5f 2e 5d 00 2a 93 81 6a a7 63 ff 74 27  .\._.].*..j.c.t'
+0xffffae2d0060  25 01 8b aa 07 d1 21 26 24 e8 10 24 c7 d5 d6 a9  %.....!&$..$....
+0xffffae2d0070  cd 69 ce 1b 23 d5 44 40 9b 4a 15 da 26 f4 be 50  .i..#.D@.J..&..P
 ```
 
 #### Text strings in the region
@@ -346,13 +355,25 @@ Segment entropy (0-8): lowest 8.0, highest 8.0; 16 segments of 4 KiB.
 
 #### How to verify this region
 
-- See what this region is in the process memory map: grep -n ffff80350000 /proc/2050/maps
-- Save the region content to a file (requires gdb, pauses the process briefly): gdb -p 2050 -batch -ex "dump memory /tmp/region\_ffff80350000.bin 0xffff80350000 0xffff80360000"
-- Check who started the process and with what command: ps -o pid,ppid,user,lstart,cmd -p 2050
-- Check whether the program has a JIT runtime: grep -E "libjvm\|libnode\|libv8\|libmono\|libcoreclr\|libjs" /proc/2050/maps
-- After saving the region, compare its SHA-256 hash against databases of known files: sha256sum /tmp/region\_ffff80350000.bin
+1. See what this memory region is in the process memory map
+   `grep -n ffffae2d0000 /proc/678/maps`
+   How to read the result: The output is one line: address range, permissions (e.g. r-xp, the letter x means executable code) and, at the end, a file path. Benign case: the line ends with the path of a library or program in a system directory such as /usr/lib. Be concerned if there is no path (memory not backed by a file), a memfd: entry, a (deleted) note, or a path in /tmp or /dev/shm together with the letter x in the permissions: in that case save the region to a file (next step).
+2. Save the memory region content to a file (requires gdb, pauses the process briefly)
+   `gdb -p 678 -batch -ex "dump memory /tmp/region_ffffae2d0000.bin 0xffffae2d0000 0xffffae2e0000"`
+   How to read the result: Expected result: the command ends without an error and a file /tmp/region\_... appears, with a size equal to the size of the region. The messages "Operation not permitted" or "Cannot access memory" mean missing permissions (run as root) or that the region no longer exists: on their own they do not indicate a threat. The saved file is the input for the next steps and a piece of evidence, do not run it.
+3. Check who started the process and with what command
+   `ps -o pid,ppid,user,lstart,cmd -p 678`
+   How to read the result: Look at the columns PPID (parent process), USER, STARTED (start time) and CMD (command). Benign case: the user and the command fit the role of this server, and PPID is 1 (systemd) or a known service manager. Be concerned if the command was started from /tmp or /dev/shm, if a shell (sh, bash) was started by a web server or a database, or if the start time matches the suspected incident: in that case check the parent process with the same command, using its PPID.
+4. Check whether the program has a JIT runtime (a mechanism that creates code while running, e.g. Java, Node.js, .NET)
+   `grep -E "libjvm¦libnode¦libv8¦libmono¦libcoreclr¦libjs" /proc/678/maps`
+   How to read the result: If the command prints lines with the names of such libraries, the program creates code in memory itself, and a region that is both writable and executable is usually normal for it. No output means none of the typical JIT runtimes was found (the list is not complete), so such a region is harder to explain and is consistent with injected code. In that case save the region to a file and check it with the file and sha256sum commands.
+5. After saving the memory region, compute its SHA-256 hash and compare it against databases of known files
+   `sha256sum /tmp/region_ffffae2d0000.bin`
+   How to read the result: The output is 64 hexadecimal characters (the hash, a fingerprint of the file): look it up in the file reputation database your organization uses, searching by the hash only, without uploading the file. No match is typical for a memory dump and settles nothing, while a match flagged as malicious suggests known malware. On a malicious match, or when other findings concern the same process, keep the file and hand it over for analysis.
 
-### Region 0xffff80574000 (high, 70 pts)
+<a id="r-678-ffffae4f8000"></a>
+
+### Region 0xffffae4f8000 (high, 70 pts)
 
 In short: program loaded into memory not backed by a file. The explanation is above, in the section "What the findings mean in this process".
 
@@ -361,17 +382,17 @@ In short: program loaded into memory not backed by a file. The explanation is ab
 
 | Field | Value |
 |---|---|
-| Address range | 0xffff80574000 - 0xffff80578000 (16 KiB, 16 KiB read) |
+| Address range | 0xffffae4f8000 - 0xffffae4fc000 (16 KiB, 16 KiB read) |
 | Type and source | private memory; not backed by a file |
-| Entropy | maximum 4.06, mean 2.85 (scale 0-8); zero pages: 0 |
-| Content SHA-256 | 4063392c86a10c8e77471f136ce93dc116b19f38a46082e4b8b5078cc17fcb1b |
-| Neighbour below | 0xffff8054b000 r-x /usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1 (gap 8 KiB) |
-| Neighbour above | 0xffff80578000 --- anonymous memory (adjacent) |
+| Entropy | maximum 4.08, mean 2.83 (scale 0-8); zero pages: 0 |
+| Content SHA-256 | 71b1a8c08ea742d8aabbbb45c2a2244a872e25ae13bc5af1adbeb0b50671b8ca |
+| Neighbour below | 0xffffae4cf000 r-x /usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1 (gap 8 KiB) |
+| Neighbour above | 0xffffae4fc000 --- anonymous memory (adjacent) |
 
 #### Region entropy profile
 
 ```text
-0xffff80574000 ▃▅▃▃ 0xffff80578000
+0xffffae4f8000 ▃▅▃▃ 0xffffae4fc000
 ```
 
 Segment entropy (0-8): lowest 2.0, highest 4.1; 4 segments of 4 KiB.
@@ -382,20 +403,20 @@ Segment entropy (0-8): lowest 2.0, highest 4.1; 4 segments of 4 KiB.
 |---|---|
 | Format | ELF 64-bit, AArch64 |
 | Type | library or PIE program (DYN) |
-| Entry point | 0xb180 |
+| Entry point | 0xb280 |
 | Program / section headers | 10 / 41 |
 
-#### Byte preview from 0xffff80574000
+#### Byte preview from 0xffffae4f8000
 
 ```text
-0xffff80574000  7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00  .ELF............
-0xffff80574010  03 00 b7 00 01 00 00 00 80 b1 00 00 00 00 00 00  ................
-0xffff80574020  40 00 00 00 00 00 00 00 a0 f3 50 00 00 00 00 00  @.........P.....
-0xffff80574030  00 00 00 00 40 00 38 00 0a 00 40 00 29 00 28 00  ....@.8...@.).(.
-0xffff80574040  06 00 00 00 04 00 00 00 40 00 00 00 00 00 00 00  ........@.......
-0xffff80574050  40 00 00 00 00 00 00 00 40 00 00 00 00 00 00 00  @.......@.......
-0xffff80574060  30 02 00 00 00 00 00 00 30 02 00 00 00 00 00 00  0.......0.......
-0xffff80574070  08 00 00 00 00 00 00 00 03 00 00 00 04 00 00 00  ................
+0xffffae4f8000  7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00  .ELF............
+0xffffae4f8010  03 00 b7 00 01 00 00 00 80 b2 00 00 00 00 00 00  ................
+0xffffae4f8020  40 00 00 00 00 00 00 00 58 07 52 00 00 00 00 00  @.......X.R.....
+0xffffae4f8030  00 00 00 00 40 00 38 00 0a 00 40 00 29 00 28 00  ....@.8...@.).(.
+0xffffae4f8040  06 00 00 00 04 00 00 00 40 00 00 00 00 00 00 00  ........@.......
+0xffffae4f8050  40 00 00 00 00 00 00 00 40 00 00 00 00 00 00 00  @.......@.......
+0xffffae4f8060  30 02 00 00 00 00 00 00 30 02 00 00 00 00 00 00  0.......0.......
+0xffffae4f8070  08 00 00 00 00 00 00 00 03 00 00 00 04 00 00 00  ................
 ```
 
 #### Text strings in the region
@@ -419,12 +440,22 @@ Segment entropy (0-8): lowest 2.0, highest 4.1; 4 segments of 4 KiB.
 
 #### How to verify this region
 
-- See what this region is in the process memory map: grep -n ffff80574000 /proc/2050/maps
-- Save the region content to a file (requires gdb, pauses the process briefly): gdb -p 2050 -batch -ex "dump memory /tmp/region\_ffff80574000.bin 0xffff80574000 0xffff80578000"
-- Check who started the process and with what command: ps -o pid,ppid,user,lstart,cmd -p 2050
-- After saving the region, check what kind of executable file it is: file /tmp/region\_ffff80574000.bin and readelf -h /tmp/region\_ffff80574000.bin
+1. See what this memory region is in the process memory map
+   `grep -n ffffae4f8000 /proc/678/maps`
+   How to read the result: The output is one line: address range, permissions (e.g. r-xp, the letter x means executable code) and, at the end, a file path. Benign case: the line ends with the path of a library or program in a system directory such as /usr/lib. Be concerned if there is no path (memory not backed by a file), a memfd: entry, a (deleted) note, or a path in /tmp or /dev/shm together with the letter x in the permissions: in that case save the region to a file (next step).
+2. Save the memory region content to a file (requires gdb, pauses the process briefly)
+   `gdb -p 678 -batch -ex "dump memory /tmp/region_ffffae4f8000.bin 0xffffae4f8000 0xffffae4fc000"`
+   How to read the result: Expected result: the command ends without an error and a file /tmp/region\_... appears, with a size equal to the size of the region. The messages "Operation not permitted" or "Cannot access memory" mean missing permissions (run as root) or that the region no longer exists: on their own they do not indicate a threat. The saved file is the input for the next steps and a piece of evidence, do not run it.
+3. Check who started the process and with what command
+   `ps -o pid,ppid,user,lstart,cmd -p 678`
+   How to read the result: Look at the columns PPID (parent process), USER, STARTED (start time) and CMD (command). Benign case: the user and the command fit the role of this server, and PPID is 1 (systemd) or a known service manager. Be concerned if the command was started from /tmp or /dev/shm, if a shell (sh, bash) was started by a web server or a database, or if the start time matches the suspected incident: in that case check the parent process with the same command, using its PPID.
+4. After saving the memory region, check what kind of executable file it is
+   `file /tmp/region_ffffae4f8000.bin ; readelf -h /tmp/region_ffffae4f8000.bin`
+   How to read the result: If file prints the word ELF (the format of Linux programs) and readelf shows a header without errors (fields Type, Machine, Entry point address), the region holds a whole program or library loaded without a file on disk, which suggests code loaded straight into memory. If file prints only "data" and readelf reports an error, it is just a fragment or an accidental resemblance and the finding is weaker. In the first case compute the file hash (sha256sum), keep the file as evidence and hand it over for analysis.
 
-### Region 0xffff8057f000 (high, 70 pts)
+<a id="r-678-ffffae503000"></a>
+
+### Region 0xffffae503000 (high, 70 pts)
 
 In short: encrypted or packed code from a file that exists only in memory. The explanation is above, in the section "What the findings mean in this process".
 
@@ -433,32 +464,32 @@ In short: encrypted or packed code from a file that exists only in memory. The e
 
 | Field | Value |
 |---|---|
-| Address range | 0xffff8057f000 - 0xffff80581000 (8 KiB, 8 KiB read) |
+| Address range | 0xffffae503000 - 0xffffae505000 (8 KiB, 8 KiB read) |
 | Type and source | mapping; memfd:payload |
 | Entropy | maximum 7.95, mean 7.95 (scale 0-8); zero pages: 0 |
 | Content SHA-256 | b511e7d5ceda23c4c9555f760682f3089d78baf592641fdce4ceac79f973cc94 |
-| Neighbour below | 0xffff8057d000 rw- anonymous memory (adjacent) |
-| Neighbour above | 0xffff80581000 rw- anonymous memory (adjacent) |
+| Neighbour below | 0xffffae501000 rw- anonymous memory (adjacent) |
+| Neighbour above | 0xffffae505000 rw- anonymous memory (adjacent) |
 
 #### Region entropy profile
 
 ```text
-0xffff8057f000 ██ 0xffff80581000
+0xffffae503000 ██ 0xffffae505000
 ```
 
 Segment entropy (0-8): lowest 8.0, highest 8.0; 2 segments of 4 KiB.
 
-#### Byte preview from 0xffff8057f000
+#### Byte preview from 0xffffae503000
 
 ```text
-0xffff8057f000  ea 1c 58 d8 97 be 9d 50 12 c9 a7 6e 43 b5 af 76  ..X....P...nC..v
-0xffff8057f010  c2 a0 72 7d 39 91 3d 65 90 d8 4f a3 7f c7 4f 6f  ..r}9.=e..O...Oo
-0xffff8057f020  09 25 49 a6 b7 01 0d a5 40 3e 28 89 cd ac a8 07  .%I.....@>(.....
-0xffff8057f030  0a 25 f2 99 ef b9 bc 68 f4 c6 4b 49 aa e5 7c c1  .%.....h..KI..|.
-0xffff8057f040  f6 99 97 47 58 8a 8d d3 e7 b2 25 12 7f 26 76 8f  ...GX.....%..&v.
-0xffff8057f050  8b 5c 17 5f 2e 5d 00 2a 93 81 6a a7 63 ff 74 27  .\._.].*..j.c.t'
-0xffff8057f060  25 01 8b aa 07 d1 21 26 24 e8 10 24 c7 d5 d6 a9  %.....!&$..$....
-0xffff8057f070  cd 69 ce 1b 23 d5 44 40 9b 4a 15 da 26 f4 be 50  .i..#.D@.J..&..P
+0xffffae503000  ea 1c 58 d8 97 be 9d 50 12 c9 a7 6e 43 b5 af 76  ..X....P...nC..v
+0xffffae503010  c2 a0 72 7d 39 91 3d 65 90 d8 4f a3 7f c7 4f 6f  ..r}9.=e..O...Oo
+0xffffae503020  09 25 49 a6 b7 01 0d a5 40 3e 28 89 cd ac a8 07  .%I.....@>(.....
+0xffffae503030  0a 25 f2 99 ef b9 bc 68 f4 c6 4b 49 aa e5 7c c1  .%.....h..KI..|.
+0xffffae503040  f6 99 97 47 58 8a 8d d3 e7 b2 25 12 7f 26 76 8f  ...GX.....%..&v.
+0xffffae503050  8b 5c 17 5f 2e 5d 00 2a 93 81 6a a7 63 ff 74 27  .\._.].*..j.c.t'
+0xffffae503060  25 01 8b aa 07 d1 21 26 24 e8 10 24 c7 d5 d6 a9  %.....!&$..$....
+0xffffae503070  cd 69 ce 1b 23 d5 44 40 9b 4a 15 da 26 f4 be 50  .i..#.D@.J..&..P
 ```
 
 #### Text strings in the region
@@ -467,11 +498,23 @@ Segment entropy (0-8): lowest 8.0, highest 8.0; 2 segments of 4 KiB.
 
 #### How to verify this region
 
-- See what this region is in the process memory map: grep -n ffff8057f000 /proc/2050/maps
-- Save the region content to a file (requires gdb, pauses the process briefly): gdb -p 2050 -batch -ex "dump memory /tmp/region\_ffff8057f000.bin 0xffff8057f000 0xffff80581000"
-- Check who started the process and with what command: ps -o pid,ppid,user,lstart,cmd -p 2050
-- Find the memfd file descriptor and copy the whole file: ls -l /proc/2050/fd \| grep memfd, then cp /proc/2050/fd/NUMBER /tmp/memfd\_2050.bin
-- After saving the region, compare its SHA-256 hash against databases of known files: sha256sum /tmp/region\_ffff8057f000.bin
+1. See what this memory region is in the process memory map
+   `grep -n ffffae503000 /proc/678/maps`
+   How to read the result: The output is one line: address range, permissions (e.g. r-xp, the letter x means executable code) and, at the end, a file path. Benign case: the line ends with the path of a library or program in a system directory such as /usr/lib. Be concerned if there is no path (memory not backed by a file), a memfd: entry, a (deleted) note, or a path in /tmp or /dev/shm together with the letter x in the permissions: in that case save the region to a file (next step).
+2. Save the memory region content to a file (requires gdb, pauses the process briefly)
+   `gdb -p 678 -batch -ex "dump memory /tmp/region_ffffae503000.bin 0xffffae503000 0xffffae505000"`
+   How to read the result: Expected result: the command ends without an error and a file /tmp/region\_... appears, with a size equal to the size of the region. The messages "Operation not permitted" or "Cannot access memory" mean missing permissions (run as root) or that the region no longer exists: on their own they do not indicate a threat. The saved file is the input for the next steps and a piece of evidence, do not run it.
+3. Check who started the process and with what command
+   `ps -o pid,ppid,user,lstart,cmd -p 678`
+   How to read the result: Look at the columns PPID (parent process), USER, STARTED (start time) and CMD (command). Benign case: the user and the command fit the role of this server, and PPID is 1 (systemd) or a known service manager. Be concerned if the command was started from /tmp or /dev/shm, if a shell (sh, bash) was started by a web server or a database, or if the start time matches the suspected incident: in that case check the parent process with the same command, using its PPID.
+4. Find the memfd file descriptor (a file that exists only in memory) and copy the whole file, replacing NUMBER with the descriptor number from the first command
+   `ls -l /proc/678/fd ¦ grep memfd ; cp /proc/678/fd/NUMBER /tmp/memfd_678.bin`
+   How to read the result: The first command prints lines like "5 -&gt; /memfd:name (deleted)": the number before the arrow is the descriptor number, and the (deleted) note is normal here. Benign case: the name points to a known use, e.g. graphics or sound buffers in programs with a graphical interface. Be concerned about an empty or random name in a server process: in that case check the copied file with the file command, and if it prints ELF (a program), this is consistent with running code without writing it to disk, so keep the file and hand it over for analysis.
+5. After saving the memory region, compute its SHA-256 hash and compare it against databases of known files
+   `sha256sum /tmp/region_ffffae503000.bin`
+   How to read the result: The output is 64 hexadecimal characters (the hash, a fingerprint of the file): look it up in the file reputation database your organization uses, searching by the hash only, without uploading the file. No match is typical for a memory dump and settles nothing, while a match flagged as malicious suggests known malware. On a malicious match, or when other findings concern the same process, keep the file and hand it over for analysis.
+
+<a id="ch-5"></a>
 
 ## 5. What this report does not cover
 
@@ -480,8 +523,10 @@ Segment entropy (0-8): lowest 8.0, highest 8.0; 2 segments of 4 KiB.
 - System context is the state at scan time: connections closed earlier, child processes that have exited and deleted files are not visible. The report does not cover history (logs, audit trail).
 - The scan covers process memory at scan time; it does not cover the kernel, the contents of files on disk or the contents of network traffic.
 - The result file contains SHA-256 hashes of 5 files (programs of all processes and files mapped in processes with findings); the report shows only some. The report does not check hashes against external databases.
-- The THR-PRIV finding relies on the thread start address (Windows) or on the place where waiting threads call the kernel (Linux); a thread that was computing at scan time is not assessed on Linux. IMG-MOD states that code from a file was changed in memory, but does not show the differences.
+- The THR-PRIV finding relies on the thread start address (Windows) or on the place where waiting threads call the kernel (Linux); a thread that was computing at scan time is not assessed on Linux. IMG-MOD states how many bytes of code differ from the file on disk and where the first one is; the preview shows the bytes from memory, without the file contents to compare against.
 - No LLM interpretation (report built from deterministic data only).
+
+<a id="ch-6"></a>
 
 ## 6. Glossary
 
@@ -516,6 +561,8 @@ Segment entropy (0-8): lowest 8.0, highest 8.0; 2 segments of 4 KiB.
 | LD\_PRELOAD | a variable that forces the specified library to be loaded before all others; sometimes used to replace functions |
 
 The explanations in this report come from the tool's knowledge base (version 2026-11-22, system linux). They describe typical cases; they do not replace checking the specific process.
+
+<a id="ch-7"></a>
 
 ## 7. Legend
 

@@ -11,6 +11,11 @@ All notable changes to this project are documented here. The format follows [Kee
 - `HDR` recognises image headers whose signatures were wiped, by the PE section table or the ELF program header table.
 - Sample modes `patch`, `touch`, `hdr-wiped`, `pe-wiped` and end-to-end tests for dumps.
 
+### Changed
+
+- Report: table-of-contents entries and finding rows of the address space map are links; command lines and verification commands are set off as code; priority and severity are colour-coded; verification steps explain how to read the result; model hypotheses show supporting and undermining arguments side by side; clearer confidence labels.
+- Knowledge base: verification steps are objects with `do`, `cmd` and `look`.
+
 ### Fixed
 
 - Report: fields of a PE header located near the end of the 256-byte preview are now shown.

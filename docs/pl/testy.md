@@ -18,7 +18,7 @@ Kod wyjścia skryptów e2e: 0 gdy wszystko zgodne, 1 gdy cokolwiek odbiega.
 
 | Warstwa | Wynik |
 |---|---|
-| Testy jednostkowe | 128 przechodzi (analyze 24, core 3, dump 5, kb 7, live 20, llm 40, report 29) |
+| Testy jednostkowe | 129 przechodzi (analyze 25, core 3, dump 5, kb 7, live 20, llm 40, report 29) |
 | e2e Linux (aarch64, kontener) | 16 próbek statycznych, 2 dynamiczne i 8 grup asercji dodatkowych |
 | e2e Windows (stacja testowa, x64) | 14 próbek, próbka kontekstu, 2 dynamiczne i 8 grup asercji dodatkowych |
 | Model lokalny na żywo | `gemma3:12b` na lokalnej Ollamie |
@@ -85,6 +85,8 @@ Backend jest w tych testach atrapą, więc sieć nie jest potrzebna.
 Nowe w tej wersji (analiza i odczyt na żywo):
 
 - `header_with_wiped_signature_is_recognised_by_its_tables` (analyze): nagłówek PE bez `MZ`, bez `PE` albo z wyzerowanym początkiem strony oraz nagłówek ELF bez sygnatury są rozpoznawane po tablicy sekcji albo segmentów; nagłówek z sygnaturą nie jest zgłaszany drugi raz; kontrole: jedna sekcja, brak sekcji wykonywalnej, adresy nierosnące, dane losowe, zera, tekst z nazwami sekcji, jeden segment ładowany.
+- `wiped_header_is_reported_only_in_executable_regions` (analyze): tablica sekcji bez sygnatury jest zgłaszana tylko w regionie wykonywalnym; kopia nagłówka pliku na stercie i wymazany nagłówek w danych niewykonywalnych nie są (kontrole). Test powstał po pomiarze na stacji testowej, na której wcześniejsza wersja dała dwa fałszywe alarmy na stercie.
+- `toc_page_numbers_are_stable_between_passes` (report) obejmuje też odnośniki: każdy wpis spisu jest odnośnikiem do swojego rozdziału, a położenie kotwic jest takie samo w obu przebiegach układu.
 - `modified_code_of_a_file_is_flagged_only_in_read_only_executable_mappings` (analyze) obejmuje też wynik porównania z plikiem: liczba bajtów i adres w opisie, 10 punktów dla zwykłej biblioteki Windows i 40 dla modułu ochronnego; kontrola: porównanie bez różnic nie daje znaleziska.
 - `relocated_image_matches_the_file_and_a_patch_is_counted` (live, `pediff`): obraz PE po relokacji pod trzy różne adresy nie różni się od pliku; pięć zmienionych bajtów jest policzonych z adresem pierwszego; kontrole: bez naniesienia relokacji i dla pliku bez tablicy relokacji różnice są widoczne.
 - `garbage_and_truncated_files_do_not_panic` (live, `pediff`): śmieci, każde obcięcie pliku i każdy bajt nagłówków ustawiony na 0xff nie powodują awarii; uszkodzona tablica relokacji (blok poza tablicą, nieznany typ wpisu) oznacza brak porównania po załadowaniu pod inny adres; katalog relokacji deklarujący 4 GiB nie zajmuje skanera (limit czasu w teście).

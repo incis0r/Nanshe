@@ -32,7 +32,7 @@ The directory must contain `common.json`; the system file is optional. For an En
 | "Files mapped into memory", description column | `modules` | what the library is; modules of JIT runtimes are always shown, because they explain findings |
 | "What the findings mean in this process" | `combos`, `tags` | each combination of characteristics once: what it means, benign and worrying explanations, a hint that depends on whether the process contains a JIT runtime, the technical basis and related ATT&CK techniques |
 | "Assessment" and "Executive summary" | `modules` (recognition of the JIT runtime), names of characteristics | the verification priority of the process with a justification; the priority rules are in the report code, the base supplies the names and the recognition of runtimes |
-| "How to verify this region" | `verify` | ready-made commands with the process number and the region addresses filled in |
+| "How to verify this region" | `verify` | steps: what to do, a ready-made command with the process number and the region addresses filled in, and a hint on how to read the result (what is ordinary, what should raise concern, what to do next) |
 | "Processes and characteristics", "Region size and entropy", "SHA-256 hashes" | `sections` | a description of how to read the matrix, the scatter plot and the hash tables |
 | "Glossary" and "Legend" | `terms`, `tags` | terms used in the report |
 
@@ -58,7 +58,7 @@ Each file is a single JSON object. The system file is overlaid on the common one
   "combos": [ { "tags": ["RWX", "X-PRIV"], "title": "...", "meaning": "...",
                 "benign": ["..."], "malicious": ["..."],
                 "hints": [ { "runtime": true, "text": "... {runtime} ..." }, { "runtime": false, "text": "..." } ] } ],
-  "verify": { "*": ["step for every region: {pid} {start} {end} {start_plain} {size}"], "HDR": ["step for this tag only"] },
+  "verify": { "*": [{ "do": "what to do", "cmd": "command {pid} {start} {end} {start_plain} {size}", "look": "how to read the result" }], "HDR": [{ "do": "step for this tag only", "cmd": "", "look": "..." }] },
   "processes": [ { "names": ["svchost.exe"], "what": "...", "paths": ["\\windows\\system32\\svchost.exe"], "parents": ["services.exe"] } ],
   "modules":   [ { "names": ["clr.dll"], "what": "...", "runtime": ".NET Framework" } ],
   "flags":   { "seccomp": "explanation; the key is the beginning of the characteristic name" },

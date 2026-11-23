@@ -103,33 +103,77 @@
  ],
  "verify": {
   "*": [
-   "Zobacz, czym jest ten region w mapie pamięci procesu: grep -n {start_plain} /proc/{pid}/maps",
-   "Zapisz zawartość regionu do pliku (wymaga gdb, zatrzymuje proces na chwilę): gdb -p {pid} -batch -ex \"dump memory /tmp/region_{start_plain}.bin {start} {end}\"",
-   "Sprawdź, kto uruchomił proces i z jakim poleceniem: ps -o pid,ppid,user,lstart,cmd -p {pid}"
+   {
+    "do": "Zobacz, czym jest ten region pamięci w mapie pamięci procesu",
+    "cmd": "grep -n {start_plain} /proc/{pid}/maps",
+    "look": "Wynik to jeden wiersz: zakres adresów, uprawnienia (np. r-xp, litera x oznacza kod wykonywalny), a na końcu ścieżka pliku. Niegroźny przypadek: na końcu jest ścieżka biblioteki lub programu z katalogu systemowego, np. /usr/lib. Niepokoić powinien brak ścieżki (pamięć bez pliku), wpis memfd:, dopisek (deleted) albo ścieżka w /tmp lub /dev/shm przy uprawnieniach z literą x: wtedy zapisz region do pliku (następny krok)."
+   },
+   {
+    "do": "Zapisz zawartość regionu pamięci do pliku (wymaga gdb, zatrzymuje proces na chwilę)",
+    "cmd": "gdb -p {pid} -batch -ex \"dump memory /tmp/region_{start_plain}.bin {start} {end}\"",
+    "look": "Oczekiwany wynik: polecenie kończy się bez błędu i powstaje plik /tmp/region_... o rozmiarze równym rozmiarowi regionu. Komunikaty \"Operation not permitted\" lub \"Cannot access memory\" oznaczają brak uprawnień (uruchom jako root) albo to, że region już nie istnieje: same w sobie nie świadczą o zagrożeniu. Zapisany plik jest materiałem do kolejnych kroków i dowodem, nie uruchamiaj go."
+   },
+   {
+    "do": "Sprawdź, kto uruchomił proces i z jakim poleceniem",
+    "cmd": "ps -o pid,ppid,user,lstart,cmd -p {pid}",
+    "look": "Patrz na kolumny PPID (proces nadrzędny), USER, STARTED (czas uruchomienia) i CMD (polecenie). Niegroźny przypadek: użytkownik i polecenie pasują do roli tego serwera, a PPID to 1 (systemd) lub znany program zarządzający usługami. Niepokoić powinno polecenie uruchomione z /tmp lub /dev/shm, powłoka (sh, bash) uruchomiona przez serwer WWW lub bazę danych albo czas uruchomienia zbieżny z podejrzewanym incydentem: wtedy sprawdź tym samym poleceniem proces nadrzędny, podając jego PPID."
+   }
   ],
   "HDR": [
-   "Po zapisaniu regionu sprawdź, co to za plik wykonywalny: file /tmp/region_{start_plain}.bin oraz readelf -h /tmp/region_{start_plain}.bin"
+   {
+    "do": "Po zapisaniu regionu pamięci sprawdź, co to za plik wykonywalny",
+    "cmd": "file /tmp/region_{start_plain}.bin ; readelf -h /tmp/region_{start_plain}.bin",
+    "look": "Jeśli file wypisuje słowo ELF (format programów w Linuksie), a readelf pokazuje nagłówek bez błędów (pola Type, Machine, Entry point address), region zawiera cały program lub bibliotekę załadowaną bez pliku na dysku, co sugeruje ładowanie kodu wprost do pamięci. Jeśli file wypisuje samo \"data\", a readelf zgłasza błąd, to tylko fragment lub przypadkowe podobieństwo i znalezisko jest słabsze. W pierwszym przypadku policz skrót pliku (sha256sum), zachowaj plik jako dowód i przekaż go do analizy."
+   }
   ],
   "ENT-X": [
-   "Po zapisaniu regionu porównaj jego skrót z bazami znanych plików: sha256sum /tmp/region_{start_plain}.bin"
+   {
+    "do": "Po zapisaniu regionu pamięci policz jego skrót SHA-256 i porównaj go z bazami znanych plików",
+    "cmd": "sha256sum /tmp/region_{start_plain}.bin",
+    "look": "Wynik to 64 znaki szesnastkowe (skrót, czyli odcisk palca pliku): wyszukaj go w bazie reputacji plików, której używa twoja organizacja, wyszukując sam skrót, bez wysyłania pliku. Brak trafienia jest typowy dla zrzutu pamięci i niczego nie rozstrzyga, natomiast trafienie oznaczone jako złośliwe sugeruje znane złośliwe oprogramowanie. Przy trafieniu złośliwym lub gdy inne znaleziska dotyczą tego samego procesu, zachowaj plik i przekaż go do analizy."
+   }
   ],
   "MEMFD": [
-   "Znajdź deskryptor pliku memfd i skopiuj cały plik: ls -l /proc/{pid}/fd | grep memfd, potem cp /proc/{pid}/fd/NUMER /tmp/memfd_{pid}.bin"
+   {
+    "do": "Znajdź deskryptor pliku memfd (plik istniejący tylko w pamięci) i skopiuj cały plik, wstawiając w miejsce NUMBER numer deskryptora z pierwszego polecenia",
+    "cmd": "ls -l /proc/{pid}/fd | grep memfd ; cp /proc/{pid}/fd/NUMBER /tmp/memfd_{pid}.bin",
+    "look": "Pierwsze polecenie wypisuje wiersze w postaci \"5 -> /memfd:nazwa (deleted)\": liczba przed strzałką to numer deskryptora, a dopisek (deleted) jest tu normalny. Niegroźny przypadek: nazwa wskazuje na znane zastosowanie, np. bufory grafiki lub dźwięku w programach z interfejsem graficznym. Niepokoić powinna nazwa pusta lub losowa w procesie serwerowym: wtedy sprawdź skopiowany plik poleceniem file, a jeśli wypisze ELF (program), jest to spójne z uruchamianiem kodu bez zapisu na dysk, więc zachowaj plik i przekaż go do analizy."
+   }
   ],
   "DEL-EXEC": [
-   "Odzyskaj usunięty plik programu, póki proces działa: cp /proc/{pid}/exe /tmp/exe_{pid}.bin (dla biblioteki użyj wpisu z /proc/{pid}/map_files/)"
+   {
+    "do": "Odzyskaj usunięty plik programu, póki proces działa (dla biblioteki skopiuj zamiast tego odpowiedni wpis z katalogu map_files tego procesu w /proc)",
+    "cmd": "cp /proc/{pid}/exe /tmp/exe_{pid}.bin",
+    "look": "Oczekiwany wynik: kopia powstaje bez błędu, a po zakończeniu procesu odzyskanie nie będzie już możliwe. Niegroźny przypadek: program lub biblioteka pochodzi z katalogu systemowego i była niedawno aktualizowana, więc proces po prostu działa jeszcze na starej wersji. Niepokoić powinien plik, który leżał w /tmp, /dev/shm lub katalogu domowym i nie ma związku z aktualizacją, bo jest to spójne z programem usuwającym się po uruchomieniu: wtedy policz skrót kopii (sha256sum) i zachowaj ją jako dowód."
+   }
   ],
   "X-TMP": [
-   "Sprawdź właściciela, datę i skrót pliku: ls -l --time-style=full-iso PLIK oraz sha256sum PLIK (ścieżka pliku jest w tabeli regionu)"
+   {
+    "do": "Sprawdź właściciela, datę i skrót pliku, wstawiając w miejsce FILE ścieżkę pliku z tabeli regionu pamięci",
+    "cmd": "ls -l --time-style=full-iso FILE ; sha256sum FILE",
+    "look": "Patrz na właściciela (trzecia kolumna), datę modyfikacji i skrót (64 znaki szesnastkowe). Niegroźny przypadek: plik należy do użytkownika, który świadomie uruchamia dany program, a data pasuje do jego startu, bo niektóre programy (np. Java, Python) rozpakowują swoje biblioteki do /tmp. Niepokoić powinien właściciel będący kontem usługi (np. www-data), data zbieżna z podejrzewanym incydentem lub skrót oznaczony w bazie reputacji plików jako złośliwy: wtedy skopiuj plik jako dowód, zanim zniknie."
+   }
   ],
   "RWX": [
-   "Sprawdź, czy program ma środowisko JIT: grep -E \"libjvm|libnode|libv8|libmono|libcoreclr|libjs\" /proc/{pid}/maps"
+   {
+    "do": "Sprawdź, czy program ma środowisko JIT (mechanizm tworzący kod w trakcie działania, np. Java, Node.js, .NET)",
+    "cmd": "grep -E \"libjvm|libnode|libv8|libmono|libcoreclr|libjs\" /proc/{pid}/maps",
+    "look": "Jeśli polecenie wypisuje wiersze z nazwami takich bibliotek, program sam tworzy kod w pamięci i region jednocześnie zapisywalny i wykonywalny jest dla niego zwykle normalny. Brak wyniku oznacza, że nie znaleziono żadnego z typowych środowisk JIT (lista nie jest pełna), więc taki region trudniej wyjaśnić i jest on spójny z kodem wstrzykniętym. Wtedy zapisz region do pliku i sprawdź go poleceniami file oraz sha256sum."
+   }
   ],
   "THR-PRIV": [
-   "Zobacz, co robi wątek (stos wywołań wszystkich wątków): gdb -p {pid} -batch -ex \"thread apply all bt\""
+   {
+    "do": "Zobacz, co robią wątki procesu (stos wywołań wszystkich wątków, zatrzymuje proces na chwilę)",
+    "cmd": "gdb -p {pid} -batch -ex \"thread apply all bt\"",
+    "look": "Dla każdego wątku wypisywana jest lista ramek w postaci \"#0 0x... in funkcja () from /ścieżka/biblioteki\". Niegroźny przypadek: ramki mają nazwę funkcji i ścieżkę biblioteki. Niepokoić powinny ramki z samym adresem i znakami \"?? ()\" bez biblioteki, zwłaszcza na dole listy (początek wątku), jeśli adres leży w zakresie regionu ze znaleziska, bo sugeruje to wątek wykonujący kod z pamięci bez pliku (same \"??\" mogą też wynikać z braku symboli): wtedy zapisz ten region do pliku."
+   }
   ],
   "IMG-MOD": [
-   "Porównaj kod w pamięci z plikiem: zapisz region (polecenie wyżej) i porównaj z odpowiednim fragmentem pliku biblioteki (przesunięcie jest w /proc/{pid}/maps); różnice pokażą nadpisane funkcje."
+   {
+    "do": "Porównaj kod w pamięci z plikiem: zapisz region pamięci (polecenie wyżej) i porównaj go z odpowiednim fragmentem pliku biblioteki (przesunięcie jest w /proc/{pid}/maps)",
+    "cmd": "",
+    "look": "Niegroźny przypadek: brak różnic albo plik biblioteki na dysku jest nowszy niż proces (aktualizacja po jego starcie), co tłumaczy rozbieżności. Niepokoić powinny pojedyncze zmienione bajty na początku funkcji, zwykle skok w inne miejsce pamięci (tzw. hook, czyli przekierowanie funkcji), bo jest to spójne z nadpisaniem kodu biblioteki. Wtedy zanotuj, których funkcji dotyczą różnice, zachowaj zapisany region i przekaż go do analizy."
+   }
   ]
  },
  "terms": {

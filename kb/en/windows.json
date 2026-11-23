@@ -109,33 +109,77 @@
  ],
  "verify": {
   "*": [
-   "View the memory region in System Informer (formerly Process Hacker): process {pid}, Memory tab, address {start}; the region can be saved to a file from there.",
-   "Check the owner, the parent process and the command line: Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\" | Select-Object Name,ParentProcessId,CommandLine,CreationDate",
-   "Take a full memory dump of the process for further analysis (Sysinternals): procdump -ma {pid} C:\\Temp\\proc_{pid}.dmp"
+   {
+    "do": "Open the memory region in System Informer (formerly Process Hacker): process {pid}, Memory tab, address {start}; the region can be saved to a file from there",
+    "cmd": "",
+    "look": "Look at the Type, Protection and Use columns. An entry of type Image with a file name in the Use column is usually a library loaded from disk, which is the typical case. Type Private with a protection that contains X (execute) and an empty Use column means executable memory not backed by a file, which suggests further verification: save the region to a file and continue with the next steps."
+   },
+   {
+    "do": "Check the owner, the parent process and the command line of the process",
+    "cmd": "Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\" | Select-Object Name,ParentProcessId,CommandLine,CreationDate",
+    "look": "Compare Name, ParentProcessId and CommandLine with what you expect from this program: for example a browser started by explorer.exe with a short command line looks ordinary. An unusual parent process (for example an office program starting powershell.exe), a long encoded string in CommandLine, or a path in Temp or AppData should raise concern. In that case check the parent process the same way and take a memory dump."
+   },
+   {
+    "do": "Take a full memory dump of the process for further analysis with procdump (Sysinternals)",
+    "cmd": "procdump -ma {pid} C:\\Temp\\proc_{pid}.dmp",
+    "look": "This step does not decide anything, it only preserves the material: the tool should print \"Dump 1 complete\" and the .dmp file should appear in C:\\Temp. Do it before the process is closed or the computer is restarted, and hand the file to the person who will analyse the finding."
+   }
   ],
   "HDR": [
-   "Extract hidden programs from the process memory with pe-sieve: pe-sieve64.exe /pid {pid} /dump_mode 3"
+   {
+    "do": "Extract hidden programs from the process memory with pe-sieve",
+    "cmd": "pe-sieve64.exe /pid {pid} /dump_mode 3",
+    "look": "Read the summary at the end: all zeros in the Implanted PE, Replaced and Total suspicious lines are consistent with a benign case. A value above zero in Implanted PE (a program placed in memory with no file on disk) or Replaced suggests injected code. In that case keep the directory with the saved files and compute their SHA256 hashes to check them against databases of known files."
+   }
   ],
   "RWX": [
-   "Check whether the process hosts a .NET or browser runtime: Get-Process -Id {pid} -Module | Where-Object ModuleName -match \"clr|coreclr|clrjit|msedge|chrome|jvm|v8\""
+   {
+    "do": "Check whether the process uses a .NET, Java or browser engine runtime",
+    "cmd": "Get-Process -Id {pid} -Module | Where-Object ModuleName -match \"clr|coreclr|clrjit|msedge|chrome|jvm|v8\"",
+    "look": "If the list contains libraries such as clr.dll, coreclr.dll, clrjit.dll, jvm.dll, or chrome or msedge files, memory that is writable and executable at the same time is consistent with the normal work of a JIT compiler (it creates code while the program runs). An empty result means there is no such explanation and the finding deserves more attention: save the memory region to a file and take a process dump."
+   }
   ],
   "X-PRIV": [
-   "Check whether the program file is signed (Sysinternals): sigcheck -nobanner PROGRAM_FILE_PATH"
+   {
+    "do": "Check with sigcheck (Sysinternals) whether the program file has a digital signature; replace PROGRAM_FILE_PATH with the full path of the program file",
+    "cmd": "sigcheck -nobanner PROGRAM_FILE_PATH",
+    "look": "Look at the Verified and Publisher fields. The value Signed with a known publisher is consistent with a legitimate program, although it does not rule out code injected into it later. The value Unsigned or an unknown publisher, especially for a file in Temp, AppData or Downloads, should raise concern: compute the hash of the file and check it against databases of known files."
+   }
   ],
   "X-MAP": [
-   "List the sections and their owners (WinDbg, after attaching to the process): !address {start}"
+   {
+    "do": "Attach WinDbg to the process and list the information about the memory region at this address",
+    "cmd": "!address {start}",
+    "look": "Look at the Usage, Type and Protect fields and at whether a file name appears (Mapped file or Image). A region with the name of a known file is consistent with a program mapping a file in the ordinary way. An executable region of type MEM_MAPPED with no file name suggests code placed in a shared memory section, which needs further analysis: take a process dump and hand it over for analysis."
+   }
   ],
   "GUARD-X": [
-   "The content of the memory region is available in a full process dump (procdump -ma); viewing it in a debugger on the live process will clear the guard page."
+   {
+    "do": "Take a full process dump (procdump -ma) and view the content of the memory region in the dump, not in a debugger on the live process, because that will clear the guard page",
+    "cmd": "",
+    "look": "A guard page (a one-time alarm on the first access to the memory) on a thread stack is ordinary. On an executable region not backed by a file it is sometimes used to hide code from scanners, so it is consistent with an attempt to hide, but on its own it does not settle the question. If the region in the dump contains code or a program header (the letters MZ at the start), hand the dump over for analysis."
+   }
   ],
   "ENT-X": [
-   "After saving the memory region, compute its SHA-256 hash and compare it against databases of known files: Get-FileHash FILE -Algorithm SHA256"
+   {
+    "do": "After saving the memory region to a file, compute its SHA256 hash and compare it against databases of known files (for example VirusTotal); replace FILE with the path of the saved file",
+    "cmd": "Get-FileHash FILE -Algorithm SHA256",
+    "look": "Copy the value from the Hash column and search for it in the database. No match is the typical result and does not decide anything, because memory content rarely matches a file on disk byte for byte. A match flagged as malicious by many engines suggests known malware: preserve a process dump and report the finding."
+   }
   ],
   "THR-PRIV": [
-   "View the thread and its stack in System Informer: process {pid}, Threads tab; the Start address column will show an address without a module name."
+   {
+    "do": "Open the thread and its stack in System Informer: process {pid}, Threads tab, Start address column",
+    "cmd": "",
+    "look": "An ordinary thread shows a library and function name in the Start address column, for example ntdll.dll!RtlUserThreadStart. A bare numeric address (for example 0x1f0000) with no module name means a thread started from memory not backed by a file, which is consistent with injected code but also occurs in .NET and Java programs. Double-click the thread, look at the stack, and if it also shows addresses without names, take a process dump."
+   }
   ],
   "IMG-MOD": [
-   "List the modified functions with pe-sieve (it shows hooks and patches with function names): pe-sieve64.exe /pid {pid} /shellc 0 /iat 1"
+   {
+    "do": "List the modified functions with pe-sieve, which shows hooks and patches (changes in the code of a library) with function names",
+    "cmd": "pe-sieve64.exe /pid {pid} /shellc 0 /iat 1",
+    "look": "Look at the Hooked and IAT Hooked lines in the summary and at the .tag files in the output directory, which hold the names of the modified functions and the redirect target. Redirects into a library of an antivirus or EDR product are consistent with the normal work of protection software. A redirect into memory not backed by a file, or patches in functions such as AmsiScanBuffer or EtwEventWrite, suggest an attempt to disable protections: take a process dump and report the finding."
+   }
   ]
  },
  "terms": {
