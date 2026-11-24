@@ -26,6 +26,11 @@ pub fn exe_is_trusted(actual: Option<FileId>, at_path: Option<FileId>) -> bool {
     }
 }
 
+/// Ta sama przestrzeń nazw: oba dowiązania przeczytane i równe. Nieczytelne dowiązanie to brak potwierdzenia.
+pub fn same_namespace<T: PartialEq>(a: Option<T>, b: Option<T>) -> bool {
+    matches!((a, b), (Some(x), Some(y)) if x == y)
+}
+
 use nanshe_core::*;
 #[allow(unused_imports)]
 use nanshe_core::{tr, trf};
@@ -67,7 +72,12 @@ mod linux {
             // metadata() podąża za dowiązaniem /proc/<pid>/exe do faktycznego pliku programu
             let actual = fs::metadata(format!("/proc/{pid}/exe")).ok().map(id);
             let at_path = exe.as_deref().and_then(|p| fs::metadata(p).ok()).map(id);
-            let exe_verified = !exe_deleted && exe_is_trusted(actual, at_path);
+            // Proces w innej przestrzeni nazw użytkowników niż skaner mógł sam (bez uprawnień) zbudować sobie
+            // prywatny widok systemu plików: zamontować własny katalog w miejscu /usr i podać w mapie ścieżki,
+            // które wyglądają na systemowe. Taki proces nie jest "potwierdzony", choć jego plik programu się zgadza.
+            let ns = |who: &str| fs::read_link(format!("/proc/{who}/ns/user")).ok();
+            let same_user_ns = same_namespace(ns(&pid.to_string()), ns("self"));
+            let exe_verified = !exe_deleted && same_user_ns && exe_is_trusted(actual, at_path);
             Ok(LinuxProcess { pid, name, exe, exe_deleted, exe_verified, mem, anon: std::cell::OnceCell::new() })
         }
     }
@@ -187,6 +197,10 @@ mod tests {
         assert!(!exe_is_trusted(Some(FileId { dev: 9, ..good }), Some(good)), "inne urządzenie");
         assert!(!exe_is_trusted(Some(good), None), "ścieżka nie istnieje u skanera");
         assert!(!exe_is_trusted(None, Some(good)));
+        // przestrzeń nazw użytkowników: potwierdzenie tylko przy dwóch przeczytanych, równych dowiązaniach
+        assert!(same_namespace(Some("user:[4026531837]"), Some("user:[4026531837]")));
+        assert!(!same_namespace(Some("user:[4026532999]"), Some("user:[4026531837]")), "proces we własnej przestrzeni nazw");
+        assert!(!same_namespace(None, Some("user:[4026531837]")) && !same_namespace(Some("x"), None) && !same_namespace::<&str>(None, None), "nieczytelne dowiązanie");
     }
 }
 

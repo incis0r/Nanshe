@@ -77,6 +77,9 @@ impl Detector for GuardX {
     }
 }
 
+/// Największy region memfd uznawany za tablicę skoków libffi (jedna strona, także przy stronach 64 KiB).
+const LIBFFI_MAX: u64 = 0x1_0000;
+
 struct Memfd;
 impl Detector for Memfd {
     fn id(&self) -> &'static str { "memfd" }
@@ -87,7 +90,11 @@ impl Detector for Memfd {
             // o nazwie "libffi". Pomiar na 20 hostach Linux (2026-11-23): wszystkie 19 mapowań memfd miały tę nazwę.
             // Nazwę nadaje sam proces, więc obniżka dotyczy tylko procesu z potwierdzonym plikiem programu, który
             // faktycznie ma zmapowaną libffi; kod wstrzyknięty do takiego procesu mógłby się pod nią podszyć.
-            if ctx.traits.libffi && r.backing.as_deref() == Some("memfd:libffi") {
+            // Dodatkowo tylko dla tego, co libffi faktycznie tworzy: mała tablica skoków, niezapisywalna, o niskiej
+            // entropii (pomiar: 16 z 16 takich regionów miało 4 KiB, r-x i entropię poniżej 5). Większy, zapisywalny
+            // albo gęsty region pod tą nazwą dostaje pełną wagę.
+            let small_table = r.size <= LIBFFI_MAX && !r.is_w() && ctx.page_entropy.iter().all(|e| *e < 6.0);
+            if ctx.traits.libffi && small_table && r.backing.as_deref() == Some("memfd:libffi") {
                 return vec![ctx.finding(self.id(), "MEMFD", r, r.base, r.size, 10,
                     tr!("wykonywalne mapowanie memfd:libffi w procesie korzystającym z biblioteki libffi (wywołania zwrotne); nazwę mapowania nadaje sam proces",
                         "executable mapping memfd:libffi in a process that uses the libffi library (callbacks); the mapping name is chosen by the process itself").into())];

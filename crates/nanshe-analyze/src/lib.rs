@@ -684,6 +684,16 @@ mod tests {
         };
         assert_eq!(weights(&ffi("/usr/bin/python3.11", true, Some("/usr/lib64/libffi.so.8.1.2"), "memfd:libffi"), "MEMFD"), [10]);
         assert_eq!(weights(&ffi("/usr/bin/python3.11", true, Some("/usr/lib64/libffi.so.8.1.2"), "memfd:payload"), "MEMFD"), [40], "inna nazwa mapowania");
+        // ta sama nazwa, ale region nie wygląda jak tablica skoków libffi: duży, zapisywalny albo o wysokiej entropii
+        let ffi_shape = |size: usize, prot: &'static str, noisy: bool| {
+            let mut m = reg(0x30000, size as u64, prot, RegionKind::Mapped, Some("memfd:libffi")); m.backing_deleted = true;
+            let data: Vec<u8> = if noisy { (0..size).map(|i| (i as u32).wrapping_mul(2654435761).rotate_left(13) as u8 ^ (i >> 3) as u8).collect() } else { vec![0x90u8; size] };
+            fake("/usr/bin/python3.11", true, vec![(m, data), (reg(0x5000000, 8192, "r-x", RegionKind::Mapped, Some("/usr/lib64/libffi.so.8.1.2")), code.clone())])
+        };
+        assert_eq!(weights(&ffi_shape(4096, "r-x", false), "MEMFD"), [10]);
+        assert_eq!(weights(&ffi_shape(1 << 20, "r-x", false), "MEMFD"), [40], "duży region");
+        assert_eq!(weights(&ffi_shape(4096, "rwx", false), "MEMFD"), [40], "zapisywalny");
+        assert_eq!(weights(&ffi_shape(4096, "r-x", true), "MEMFD"), [40], "wysoka entropia");
         assert_eq!(weights(&ffi("/usr/bin/python3.11", true, None, "memfd:libffi"), "MEMFD"), [40], "proces bez libffi");
         assert_eq!(weights(&ffi("/usr/bin/python3.11", true, Some("/tmp/libffi.so.8"), "memfd:libffi"), "MEMFD"), [40], "libffi spoza katalogu systemowego");
         assert_eq!(weights(&ffi("/usr/bin/python3.11", false, Some("/usr/lib64/libffi.so.8.1.2"), "memfd:libffi"), "MEMFD"), [40], "niepotwierdzony plik programu");
