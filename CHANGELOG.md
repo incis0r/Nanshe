@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-24
+
+Follow-up to 0.2.0 after a security review of the VAD-based region map. Only `nanshe vm` changes.
+
+### Changed
+
+- `nanshe vm`: an executable page that no VAD entry describes is examined as private memory, and an image whose file cannot be named as a mapping without a file; kernel structures are read through Nanshe's own address translation, including transition pages.
+
 ## [0.2.0] - 2026-11-24
 
 Second release. Adds process dumps, a differential report, English output, the MSI installer, a first version of reading Windows guests from the KVM host, a first version of macOS live scanning and fuzzing of the parsers of untrusted data. The features marked "first version" are described with their measured limits in `docs/hypervisor.md` and `docs/macos.md`.
