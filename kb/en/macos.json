@@ -18,6 +18,9 @@
   },
   "IMG-MOD": {
    "tech": "On macOS the scanner does not compare code in memory with the file on disk yet, so this characteristic is not raised here; the description applies to results from other sources."
+  },
+  "SHC": {
+   "tech": "Search in executable regions without a file: on arm64 the svc #0x80 instruction (a direct system call, which programs normally make only through the system library), on x86_64 the same patterns as on other systems."
   }
  },
  "combos": [],
@@ -62,7 +65,10 @@
   "Mach-O": "the format of program and library files on macOS",
   "task port": "the handle through which the system allows reading the memory of another process; obtaining it requires privileges"
  },
- "flags": {},
+ "flags": {
+  "code signature": "the state of the program's signature according to the kernel: whether it is valid, whether the program is a system one, whether it has a hardened runtime (then code outside the signed file needs a permission recorded in the entitlements)",
+  "program entitlements": "permissions recorded in the program's signature; allow-jit lets it generate code at run time, allow-unsigned-executable-memory and disable-executable-page-protection lift the protection of executable memory, get-task-allow lets other processes read this program's memory"
+ },
  "handles": {},
  "processes": [
   {

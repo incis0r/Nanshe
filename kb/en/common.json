@@ -91,6 +91,17 @@
     "T1055.012 Process Hollowing",
     "T1056.004 Credential API Hooking"
    ]
+  },
+  "SHC": {
+   "name": "code that looks like shellcode",
+   "en": "code patterns typical of shellcode in executable memory that does not come from a file",
+   "meaning": "Executable memory that does not come from a plain file contains instruction sequences typical of self-contained code: such code finds system functions by itself, determines its own address or calls the kernel bypassing the libraries.",
+   "why": "Ordinary programs use system functions through an import table filled in by the loader. Injected code has none, so it must find libraries and functions by itself or bypass them by calling the kernel directly. These sequences are short and characteristic; their presence in memory without a file is a much stronger hint than the permissions of the region alone.",
+   "attack": [
+    "T1055 Process Injection",
+    "T1106 Native API",
+    "T1620 Reflective Code Loading"
+   ]
   }
  },
  "combos": [

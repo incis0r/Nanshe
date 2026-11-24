@@ -153,6 +153,20 @@ mod imp {
         mprotect_rx(p, len);
     }
 
+    /// Wzorce shellcode'u w pamięci prywatnej, przełączonej na wykonywalną: kod o niskiej entropii, więc ENT-X
+    /// milczy, a rozpoznaje go dopiero detektor treści. Bajty obu architektur leżą obok siebie i nigdy się
+    /// nie wykonują: x86_64 (ustalanie własnego adresu i bezpośrednie execve), arm64 (numer wywołania i svc).
+    fn shc() {
+        let len = 16 * 1024;
+        let mut d = low_code(len);
+        d[256..262].copy_from_slice(&[0xe8, 0, 0, 0, 0, 0x5b]);                                                 // call $+5; pop rbx
+        d[320..332].copy_from_slice(&[0x6a, 0x3b, 0x58, 0x99, 0x48, 0xbb, 0x2f, 0x62, 0x69, 0x6e, 0x0f, 0x05]); // push 0x3b; pop rax; ...; syscall
+        d[512..520].copy_from_slice(&[0xa8, 0x1b, 0x80, 0xd2, 0x01, 0x00, 0x00, 0xd4]);                         // mov x8, #221; svc #0
+        let p = anon(len, libc::PROT_READ | libc::PROT_WRITE);
+        fill(p, &d);
+        mprotect_rx(p, len);
+    }
+
     /// Ewazja: nagłówek ELF z e_type spoza zakresu 1..=4 (wymazany po załadowaniu). HDR głuchy.
     fn hdr_corrupt() {
         let mut d = vec![0u8; 4096];
@@ -305,6 +319,7 @@ mod imp {
             "rx-file" => rx_file(),
             "rwx-lowent" => rwx_lowent(),
             "rx-stage" => rx_stage(),
+            "shc" => shc(),
             "patch" => patch_library(true),
             "touch" => patch_library(false),
             "hdr-corrupt" => hdr_corrupt(),
@@ -417,6 +432,20 @@ mod imp {
         let len = 16 * 1024;
         let p = alloc(len, PAGE_READWRITE);
         fill(p, &low_code(len));
+        protect_rx(p, len);
+    }
+
+    /// Wzorce shellcode'u w pamięci prywatnej, przełączonej na wykonywalną: prolog etapu ładującego, odczyt PEB,
+    /// pętla skrótów nazw funkcji i kopia wejścia do jądra. Niska entropia, nic z tego się nie wykonuje.
+    fn shc() {
+        let len = 16 * 1024;
+        let mut d = low_code(len);
+        d[256..266].copy_from_slice(&[0xfc, 0x48, 0x83, 0xe4, 0xf0, 0xe8, 0xc0, 0, 0, 0]);                                  // cld; and rsp,-16; call
+        d[320..329].copy_from_slice(&[0x65, 0x48, 0x8b, 0x04, 0x25, 0x60, 0, 0, 0]);                                        // mov rax, gs:[0x60]
+        d[384..398].copy_from_slice(&[0xac, 0x3c, 0x61, 0x7c, 0x02, 0x2c, 0x20, 0x41, 0xc1, 0xc9, 0x0d, 0x41, 0x01, 0xc1]); // pętla ROR 13
+        d[448..459].copy_from_slice(&[0x4c, 0x8b, 0xd1, 0xb8, 0x18, 0, 0, 0, 0x0f, 0x05, 0xc3]);                            // mov r10,rcx; mov eax,0x18; syscall
+        let p = alloc(len, PAGE_READWRITE);
+        fill(p, &d);
         protect_rx(p, len);
     }
 
@@ -630,6 +659,7 @@ mod imp {
             "pe" => pe(),
             "xmap" => xmap(),
             "rx-stage" => rx_stage(),
+            "shc" => shc(),
             "patch" => patch_library(true),
             "touch" => patch_library(false),
             "thread" => thread_in_private(),
@@ -702,6 +732,8 @@ mod imp {
             // to samo o niskiej entropii (kod bez szyfrowania)
             "rx-lowent" => { staged(&[0x1f, 0x20, 0x03, 0xd5].repeat(8192)); }
             "macho" => macho(),
+            // wzorzec shellcode'u arm64 w kodzie o niskiej entropii: numer wywołania i svc #0x80 (nigdy się nie wykonuje)
+            "shc" => { let mut d = [0x1f, 0x20, 0x03, 0xd5].repeat(4096); d[512..520].copy_from_slice(&[0x30, 0x00, 0x80, 0xd2, 0x01, 0x10, 0x00, 0xd4]); staged(&d); }
             // region kompilatora JIT: jedyna droga do pamięci RWX; bez uprawnienia allow-jit system może odmówić
             "jit" => { anon(65536, libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC, libc::MAP_JIT); }
             // wysoka entropia w zwykłych danych: nie jest znaleziskiem

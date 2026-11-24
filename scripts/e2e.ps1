@@ -45,6 +45,7 @@ Check "rwx"      1 "ENT-X,RWX,X-PRIV"
 Check "pe"       1 "HDR,X-PRIV"
 Check "xmap"     1 "RWX,X-MAP"
 Check "rx-stage" 1 "X-PRIV"
+Check "shc" 1 "SHC,X-PRIV"
 Check "thread"   1 "THR-PRIV,X-PRIV"   # watek (wstrzymany) z adresem startu w pamieci bez pliku
 Check "inject"   1 "ENT-X,RWX,X-PRIV"
 # red team: kontrola i ewazja

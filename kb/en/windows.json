@@ -32,6 +32,9 @@
   },
   "IMG-MOD": {
    "tech": "Pages of an executable module image (MEM_IMAGE) that are not shared according to QueryWorkingSetEx. Full severity applies only to amsi.dll and wldp.dll; in other modules benign causes are common (relocation, the Chromium sandbox, the .NET runtime)."
+  },
+  "SHC": {
+   "tech": "Search in executable regions without a file: read of the PEB address (gs:[0x60], fs:[0x30]), a function-name hashing loop with ROR 13, a copy of the kernel entry (mov r10, rcx; mov eax, number; syscall) outside ntdll, finding its own address and the prologue of known loader stages. Chromium-based browsers copy kernel entries into their own memory as part of the sandbox."
   }
  },
  "combos": [

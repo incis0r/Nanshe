@@ -91,6 +91,17 @@
     "T1055.012 Process Hollowing",
     "T1056.004 Credential API Hooking"
    ]
+  },
+  "SHC": {
+   "name": "kod wyglądający jak shellcode",
+   "en": "code patterns typical of shellcode in executable memory that does not come from a file",
+   "meaning": "W pamięci wykonywalnej, która nie pochodzi ze zwykłego pliku, znajdują się sekwencje instrukcji typowe dla kodu działającego samodzielnie: taki kod sam odnajduje funkcje systemu, ustala własny adres albo wywołuje jądro z pominięciem bibliotek.",
+   "why": "Zwykłe programy korzystają z funkcji systemu przez tablicę importów wypełnianą przez program ładujący. Kod wstrzyknięty jej nie ma, więc musi sam znaleźć biblioteki i funkcje albo ominąć je, wywołując jądro bezpośrednio. Te sekwencje są krótkie i charakterystyczne; ich obecność w pamięci bez pliku jest dużo silniejszą wskazówką niż same uprawnienia regionu.",
+   "attack": [
+    "T1055 Process Injection",
+    "T1106 Native API",
+    "T1620 Reflective Code Loading"
+   ]
   }
  },
  "combos": [

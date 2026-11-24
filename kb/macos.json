@@ -18,6 +18,9 @@
   },
   "IMG-MOD": {
    "tech": "Na macOS skaner nie porównuje jeszcze kodu w pamięci z plikiem na dysku, więc ta cecha nie jest tu zgłaszana; opis dotyczy wyników z innych źródeł."
+  },
+  "SHC": {
+   "tech": "Wyszukiwanie w regionach wykonywalnych bez pliku: na arm64 instrukcja svc #0x80 (bezpośrednie wywołanie jądra, którego programy używają tylko przez bibliotekę systemową), na x86_64 te same wzorce co na innych systemach."
   }
  },
  "combos": [],
@@ -62,7 +65,10 @@
   "Mach-O": "format plików programów i bibliotek na macOS",
   "port zadania": "uchwyt, przez który system pozwala czytać pamięć innego procesu; jego wydanie wymaga uprawnień"
  },
- "flags": {},
+ "flags": {
+  "podpis kodu": "stan podpisu programu według jądra: czy podpis jest ważny, czy program jest systemowy, czy ma utwardzone środowisko (wtedy kod spoza podpisanego pliku wymaga zgody zapisanej w uprawnieniach)",
+  "uprawnienia programu": "zgody zapisane w podpisie programu; allow-jit pozwala tworzyć kod w trakcie działania, allow-unsigned-executable-memory i disable-executable-page-protection znoszą ochronę pamięci wykonywalnej, get-task-allow pozwala innym procesom czytać pamięć tego programu"
+ },
  "handles": {},
  "processes": [
   {

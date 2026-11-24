@@ -48,6 +48,7 @@ check data-noise   0 ""                  # wysoka entropia w danych RW to nie zn
 check rx-file      1 "X-TMP"             # R-X z pliku w /tmp: łapie X-TMP (katalog zapisywalny dla wszystkich)
 check rwx-lowent   1 "RWX,X-PRIV"        # jak rwx, ale bez ENT-X na ładunku (asercja wyniku niżej)
 check rx-stage     1 "X-PRIV"            # staging RW->R-X: RWX ominięty, X-PRIV łapie
+check shc          1 "SHC,X-PRIV"        # ten sam staging z wzorcami shellcode'u: rozpoznaje je detektor treści
 check hdr-corrupt  1 "X-PRIV"            # e_type spoza zakresu i brak tablicy segmentów: HDR głuchy (kontrola)
 check hdr-wiped    1 "HDR,X-PRIV"        # sygnatura wyzerowana, tablica segmentów została: HDR po tablicy
 check hdr-offset   1 "HDR,X-PRIV"        # nagłówek w środku strony: HDR szuka pod dowolnym przesunięciem

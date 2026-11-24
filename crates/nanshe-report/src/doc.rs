@@ -130,6 +130,7 @@ fn tag_gloss(tag: &str) -> &'static str {
         "HDR" => tr!("nagłówek obrazu PE/ELF/Mach-O w pamięci bez pliku źródłowego", "PE/ELF/Mach-O image header in memory not backed by a file"),
         "THR-PRIV" => tr!("wątek ulokowany w pamięci bez pliku źródłowego", "thread located in memory not backed by a file"),
         "IMG-MOD" => tr!("kod z pliku zmieniony w pamięci", "code from a file changed in memory"),
+        "SHC" => tr!("wzorce kodu typowe dla shellcode'u", "code patterns typical of shellcode"),
         _ => "",
     }
 }

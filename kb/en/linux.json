@@ -40,6 +40,9 @@
   },
   "IMG-MOD": {
    "tech": "Executable, non-writable file mapping with a non-zero Anonymous field in /proc/<pid>/smaps (pages copied on write)."
+  },
+  "SHC": {
+   "tech": "Search in executable regions without a plain file (anonymous memory and memfd; files on disk, deleted ones included, are not examined): on x86_64 a direct execve call, finding its own address (call/pop, fnstenv), the prologue of known loader stages and patterns of Windows code run under Wine; on arm64 the svc instruction."
   }
  },
  "combos": [

@@ -9,7 +9,7 @@ pub trait Detector: Sync {
 }
 
 pub fn all() -> Vec<Box<dyn Detector>> {
-    vec![Box::new(Rwx), Box::new(XPriv), Box::new(XMap), Box::new(GuardX), Box::new(Memfd), Box::new(DelExec), Box::new(XTmp), Box::new(EntX), Box::new(Hdr), Box::new(ThrPriv), Box::new(ImgMod)]
+    vec![Box::new(Rwx), Box::new(XPriv), Box::new(XMap), Box::new(GuardX), Box::new(Memfd), Box::new(DelExec), Box::new(XTmp), Box::new(EntX), Box::new(Hdr), Box::new(ThrPriv), Box::new(ImgMod), Box::new(Shc)]
 }
 
 fn is_memfd(r: &Region) -> bool {
@@ -511,3 +511,118 @@ mod tests {
     }
 
 }
+
+/// Wzorce kodu typowe dla shellcode'u: kod, który sam odnajduje funkcje systemu (bez tablicy importów),
+/// ustala własny adres albo wywołuje jądro z pominięciem bibliotek systemowych.
+///
+/// Pozostałe detektory oceniają właściwości regionu (uprawnienia, pochodzenie, entropię); ten patrzy na treść.
+/// Szuka tylko w regionach wykonywalnych, których kod nie pochodzi z pliku na dysku: kod systemowy i biblioteki
+/// zawierają te same sekwencje zasadnie (program ładujący, ntdll, libc), więc tam nie jest uruchamiany.
+/// Wzorce mają co najmniej 5 stałych bajtów albo wymagają dwóch elementów blisko siebie, żeby przypadkowe
+/// trafienie w dużym regionie kodu JIT było praktycznie niemożliwe.
+struct Shc;
+
+/// Znaczniki środowisk opartych na Chromium (z listy dozwolonych i z rozpoznania po bibliotekach).
+const CHROMIUM_TOKENS: [&str; 7] = ["jit:webview2", "jit:chrome", "jit:chromium", "jit:msedge", "jit:brave", "jit:electron", "jit:code"];
+
+/// Klasa wzorca i adres pierwszego trafienia.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ShcClass { Peb, ApiHash, SyscallStub, GetPc, StagerPrologue, Execve, Svc }
+
+impl ShcClass {
+    fn label(self) -> &'static str {
+        match self {
+            ShcClass::Peb => tr!("odczyt adresu PEB (lista załadowanych bibliotek bez pytania systemu)", "read of the PEB address (list of loaded libraries without asking the system)"),
+            ShcClass::ApiHash => tr!("pętla skrótów nazw funkcji (ROR 13)", "function-name hashing loop (ROR 13)"),
+            ShcClass::SyscallStub => tr!("bezpośrednie wywołanie jądra Windows poza ntdll", "direct Windows system call outside ntdll"),
+            ShcClass::GetPc => tr!("ustalanie własnego adresu (call/pop albo fnstenv)", "finding its own address (call/pop or fnstenv)"),
+            ShcClass::StagerPrologue => tr!("prolog znanego etapu ładującego (Metasploit, Cobalt Strike)", "prologue of a known loader stage (Metasploit, Cobalt Strike)"),
+            ShcClass::Execve => tr!("bezpośrednie wywołanie execve jądra Linux", "direct Linux execve system call"),
+            ShcClass::Svc => tr!("bezpośrednie wywołanie jądra (svc) w kodzie bez pliku", "direct system call (svc) in code without a file"),
+        }
+    }
+    /// Wzorzec, który sam w sobie jest mocnym dowodem.
+    fn strong(self) -> bool { matches!(self, ShcClass::StagerPrologue | ShcClass::ApiHash) }
+}
+
+fn has_near(d: &[u8], at: usize, window: usize, needle: &[u8]) -> bool {
+    let end = (at + window).min(d.len());
+    d[at.min(end)..end].windows(needle.len()).any(|w| w == needle)
+}
+
+/// Klasy wzorców znalezione w kodzie x86 i x86_64, każda raz, z przesunięciem pierwszego trafienia.
+pub(crate) fn shc_x86(d: &[u8]) -> Vec<(ShcClass, usize)> {
+    let mut out: Vec<(ShcClass, usize)> = Vec::new();
+    let add = |c: ShcClass, at: usize, out: &mut Vec<(ShcClass, usize)>| { if !out.iter().any(|x| x.0 == c) { out.push((c, at)); } };
+    let mut i = 0usize;
+    while i + 6 <= d.len() {
+        let w = &d[i..];
+        match w[0] {
+            // mov r64, gs:[0x60] (PEB w procesie 64-bitowym): 65 48|4C 8B modrm 25 60 00 00 00
+            0x65 if w.len() >= 9 && (w[1] == 0x48 || w[1] == 0x4c) && w[2] == 0x8b && w[3] & 0xc7 == 0x04 && w[4..9] == [0x25, 0x60, 0, 0, 0] => add(ShcClass::Peb, i, &mut out),
+            // mov eax, fs:[0x30] / mov r32, fs:[0x30] (PEB w procesie 32-bitowym)
+            0x64 if w[1..6] == [0xa1, 0x30, 0, 0, 0] => add(ShcClass::Peb, i, &mut out),
+            0x64 if w.len() >= 7 && w[1] == 0x8b && w[2] & 0xc7 == 0x05 && w[3..7] == [0x30, 0, 0, 0] => add(ShcClass::Peb, i, &mut out),
+            // ror r32, 13 razem z porównaniem znaku z 'a' (zamiana na wielkie litery) w pobliżu: pętla skrótów nazw
+            0xc1 if matches!(w[1], 0xc8..=0xcf) && w[2] == 0x0d && (has_near(d, i.saturating_sub(24), 56, &[0x3c, 0x61]) || has_near(d, i.saturating_sub(24), 56, &[0xac])) && has_near(d, i, 12, &[0x01]) => add(ShcClass::ApiHash, i, &mut out),
+            // mov r10, rcx; mov eax, numer; ... syscall: wejście do jądra Windows skopiowane poza ntdll
+            0x4c if w.len() >= 8 && w[1..4] == [0x8b, 0xd1, 0xb8] && w[6..8] == [0, 0] && has_near(d, i + 8, 24, &[0x0f, 0x05]) => add(ShcClass::SyscallStub, i, &mut out),
+            // call $+5; pop reg
+            0xe8 if w[1..5] == [0, 0, 0, 0] && matches!(w[5], 0x58..=0x5f) => add(ShcClass::GetPc, i, &mut out),
+            // fldz/fld1...; fnstenv [esp-0xc]
+            0xd9 if w[1..4] == [0x74, 0x24, 0xf4] => add(ShcClass::GetPc, i, &mut out),
+            // cld; and rsp, -16; call ... (etap ładujący x64) oraz cld; call; pushad; mov ebp, esp (x86)
+            0xfc if w[1..5] == [0x48, 0x83, 0xe4, 0xf0] && w[5] == 0xe8 => add(ShcClass::StagerPrologue, i, &mut out),
+            0xfc if w.len() >= 9 && w[1] == 0xe8 && w[3..6] == [0, 0, 0] && w[6..9] == [0x60, 0x89, 0xe5] => add(ShcClass::StagerPrologue, i, &mut out),
+            // push 0x3b; pop rax ... syscall  albo  mov eax, 0x3b ... syscall (execve na Linux x86_64)
+            0x6a if w[1] == 0x3b && w[2] == 0x58 && has_near(d, i + 3, 32, &[0x0f, 0x05]) => add(ShcClass::Execve, i, &mut out),
+            0xb8 if w[1..5] == [0x3b, 0, 0, 0] && has_near(d, i + 5, 32, &[0x0f, 0x05]) => add(ShcClass::Execve, i, &mut out),
+            _ => {}
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Wywołania jądra w kodzie arm64 (instrukcje 4-bajtowe, wyrównane): `svc #0` (Linux) i `svc #0x80` (macOS),
+/// ale tylko gdy w poprzedzających ośmiu instrukcjach jest ustawienie numeru wywołania (`mov x8, #n` na Linuksie,
+/// `mov x16, #n` na macOS). Sama instrukcja svc to cztery bajty: w dużym regionie kodu JIT trafia się przypadkiem
+/// (zmierzone: po jednym trafieniu w regionach V8 o rozmiarze 128 i 256 MiB).
+pub(crate) fn shc_arm64(d: &[u8]) -> Vec<(ShcClass, usize)> {
+    let word = |i: usize| -> &[u8] { &d[i * 4..i * 4 + 4] };
+    let sets_number = |w: &[u8], reg: u8| w[3] == 0xd2 && w[2] & 0xe0 == 0x80 && w[0] & 0x1f == reg;
+    for i in 0..d.len() / 4 {
+        let w = word(i);
+        let reg = if w == [0x01, 0x00, 0x00, 0xd4] { 8 } else if w == [0x01, 0x10, 0x00, 0xd4] { 16 } else { continue };
+        if (i.saturating_sub(8)..i).any(|k| sets_number(word(k), reg)) { return vec![(ShcClass::Svc, i * 4)]; }
+    }
+    Vec::new()
+}
+
+impl Detector for Shc {
+    fn id(&self) -> &'static str { "shc" }
+    fn scan(&self, r: &Region, d: &[u8], ctx: &Ctx) -> Vec<Finding> {
+        if !r.is_x() || d.is_empty() || is_kernel_special(r) { return vec![]; }
+        // Badamy kod bez pliku i z pliku istniejącego tylko w pamięci (memfd). Kod z pliku na dysku pomijamy,
+        // także z pliku usuniętego: to prawie zawsze biblioteka zaktualizowana pod działającym procesem, a każda
+        // libc zawiera bezpośrednie execve. Pomiar na 20 hostach LAB (2026-11-24): 640 z 645 trafień pochodziło
+        // z takich bibliotek. Usunięty plik zgłasza i tak DEL-EXEC.
+        if r.backing.is_some() && !is_memfd(r) { return vec![]; }
+        let arch = ctx.info.arch.as_str();
+        let hits = if arch.contains("86") { shc_x86(d) } else if arch.contains("aarch64") || arch.contains("arm64") { shc_arm64(d) } else { Vec::new() };
+        if hits.is_empty() { return vec![]; }
+        // dwie różne klasy albo jedna mocna: 40 punktów; pojedyncza słabsza: 20 (sama nie przekracza progu)
+        let mut weight = if hits.len() >= 2 || hits.iter().any(|h| h.0.strong()) { 40 } else { 20 };
+        // Przeglądarki oparte na Chromium kopiują wejścia do jądra do własnej pamięci w ramach piaskownicy
+        // (pomiar: każdy proces WebView2 i QtWebEngine na stacji testowej, 2026-11-24). W procesie rozpoznanym
+        // jako taka przeglądarka sama kopia wejścia do jądra nie jest sygnałem; z inną klasą nadal jest.
+        let sandbox = hits.len() == 1 && hits[0].0 == ShcClass::SyscallStub && ctx.allow.map(|a| CHROMIUM_TOKENS.contains(&a)).unwrap_or(false);
+        if sandbox { weight = 10; }
+        let first = hits.iter().map(|h| h.1).min().unwrap_or(0);
+        let list = hits.iter().map(|h| format!("{} @ {:#x}", h.0.label(), r.base + h.1 as u64)).collect::<Vec<_>>().join("; ");
+        let note = if sandbox { tr!(" (w przeglądarce opartej na Chromium to zwykle piaskownica)", " (in a Chromium-based browser this is usually the sandbox)") } else { "" };
+        vec![ctx.finding(self.id(), "SHC", r, r.base + first as u64, r.size.min((d.len() - first) as u64), weight,
+            trf!("wzorce kodu typowe dla shellcode'u: {list}{note}", "code patterns typical of shellcode: {list}{note}"))]
+    }
+}
+

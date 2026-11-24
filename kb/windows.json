@@ -32,6 +32,9 @@
   },
   "IMG-MOD": {
    "tech": "Strony wykonywalnego obrazu modułu (MEM_IMAGE), które według QueryWorkingSetEx nie są współdzielone. Pełna waga tylko dla amsi.dll i wldp.dll; w pozostałych modułach przyczyny łagodne są częste (relokacja, piaskownica Chromium, środowisko .NET)."
+  },
+  "SHC": {
+   "tech": "Wyszukiwanie w regionach wykonywalnych bez pliku: odczyt adresu PEB (gs:[0x60], fs:[0x30]), pętla skrótów nazw funkcji z ROR 13, kopia wejścia do jądra (mov r10, rcx; mov eax, numer; syscall) poza ntdll, ustalanie własnego adresu i prolog znanych etapów ładujących. Przeglądarki oparte na Chromium kopiują wejścia do jądra do własnej pamięci w ramach piaskownicy."
   }
  },
  "combos": [

@@ -40,6 +40,9 @@
   },
   "IMG-MOD": {
    "tech": "Wykonywalne, niezapisywalne mapowanie pliku z niezerowym polem Anonymous w /proc/<pid>/smaps (strony skopiowane przy zapisie)."
+  },
+  "SHC": {
+   "tech": "Wyszukiwanie w regionach wykonywalnych bez zwykłego pliku (pamięć anonimowa i memfd; plików na dysku, także usuniętych, detektor nie bada): na x86_64 bezpośrednie wywołanie execve, ustalanie własnego adresu (call/pop, fnstenv), prolog znanych etapów ładujących oraz wzorce kodu dla Windows uruchamianego pod Wine; na arm64 instrukcja svc."
   }
  },
  "combos": [

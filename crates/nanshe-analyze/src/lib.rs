@@ -75,6 +75,8 @@ pub struct Ctx<'a> {
     /// zmieniony kod z pliku w tym regionie: (bajty, adres pierwszej strony)
     pub modified: Option<CodeChange>,
     pub traits: ProcTraits,
+    /// Znacznik rozpoznanego środowiska tworzącego kod w locie (np. "jit:webview2"), jeśli proces je ma.
+    pub allow: Option<&'a str>,
     data: &'a [u8],
 }
 impl<'a> Ctx<'a> {
@@ -200,6 +202,8 @@ pub fn scan_source(src: &dyn MemorySource, cfg: &Config) -> ProcessReport {
     let dets: Vec<_> = detectors::all().into_iter().filter(|d| d.applies(&info)).collect();
     let threads = src.threads();
     let allow = if info.os == "windows" { jit_allow_windows(&info, &regions) } else { jit_allow(cfg, &info) };
+    // dowód z systemu (np. podpis z uprawnieniem do JIT na macOS) ma pierwszeństwo przed listą nazw programów
+    let allow = src.jit_evidence().or(allow);
     let traits = proc_traits(cfg, &info, &regions);
     rep.regions_total = regions.len() as u64;
 
@@ -216,7 +220,7 @@ pub fn scan_source(src: &dyn MemorySource, cfg: &Config) -> ProcessReport {
         let here: Vec<ThreadInfo> = threads.iter().filter(|t| t.addr >= r.base && t.addr < end).cloned().collect();
         // pytamy tylko o wykonywalny, niezapisywalny kod z pliku: tam zmiana w pamięci jest nietypowa
         let modified = if r.backing.is_some() && r.is_x() && !r.is_w() { src.modified_code(r).filter(|m| m.bytes > 0 || (m.compared && !m.verified)) } else { None };
-        let ctx = Ctx { info: &info, cfg, page_entropy: &stats.entropy, threads: &here, modified, traits, data: &data };
+        let ctx = Ctx { info: &info, cfg, page_entropy: &stats.entropy, threads: &here, modified, traits, allow: allow.as_deref(), data: &data };
 
         let mut findings: Vec<Finding> = dets.iter().flat_map(|d| d.scan(r, &data, &ctx)).collect();
         if findings.is_empty() && !(cfg.heatmap && !data.is_empty()) { continue; }
@@ -744,6 +748,75 @@ mod tests {
             let p = rwx(exe, verified);
             assert!(p.regions[0].allowlisted.is_none() && p.regions[0].score == 60, "{exe} {verified}");
         }
+    }
+
+    /// Detektor wzorców shellcode'u: każda klasa osobno, zasady wagi i kontrole, w których nie ma znaleziska.
+    #[test]
+    fn shellcode_patterns_are_found_only_in_code_without_a_plain_file() {
+        use crate::detectors::{shc_arm64, shc_x86, ShcClass};
+        let pad = |code: &[u8]| { let mut d = vec![0x90u8; 4096]; d[64..64 + code.len()].copy_from_slice(code); d };
+        let classes = |code: &[u8]| -> Vec<ShcClass> { shc_x86(&pad(code)).into_iter().map(|h| h.0).collect() };
+        assert_eq!(classes(&[0x65, 0x48, 0x8b, 0x04, 0x25, 0x60, 0, 0, 0]), [ShcClass::Peb]);                 // mov rax, gs:[0x60]
+        assert_eq!(classes(&[0x64, 0xa1, 0x30, 0, 0, 0]), [ShcClass::Peb]);                                   // mov eax, fs:[0x30]
+        assert_eq!(classes(&[0x64, 0x8b, 0x15, 0x30, 0, 0, 0]), [ShcClass::Peb]);                             // mov edx, fs:[0x30]
+        assert_eq!(classes(&[0xac, 0x3c, 0x61, 0x7c, 0x02, 0x2c, 0x20, 0x41, 0xc1, 0xc9, 0x0d, 0x41, 0x01, 0xc1]), [ShcClass::ApiHash]); // pętla block_api
+        assert_eq!(classes(&[0x4c, 0x8b, 0xd1, 0xb8, 0x18, 0, 0, 0, 0x0f, 0x05, 0xc3]), [ShcClass::SyscallStub]);
+        assert_eq!(classes(&[0xe8, 0, 0, 0, 0, 0x5b]), [ShcClass::GetPc]);
+        assert_eq!(classes(&[0xd9, 0xee, 0xd9, 0x74, 0x24, 0xf4, 0x5b]), [ShcClass::GetPc]);
+        assert_eq!(classes(&[0xfc, 0x48, 0x83, 0xe4, 0xf0, 0xe8, 0xc0, 0, 0, 0]), [ShcClass::StagerPrologue]);
+        assert_eq!(classes(&[0x6a, 0x3b, 0x58, 0x99, 0x48, 0xbb, 0x2f, 0x62, 0x69, 0x6e, 0x0f, 0x05]), [ShcClass::Execve]);
+        // kontrole: sama instrukcja ror 13 bez pętli, odczyt TEB (gs:[0x30]), mov eax bez syscall, zwykły call, nic
+        for benign in [&[0xc1u8, 0xc9, 0x0d][..], &[0x65, 0x48, 0x8b, 0x04, 0x25, 0x30, 0, 0, 0], &[0x4c, 0x8b, 0xd1, 0xb8, 0x18, 0, 0, 0, 0xc3], &[0xe8, 0x10, 0, 0, 0, 0x5b], &[0x6a, 0x3b, 0x58, 0xc3], &[]] {
+            assert_eq!(classes(benign), [], "{benign:x?}");
+        }
+        // arm64: svc tylko jako wyrównana instrukcja
+        // arm64: svc liczy się tylko z ustawieniem numeru wywołania tuż przed nim (mov x16 na macOS, mov x8 na Linuksie)
+        let mac = [0x30u8, 0x00, 0x80, 0xd2, 0x01, 0x10, 0x00, 0xd4];   // mov x16, #1; svc #0x80
+        let lin = [0xa8u8, 0x1b, 0x80, 0xd2, 0x01, 0x00, 0x00, 0xd4];   // mov x8, #221; svc #0
+        assert_eq!((shc_arm64(&mac), shc_arm64(&lin)), (vec![(ShcClass::Svc, 4)], vec![(ShcClass::Svc, 4)]));
+        // kontrole: samo svc (przypadkowe cztery bajty w kodzie JIT), numer w innym rejestrze, svc niewyrównane
+        assert_eq!(shc_arm64(&[0x1f, 0x20, 0x03, 0xd5, 0x01, 0x10, 0x00, 0xd4]), []);
+        assert_eq!(shc_arm64(&[0x28, 0x00, 0x80, 0xd2, 0x01, 0x10, 0x00, 0xd4]), []);
+        assert_eq!(shc_arm64(&[0x00, 0x30, 0x00, 0x80, 0xd2, 0x01, 0x10, 0x00, 0xd4, 0x00, 0x00, 0x00]), []);
+
+        let cfg = Config::default();
+        let run = |arch: &'static str, prot: &'static str, backing: Option<&'static str>, deleted: bool, code: &[u8]| -> Vec<u32> {
+            struct A(Fake, &'static str);
+            impl MemorySource for A {
+                fn info(&self) -> SourceInfo { SourceInfo { arch: self.1.into(), ..self.0.info() } }
+                fn regions(&self) -> nanshe_core::Result<Vec<Region>> { self.0.regions() }
+                fn read_at(&self, a: u64, b: &mut [u8]) -> nanshe_core::Result<usize> { self.0.read_at(a, b) }
+            }
+            let mut r = reg(0x10000, 4096, prot, if backing.is_some() { RegionKind::Mapped } else { RegionKind::Private }, backing); r.backing_deleted = deleted;
+            let f = Fake { name: "p", exe: Some("/usr/bin/p"), exe_deleted: false, exe_verified: true, regs: vec![(r, pad(code))] };
+            scan_source(&A(f, arch), &cfg).regions.iter().flat_map(|r| r.findings.iter().filter(|x| x.tag == "SHC").map(|x| x.weight)).collect()
+        };
+        let peb = [0x65u8, 0x48, 0x8b, 0x04, 0x25, 0x60, 0, 0, 0];
+        let two: Vec<u8> = [&peb[..], &[0xe8, 0, 0, 0, 0, 0x5b][..]].concat();
+        let stager = [0xfcu8, 0x48, 0x83, 0xe4, 0xf0, 0xe8, 0xc0, 0, 0, 0];
+        assert_eq!(run("x86_64", "r-x", None, false, &peb), [20], "pojedyncza słabsza klasa");
+        assert_eq!(run("x86_64", "r-x", None, false, &two), [40], "dwie klasy");
+        assert_eq!(run("x86_64", "rwx", None, false, &stager), [40], "mocna klasa");
+        assert_eq!(run("x86_64", "r-x", Some("memfd:x"), true, &two), [40], "plik tylko w pamięci");
+        // kontrole: kod z pliku na dysku (także usuniętego: zaktualizowana biblioteka), region niewykonywalny, inna architektura
+        assert_eq!(run("x86_64", "r-x", Some("/usr/lib/x.so"), true, &two), []);
+        assert_eq!(run("x86_64", "r-x", Some("/usr/lib/x.so"), false, &two), []);
+        assert_eq!(run("x86_64", "rw-", None, false, &two), []);
+        assert_eq!(run("aarch64", "r-x", None, false, &two), []);
+        assert_eq!(run("aarch64", "r-x", None, false, &[0xa8, 0x1b, 0x80, 0xd2, 0x01, 0x00, 0x00, 0xd4]), [20]);
+        // piaskownica Chromium kopiuje wejścia do jądra do własnej pamięci: w procesie rozpoznanym jako przeglądarka
+        // sama taka kopia ma wagę 10; razem z inną klasą albo w zwykłym procesie zostaje pełna waga
+        let stub = [0x4cu8, 0x8b, 0xd1, 0xb8, 0x18, 0, 0, 0, 0x0f, 0x05, 0xc3];
+        let stub_and_peb: Vec<u8> = [&stub[..], &peb[..]].concat();
+        let browser = |exe: &'static str, code: &[u8]| -> Vec<u32> {
+            let r = reg(0x10000, 4096, "r-x", RegionKind::Private, None);
+            let f = Fake { name: "p", exe: Some(exe), exe_deleted: false, exe_verified: true, regs: vec![(r, pad(code))] };
+            scan_source(&f, &cfg).regions.iter().flat_map(|r| r.findings.iter().filter(|x| x.tag == "SHC").map(|x| x.weight)).collect()
+        };
+        assert_eq!(browser("/usr/bin/chromium", &stub), [10]);
+        assert_eq!(browser("/usr/bin/chromium", &stub_and_peb), [40]);
+        assert_eq!(browser("/usr/bin/sshd", &stub), [20]);
+        assert_eq!(browser("/usr/bin/java", &stub), [20], "środowisko JIT, które nie jest przeglądarką");
     }
 
 }

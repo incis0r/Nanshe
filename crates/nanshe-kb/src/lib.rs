@@ -267,7 +267,7 @@ impl Kb {
         let mut all: BTreeMap<String, String> = BTreeMap::new();
         for os in SYSTEMS { for (t, i) in Kb::embedded_lang(os, Lang::Pl).tags { all.entry(t).or_insert(i.en); } }
         // kolejność jak w dotychczasowym zapytaniu: od cech uprawnień do cech treści
-        const ORDER: [&str; 11] = ["RWX", "X-PRIV", "X-MAP", "GUARD-X", "MEMFD", "DEL-EXEC", "X-TMP", "ENT-X", "HDR", "THR-PRIV", "IMG-MOD"];
+        const ORDER: [&str; 12] = ["RWX", "X-PRIV", "X-MAP", "GUARD-X", "MEMFD", "DEL-EXEC", "X-TMP", "ENT-X", "HDR", "THR-PRIV", "IMG-MOD", "SHC"];
         let mut keys: Vec<&String> = all.keys().collect();
         keys.sort_by_key(|k| ORDER.iter().position(|o| o == k).unwrap_or(ORDER.len()));
         format!("Tags: {}.", keys.iter().map(|k| format!("{k} = {}", all[*k])).collect::<Vec<_>>().join("; "))
@@ -307,9 +307,9 @@ mod tests {
     /// Tagi, które potrafią zgłosić detektory na danym systemie.
     fn detector_tags(os: &str) -> Vec<&'static str> {
         match os {
-            "linux" => vec!["RWX", "X-PRIV", "ENT-X", "HDR", "THR-PRIV", "IMG-MOD", "MEMFD", "DEL-EXEC", "X-TMP"],
-            "windows" => vec!["RWX", "X-PRIV", "ENT-X", "HDR", "THR-PRIV", "IMG-MOD", "X-MAP", "GUARD-X"],
-            _ => vec!["RWX", "X-PRIV", "ENT-X", "HDR", "THR-PRIV", "IMG-MOD"],
+            "linux" => vec!["RWX", "X-PRIV", "ENT-X", "HDR", "THR-PRIV", "IMG-MOD", "SHC", "MEMFD", "DEL-EXEC", "X-TMP"],
+            "windows" => vec!["RWX", "X-PRIV", "ENT-X", "HDR", "THR-PRIV", "IMG-MOD", "SHC", "X-MAP", "GUARD-X"],
+            _ => vec!["RWX", "X-PRIV", "ENT-X", "HDR", "THR-PRIV", "IMG-MOD", "SHC"],
         }
     }
 
@@ -444,7 +444,7 @@ mod tests {
     #[test]
     fn llm_glossary_covers_all_tags_in_stable_order() {
         let g = Kb::llm_glossary();
-        for t in ["RWX", "X-PRIV", "X-MAP", "GUARD-X", "MEMFD", "DEL-EXEC", "X-TMP", "ENT-X", "HDR", "THR-PRIV", "IMG-MOD"] { assert!(g.contains(&format!("{t} = ")), "{t}"); }
+        for t in ["RWX", "X-PRIV", "X-MAP", "GUARD-X", "MEMFD", "DEL-EXEC", "X-TMP", "ENT-X", "HDR", "THR-PRIV", "IMG-MOD", "SHC"] { assert!(g.contains(&format!("{t} = ")), "{t}"); }
         assert!(g.find("RWX = ").unwrap() < g.find("HDR = ").unwrap() && g.starts_with("Tags: ") && g.ends_with('.'));
         assert_eq!(g, Kb::llm_glossary());
     }
