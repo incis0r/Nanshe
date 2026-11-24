@@ -39,18 +39,17 @@ Proces, którego nie da się otworzyć, jest w wyniku wymieniony jako niedostęp
 
 `nanshe map` (interaktywna mapa pamięci) działa na macOS na tych samych zasadach dostępu.
 
-Działające detektory: `RWX`, `X-PRIV`, `ENT-X`, `HDR` (nagłówki Mach-O, PE i ELF w pamięci bez pliku).
+Działające detektory: `RWX`, `X-PRIV`, `ENT-X`, `HDR` (nagłówki Mach-O, PE i ELF w pamięci bez pliku) oraz `SHC` (na arm64: bezpośrednie wywołanie jądra, `svc #0x80` z ustawieniem numeru wywołania tuż przed nim, w kodzie bez pliku).
 
 Uwagi do czytania wyników:
 
 - Na Apple Silicon zwykły program nie może mieć pamięci jednocześnie zapisywalnej i wykonywalnej. `RWX` oznacza więc region kompilatora JIT (`MAP_JIT`), który przeglądarki, środowiska JavaScript i maszyny wirtualne mają zasadnie.
-- Środowiska tworzące kod w locie **nie** mają jeszcze na macOS obniżonej wagi. Node.js, aplikacje oparte na Chromium i podobne programy pojawiają się z pełną wagą.
+- **Obniżona waga regionów JIT opiera się na dowodzie z systemu, a nie na nazwach programów.** Procesowi z ważnym podpisem, utwardzonym środowiskiem i uprawnieniem `allow-jit` sam macOS pozwala tworzyć kod; jego znaleziska JIT mają obniżoną wagę (znacznik `jit:macos-allow-jit`). Wszystkie trzy fakty sprawdza jądro i proces nie może ich sobie nadać po uruchomieniu. Program bez utwardzonego środowiska (własna kompilacja, narzędzie podpisane lokalnie) nie dostaje obniżki, bo każdy taki program może utworzyć region JIT.
 
 ## Jeszcze niezaimplementowane
 
-- Kontekst systemowy (procesy nadrzędne, wiersz poleceń, sieć, otwarte pliki) i skróty SHA-256 plików programów.
+- Połączenia sieciowe i otwarte pliki procesu. Już dostępne: procesy nadrzędne i potomne, użytkownik, czas startu, liczba wątków, wiersz poleceń, stan podpisu kodu i istotne uprawnienia.
 - Adresy startowe wątków (`THR-PRIV`) i porównanie kodu z plikiem na dysku (`IMG-MOD`).
-- Obniżona waga dla rozpoznanych środowisk JIT; informacje o podpisie kodu i uprawnieniach w wyniku.
 - Zrzuty pamięci procesów macOS (pliki core w formacie Mach-O).
 - Podpisana i notaryzowana paczka.
 

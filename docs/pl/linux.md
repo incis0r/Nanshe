@@ -65,6 +65,7 @@ Wątki jądra są pomijane na liście procesów `scan --all`: nie mają pamięci
 | `HDR` | 40/10 | nagłówek ELF/PE/Mach-O w regionie bez pliku: na początku strony w każdym regionie, a w regionach wykonywalnych także pod dowolnym przesunięciem (ELF, PE); w regionach wykonywalnych także nagłówek z wymazaną sygnaturą, rozpoznawany po tablicy nagłówków programu ELF albo tablicy sekcji PE; 10 w pamięci gościa procesu QEMU (patrz „Obniżone wagi") |
 | `THR-PRIV` | 40 | wątek czekający w wywołaniu systemowym, którego instrukcja wywołania leży w pamięci bez pliku (poza regionami jądra) |
 | `IMG-MOD` | 40 | wykonywalne, niezapisywalne mapowanie pliku ma strony zmienione w pamięci (pole `Anonymous` w `smaps` większe od zera), których treść różni się od pliku albo nie dała się z nim porównać |
+| `SHC` | 40/20/10 | wzorce kodu typowe dla shellcode'u w pamięci wykonywalnej, która nie pochodzi z pliku na dysku (pamięć anonimowa, `memfd`): ustalanie własnego adresu, bezpośrednie wywołanie jądra, prolog znanych etapów ładujących, na Windows także odczyt PEB, pętla skrótów nazw funkcji i kopia wejścia do jądra poza `ntdll`. 40 za dwie klasy albo jedną mocną, 20 za pojedynczą słabszą (sama nie przekracza progu), 10 za samą kopię wejścia do jądra w przeglądarce opartej na Chromium (robi to jej piaskownica). Bez obniżki dla środowisk JIT |
 
 `X-MAP` i `GUARD-X` dotyczą tylko Windows.
 

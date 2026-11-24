@@ -39,8 +39,8 @@ The second, recommended form is a Windows Installer package: `nanshe-<version>-w
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\package-msi.ps1 -Bin <directory with nanshe.exe> -Wix <directory with candle.exe> -Out dist
-msiexec /i nanshe-0.2.1-windows-x64.msi            # with dialogs; silent: /qn /norestart
-msiexec /x nanshe-0.2.1-windows-x64.msi /qn        # removal (or "Programs and Features")
+msiexec /i nanshe-0.2.0-windows-x64.msi            # with dialogs; silent: /qn /norestart
+msiexec /x nanshe-0.2.0-windows-x64.msi /qn        # removal (or "Programs and Features")
 ```
 
 The package:
@@ -115,6 +115,7 @@ nanshe report wynik.json
 | `HDR` | 40 | PE header (`MZ` + `PE\0\0`, non-zero Machine field, 1-96 sections) in a region not backed by a file: at the start of a page in any region, and in executable regions also at any offset |
 | `THR-PRIV` | 40 | the thread start address lies in memory not backed by a file |
 | `IMG-MOD` | 10/40 | pages of an executable, non-writable module image are no longer shared with the file (copy on write); 40 for `amsi.dll` and `wldp.dll`, 10 for the rest |
+| `SHC` | 40/20/10 | code patterns typical of shellcode in executable memory that does not come from a file on disk (anonymous memory, `memfd`): finding its own address, a direct system call, the prologue of known loader stages, on Windows also reading the PEB, a function-name hashing loop and a copy of the kernel entry outside `ntdll`. 40 for two classes or one strong class, 20 for a single weaker class (below the threshold on its own), 10 for a lone kernel-entry copy in a Chromium-based browser (its sandbox does that). Not reduced for JIT runtimes |
 
 `MEMFD` and `DEL-EXEC` apply to Linux only.
 

@@ -39,8 +39,8 @@ Drugą, zalecaną postacią jest pakiet Instalatora Windows: `nanshe-<wersja>-wi
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\package-msi.ps1 -Bin <katalog z nanshe.exe> -Wix <katalog z candle.exe> -Out dist
-msiexec /i nanshe-0.2.1-windows-x64.msi            # z oknami; cicho: /qn /norestart
-msiexec /x nanshe-0.2.1-windows-x64.msi /qn        # usunięcie (albo "Programy i funkcje")
+msiexec /i nanshe-0.2.0-windows-x64.msi            # z oknami; cicho: /qn /norestart
+msiexec /x nanshe-0.2.0-windows-x64.msi /qn        # usunięcie (albo "Programy i funkcje")
 ```
 
 Pakiet:
@@ -115,6 +115,7 @@ nanshe report wynik.json
 | `HDR` | 40 | nagłówek PE (`MZ` + `PE\0\0`, niezerowe pole Machine, 1-96 sekcji) w regionie bez pliku: na początku strony w każdym regionie, a w regionach wykonywalnych także pod dowolnym przesunięciem |
 | `THR-PRIV` | 40 | adres startu wątku leży w pamięci bez pliku |
 | `IMG-MOD` | 10/40 | strony wykonywalnego, niezapisywalnego obrazu modułu nie są już współdzielone z plikiem (kopia przy zapisie); 40 dla `amsi.dll` i `wldp.dll`, 10 dla pozostałych |
+| `SHC` | 40/20/10 | wzorce kodu typowe dla shellcode'u w pamięci wykonywalnej, która nie pochodzi z pliku na dysku (pamięć anonimowa, `memfd`): ustalanie własnego adresu, bezpośrednie wywołanie jądra, prolog znanych etapów ładujących, na Windows także odczyt PEB, pętla skrótów nazw funkcji i kopia wejścia do jądra poza `ntdll`. 40 za dwie klasy albo jedną mocną, 20 za pojedynczą słabszą (sama nie przekracza progu), 10 za samą kopię wejścia do jądra w przeglądarce opartej na Chromium (robi to jej piaskownica). Bez obniżki dla środowisk JIT |
 
 `MEMFD` i `DEL-EXEC` dotyczą tylko Linuksa.
 

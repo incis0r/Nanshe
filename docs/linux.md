@@ -65,6 +65,7 @@ Kernel threads are skipped in the process list of `scan --all`: they have no use
 | `HDR` | 40/10 | ELF/PE/Mach-O header in a region not backed by a file: at the start of a page in any region, and in executable regions also at any offset (ELF, PE); in executable regions also a header with a wiped signature, recognised by the ELF program header table or the PE section table; 10 in guest memory of a QEMU process (see "Reduced weights") |
 | `THR-PRIV` | 40 | a thread waiting in a system call whose call instruction lies in memory not backed by a file (outside kernel regions) |
 | `IMG-MOD` | 40 | an executable, non-writable file mapping has pages modified in memory (the `Anonymous` field in `smaps` greater than zero) whose contents differ from the file, or could not be compared with it |
+| `SHC` | 40/20/10 | code patterns typical of shellcode in executable memory that does not come from a file on disk (anonymous memory, `memfd`): finding its own address, a direct system call, the prologue of known loader stages, on Windows also reading the PEB, a function-name hashing loop and a copy of the kernel entry outside `ntdll`. 40 for two classes or one strong class, 20 for a single weaker class (below the threshold on its own), 10 for a lone kernel-entry copy in a Chromium-based browser (its sandbox does that). Not reduced for JIT runtimes |
 
 `X-MAP` and `GUARD-X` apply to Windows only.
 

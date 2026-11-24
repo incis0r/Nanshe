@@ -186,12 +186,15 @@ Parsers of data that comes from the examined system are fuzzed with `cargo-fuzz`
 | `pagetables` | arbitrary guest "physical memory" as page tables, and module lists from the same bytes | the walk ends within its limits; ranges and regions are ordered, do not overlap and stay in user space |
 | `maps` | arbitrary text as `/proc/<pid>/maps` and `smaps` | no panic; region ends do not overflow |
 | `detectors` | arbitrary region contents with varying system, source, protection and region type through all detectors | no panic; every finding lies inside its region |
+| `wintables` | arbitrary bytes as Windows connection and handle tables, arbitrary text as program paths and owner identifiers | no panic |
+| `llm` | arbitrary text as a model response (validation of explanations and correlations, JSON extraction, provider response shapes) and as strings from process memory (secret and injection filters, URL check) | no panic |
+| `report` | an arbitrary result file through the report and the differential report, in both languages; seeds are real result files | no panic. Slow (about 2 seconds per run with a real result), so few executions |
 
 How to run: `scripts/fuzz.sh [seconds per target] [targets...]` runs them in a container (nightly compiler and `cargo-fuzz` are installed there, not on the workstation). Seeds come from the unit-test builders (`NANSHE_FUZZ_SEEDS`). CI runs every target for one minute on each push.
 
 Runs so far (2026-11-24, arm64 container, 5 minutes per target): 1.7 million executions of `dump`, 11.1 million of `pediff`, 11.9 million of `pagetables`, 2.7 million of `maps`, 0.4 million of `detectors`, with no failure. An earlier 30-second run found one defect: a module address near the end of the number range overflowed the rounding of module extents in `nanshe-vm` (fixed, with a regression test).
 
-Limits of this evidence: minutes, not days; one architecture; the targets check for crashes and the stated invariants, not for wrong results; the Windows system-table parsers, the LLM response parser and the report generator are not fuzzed yet.
+Limits of this evidence: minutes, not days; one architecture; the targets check for crashes and the stated invariants, not for wrong results; the three targets added later (`wintables`, `llm`, `report`) ran for 2 minutes each (0.6 million, 1.1 million and 3 thousand executions) with no failure.
 
 ## End-to-end tests
 

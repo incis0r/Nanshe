@@ -72,7 +72,7 @@ Po otwarciu gościa skaner sprawdza, czy lista procesów zawiera proces `System`
 | Pliki mapowane jako dane | znane, ze ścieżką | znane, ze ścieżką z obiektu pliku jądra (bez litery dysku) |
 | Porównanie kodu z plikiem na dysku (`IMG-MOD`) | tak | nie (host nie widzi plików gościa) |
 | Wątki, sieć, otwarte pliki, drzewo procesów | tak | nie |
-| Obniżka wagi dla środowisk tworzących kod w locie | tak | nie (pliku programu nie da się sprawdzić z hosta) |
+| Obniżka wagi dla środowisk tworzących kod w locie | tak | tak, na podstawie danych jądra: biblioteka środowiska (`clr.dll`, `coreclr.dll`, `msedge.dll`) i program główny są obrazami z tego samego woluminu co `ntdll.dll`, w swoich katalogach instalacyjnych. Właściciela pliku skaner z hosta nie sprawdza |
 
 Skutki, o których warto wiedzieć przed lekturą raportu:
 
@@ -81,7 +81,7 @@ Skutki, o których warto wiedzieć przed lekturą raportu:
 - **Stron zapisanych do pliku wymiany nie widać.** Region może być krótszy niż w skanie na żywo albo może go nie być. Strony przejściowe (zdjęte z zestawu roboczego, ale nadal w pamięci fizycznej) są czytane. Na drugim gościu dwa procesy wskazane przez skan na żywo osiem godzin wcześniej (`dwm.exe`, `ShellExperienceHost.exe`) nie miały w chwili późniejszego skanu z hosta żadnej prywatnej strony wykonywalnej w pamięci fizycznej; nie ustalono, czy te strony trafiły do pliku wymiany, czy zostały zwolnione.
 - **Gość działa w trakcie skanu,** więc wynik nie jest spójną migawką.
 - **`HDR` w pamięci niewykonywalnej jest zgłaszany tylko dla regionów, które jądro oznacza jako prywatne.** Sekcje bez pliku i regiony o nieznanym rodzaju są pomijane, bo pliki mapowane jako dane zaczynają się nagłówkiem obrazu. Silniki antywirusowe trzymają w pamięci prywatnej wiele obrazów programów i mają wiele znalezisk `HDR` (228 w `MsMpEng.exe` na pierwszym gościu).
-- Środowiska tworzące kod w locie (.NET, silniki antywirusowe) mają pełną wagę, jak w zrzucie.
+- Silniki antywirusowe i inne programy tworzące kod bez rozpoznanej biblioteki środowiska mają pełną wagę.
 
 ## Co zmierzono
 

@@ -186,12 +186,15 @@ Parsery danych pochodzących z badanego systemu są testowane fuzzerem `cargo-fu
 | `pagetables` | dowolna „pamięć fizyczna" gościa jako tablice stron oraz listy modułów z tych samych bajtów | przejście kończy się w limitach; zakresy i regiony są uporządkowane, nie nakładają się i leżą w przestrzeni użytkownika |
 | `maps` | dowolny tekst jako `/proc/<pid>/maps` i `smaps` | bez paniki; końce regionów nie przepełniają się |
 | `detectors` | dowolna zawartość regionu przy zmiennym systemie, źródle, ochronie i rodzaju regionu, przez wszystkie detektory | bez paniki; każde znalezisko leży w swoim regionie |
+| `wintables` | dowolne bajty jako tablice połączeń i uchwytów Windows, dowolny tekst jako ścieżki programów i identyfikatory właścicieli | bez paniki |
+| `llm` | dowolny tekst jako odpowiedź modelu (walidacja wyjaśnień i korelacji, wydobycie JSON, kształty odpowiedzi dostawców) i jako ciągi z pamięci procesu (filtry sekretów i wstrzyknięć, sprawdzenie adresu) | bez paniki |
+| `report` | dowolny plik wyniku przez raport i raport różnicowy, w obu językach; ziarnami są prawdziwe pliki wyników | bez paniki. Wolny (około 2 sekund na przebieg z prawdziwym wynikiem), więc mało wykonań |
 
 Uruchamianie: `scripts/fuzz.sh [sekundy na cel] [cele...]` w kontenerze (kompilator nightly i `cargo-fuzz` są instalowane tam, nie na stacji). Ziarna pochodzą z budowniczych testów jednostkowych (`NANSHE_FUZZ_SEEDS`). CI uruchamia każdy cel na minutę przy każdym pushu.
 
 Dotychczasowe przebiegi (2026-11-24, kontener arm64, 5 minut na cel): 1,7 mln wykonań `dump`, 11,1 mln `pediff`, 11,9 mln `pagetables`, 2,7 mln `maps`, 0,4 mln `detectors`, bez awarii. Wcześniejszy, 30-sekundowy przebieg znalazł jeden błąd: adres modułu bliski końca zakresu liczb przepełniał zaokrąglanie granic modułu w `nanshe-vm` (naprawione, z testem regresji).
 
-Granice tego dowodu: minuty, nie dni; jedna architektura; cele sprawdzają awarie i podane niezmienniki, a nie poprawność wyników; parsery tablic systemowych Windows, parser odpowiedzi modelu i generator raportu nie są jeszcze objęte fuzzingiem.
+Granice tego dowodu: minuty, nie dni; jedna architektura; cele sprawdzają awarie i podane niezmienniki, a nie poprawność wyników; trzy cele dodane później (`wintables`, `llm`, `report`) działały po 2 minuty (0,6 mln, 1,1 mln i 3 tys. wykonań) bez awarii.
 
 ## Testy end-to-end
 

@@ -72,7 +72,7 @@ After opening the guest, the scanner checks that the process list contains the `
 | Files mapped as data | known, with path | known, with the path from the kernel file object (without the drive letter) |
 | Comparison of code with the file on disk (`IMG-MOD`) | yes | no (the host does not see the guest's files) |
 | Threads, network, open files, process tree | yes | no |
-| Reduced weight for just-in-time runtimes | yes | no (the program file cannot be verified from the host) |
+| Reduced weight for just-in-time runtimes | yes | yes, on kernel evidence: the runtime library (`clr.dll`, `coreclr.dll`, `msedge.dll`) and the main program are images on the same volume as `ntdll.dll`, in their installation directories. The file owner is not checked from the host |
 
 Consequences worth knowing before reading a report:
 
@@ -81,7 +81,7 @@ Consequences worth knowing before reading a report:
 - **Pages written out to the page file are not seen.** A region can be shorter than in a live scan, or missing. Transition pages (taken from the working set but still in physical memory) are read. On the second guest two processes flagged by a live scan eight hours earlier (`dwm.exe`, `ShellExperienceHost.exe`) had no private executable page in physical memory at the time of the later scan from the host; whether those pages were paged out or released was not established.
 - **The guest keeps running during the scan,** so the result is not a consistent snapshot.
 - **`HDR` in non-executable memory is reported only for regions the kernel marks as private.** Sections without a file and regions of unknown type are skipped, because files mapped as data start with an image header. Anti-malware engines keep many program images in private memory and are reported with many `HDR` findings (228 in `MsMpEng.exe` on the first guest).
-- Just-in-time runtimes (.NET, antivirus engines) appear with full weight, as in a dump.
+- Anti-malware engines and other programs that generate code without a recognised runtime library appear with full weight.
 
 ## What was measured
 

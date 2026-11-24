@@ -39,18 +39,17 @@ A process that cannot be opened is listed in the result as inaccessible, with th
 
 `nanshe map` (the interactive memory map) works on macOS with the same access rules.
 
-Detectors that apply: `RWX`, `X-PRIV`, `ENT-X`, `HDR` (Mach-O, PE and ELF headers in memory without a file).
+Detectors that apply: `RWX`, `X-PRIV`, `ENT-X`, `HDR` (Mach-O, PE and ELF headers in memory without a file) and `SHC` (on arm64: a direct system call, `svc #0x80` with the call number set just before it, in code without a file).
 
 Notes for reading results:
 
 - On Apple Silicon an ordinary program cannot have memory that is writable and executable at once. `RWX` therefore means a JIT region (`MAP_JIT`), which browsers, JavaScript runtimes and virtual machines legitimately have.
-- Just-in-time runtimes are **not** given a reduced weight on macOS yet. Node.js, Chromium-based applications and similar programs appear with full weight.
+- **Reduced weight for JIT regions rests on evidence from the system, not on program names.** A process with a valid signature, a hardened runtime and the `allow-jit` entitlement is allowed by macOS itself to generate code; its JIT findings get a reduced weight (token `jit:macos-allow-jit`). All three facts are checked by the kernel and cannot be granted by the process to itself after start. A program without a hardened runtime (an own build, a locally signed tool) gets no reduction, because any such program may create a JIT region.
 
 ## Not implemented yet
 
-- System context (parent processes, command line, network, open files) and SHA-256 of program files.
+- Network connections and open files of a process. Available now: parent and child processes, user, start time, thread count, command line, code signature state and notable entitlements.
 - Thread start addresses (`THR-PRIV`) and comparison of code with the file on disk (`IMG-MOD`).
-- Reduced weight for recognised just-in-time runtimes; code signature and entitlement information in the result.
 - Core dumps of macOS processes (Mach-O core files).
 - A signed and notarised package.
 
