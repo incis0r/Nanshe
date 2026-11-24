@@ -89,7 +89,7 @@ Polish versions are in [docs/pl/](docs/pl/).
 - A scan from inside the system does not examine processes protected by the operating system (for example LSASS and anti-malware processes on Windows). `nanshe vm` reads them from the KVM/QEMU host, with its own limitations (first version, measured on one Windows Server 2025 guest; see [docs/hypervisor.md](docs/hypervisor.md)). Kernel memory is not examined.
 - A scan is the state of memory at one moment; anything that happened before it is not visible.
 - All test samples are synthetic. Findings on real systems were measured only on a single Windows host, in full scans of 20 Linux hosts of one lab and on one Windows guest read from the hypervisor; none of these findings was verified manually one by one.
-- macOS and FreeBSD are not supported yet. Physical memory dumps are not analysed yet (dumps of single processes are).
+- macOS has a first version of live scanning (Apple Silicon; access is limited to what macOS allows, see [docs/macos.md](docs/macos.md)); FreeBSD is not supported yet. Physical memory dumps are not analysed yet (dumps of single processes are).
 - Binaries and installers are not digitally signed.
 
 ## Contributing and security

@@ -19,6 +19,7 @@ Exit code of the e2e scripts: 0 when everything matches, 1 when anything deviate
 | Layer | Result |
 |---|---|
 | Unit tests | 140 pass (analyze 26, core 3, dump 5, kb 7, live 20, llm 40, report 30, vm 9) |
+| macOS (arm64, native) | 139 unit tests (4 of them for the macOS backend, which run only there) and `scripts/e2e-macos.sh`: 7 samples and 4 groups of additional assertions; see [macos.md](macos.md) |
 | Hypervisor read (`nanshe vm`) | one live run against a Windows Server 2025 guest on KVM (see [hypervisor.md](hypervisor.md)); no automated end-to-end test |
 | Full live scans, Linux | `nanshe scan --all` on 20 hosts of one lab (19 x86_64, 1 arm64), 2026-11-23, before and after the detection tuning; no process was verified manually |
 | e2e Linux (aarch64, container) | 16 static samples, 2 dynamic and 8 groups of additional assertions |

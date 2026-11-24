@@ -1,37 +1,63 @@
-# Nanshe on macOS and other systems
+# Nanshe on macOS
 
 Polish version: [pl/macos.md](pl/macos.md).
 
-Status: **scanning of live processes is not implemented** on macOS, FreeBSD or other systems apart from Linux and Windows. `nanshe scan` returns the error "unsupported" there.
+Status: **first version of live process scanning** (added after 0.1.0). Built and tested natively on Apple Silicon (arm64), macOS 26. Intel Macs, older macOS versions and x86_64 processes running under Rosetta were not tested.
 
-A saved inventory from Linux/Windows can be opened as a local HTML atlas:
-
-```sh
-nanshe map --input host.memory.json
-```
-
-Running it without arguments tries to perform a live inventory, so on macOS it returns
-a missing backend error. It does not generate substitute or synthetic system data.
-
-## What a macOS host is for
-
-As an analyst workstation: a scan result collected on Linux or Windows can be interpreted here and turned into a report. The commands `explain`, `report`, `llm check` and `cloud list` do not depend on the system, because they work on a JSON file.
-
-Note: the native build on macOS was not verified (the project's workstation has no Rust). The verified route is a Linux container:
+## Build
 
 ```sh
-scripts/dev.sh cargo build --release -p nanshe-cli --features llm
-scripts/dev.sh /target/release/nanshe report wynik.json
-scripts/dev.sh /target/release/nanshe explain wynik.json --llm nous --allow-cloud --key-file .nous
+cargo build --release -p nanshe-cli            # add --features llm for the interpretation layer
+cargo test --workspace --features nanshe-cli/llm
+scripts/e2e-macos.sh                           # end-to-end tests with synthetic samples
 ```
 
-`scripts/dev.sh` mounts the repository directory as `/src`, so the result files must be in the repository or in the `/target` volume. The files `*.llm.json`, `*.report.md` and `*.report.pdf` are in `.gitignore`, because they contain data from memory.
+## What access macOS gives
 
-## Deployment and remote tests from macOS
+Reading the memory of another process requires its task port. macOS decides who gets it:
 
-- Windows: natively on a dedicated test host (`scripts\e2e.ps1`), described in [windows.md](windows.md).
-- Linux: tests in a container, described in [tests.md](tests.md).
+| Scanner runs as | Processes it can read |
+|---|---|
+| ordinary user, unsigned or plain adhoc binary | none (only the listing works) |
+| ordinary user, binary signed locally with the debugger entitlement | processes of the same user that are not protected: own builds, many third-party applications without a hardened runtime |
+| root | additionally processes of other users, with the same exceptions |
+| anyone, with System Integrity Protection enabled | never: Apple system processes and programs with a hardened runtime that do not allow debugging |
 
-## Plan
+Signing a local copy with the debugger entitlement (adhoc, no developer account needed):
 
-The macOS backends (`mach_vm_region_recurse` + `mach_vm_read_overwrite`, with SIP restrictions) and FreeBSD are stage M3 in the roadmap ([documentation-0.1.0.md](documentation-0.1.0.md), chapter 14); no date set.
+```sh
+codesign -f -s - --entitlements packaging/macos/debugger.entitlements target/release/nanshe
+```
+
+A process that cannot be opened is listed in the result as inaccessible, with the reason; the scan result is then marked as partial. On the development workstation (SIP enabled, ordinary user, entitlement as above) 25 of 788 processes were readable. This is a property of the system, not a defect to be worked around: Nanshe does not ask to disable SIP.
+
+## What is examined
+
+- **Region map** from the kernel (`mach_vm_region_recurse`): address, size, current protection, allocation tag. File names come from `proc_pidinfo` (`PROC_PIDREGIONPATHINFO`), checked to describe exactly the region asked about.
+- **System libraries.** macOS maps all system libraries from one shared file (the dyld shared cache) at the same address in every process. Regions seen through that shared mapping are labelled `[dyld shared cache]`, are not reported as code without a file and are not read (over 1 GiB, identical everywhere). A page inside that range that was replaced privately is no longer part of the shared mapping and is examined like any private region.
+- **Contents** read with `mach_vm_read_overwrite`, read-only.
+
+Detectors that apply: `RWX`, `X-PRIV`, `ENT-X`, `HDR` (Mach-O, PE and ELF headers in memory without a file).
+
+Notes for reading results:
+
+- On Apple Silicon an ordinary program cannot have memory that is writable and executable at once. `RWX` therefore means a JIT region (`MAP_JIT`), which browsers, JavaScript runtimes and virtual machines legitimately have.
+- Just-in-time runtimes are **not** given a reduced weight on macOS yet. Node.js, Chromium-based applications and similar programs appear with full weight.
+
+## Not implemented yet
+
+- System context (parent processes, command line, network, open files) and SHA-256 of program files.
+- Thread start addresses (`THR-PRIV`) and comparison of code with the file on disk (`IMG-MOD`).
+- Reduced weight for recognised just-in-time runtimes; code signature and entitlement information in the result.
+- Core dumps of macOS processes (Mach-O core files).
+- A signed and notarised package.
+
+## Tests
+
+- Unit tests of the backend: the layout of the kernel structure, region classification, the exact-region rule for file names, and a scan of the test process itself (listing, map, reading own data and own code, the shared cache label).
+- `scripts/e2e-macos.sh`: samples `clean`, `data-noise`, `rx-stage`, `rx-lowent`, `macho`, `jit`, `all`; refusal for a protected process; a missing process; Polish and English reports with macOS verification steps; a scan of all processes.
+- Not covered: root, other users' processes, Intel Macs, Rosetta, real malware.
+
+## As an analyst workstation
+
+Independently of live scanning, a result collected on Linux or Windows can be interpreted and turned into a report here: `explain`, `report`, `diff`, `llm check` and `cloud list` do not depend on the scan backend.

@@ -15,7 +15,7 @@ Polish versions of these documents are in [pl/](pl/).
 |---|---|
 | [linux.md](linux.md) | build, required privileges, detectors and limitations on Linux |
 | [windows.md](windows.md) | build, required privileges, detectors, measurements, installers (MSI and zip) and limitations on Windows |
-| [macos.md](macos.md) | current state on macOS (analyst workstation only; live scanning is not supported yet) |
+| [macos.md](macos.md) | macOS: first version of live scanning, what access the system gives, what is examined and what is not implemented yet |
 | [hypervisor.md](hypervisor.md) | scanning a running Windows guest from the KVM/QEMU host without an agent (`nanshe vm`): requirements, kernel symbols, what the result does and does not contain |
 
 ## Reference
