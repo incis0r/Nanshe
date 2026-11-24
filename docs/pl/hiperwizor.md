@@ -56,6 +56,8 @@ Skaner potrzebuje układu struktur jądra dla dokładnej wersji Windows gościa.
 - Domyślnie skaner **nie nawiązuje żadnego połączenia sieciowego**. Gdy pliku brakuje, kończy pracę z błędem, który to mówi. Bez `--fetch-symbols` adres serwera symboli jest zastępowany takim, którego klient HTTP nie potrafi użyć, więc nie ma nawet próby połączenia; sprawdza to test jednostkowy.
 - `--fetch-symbols` pozwala pobrać brakujący plik z serwera symboli Microsoftu do katalogu symboli. To jedyny kod sieciowy tej funkcji; wysyłany jest wyłącznie identyfikator wersji jądra. Wystarczy uruchomić raz na maszynie z dostępem do sieci i skopiować katalog na host.
 - Bez `--symbols` katalogiem jest katalog pamięci podręcznej użytkownika (`~/.cache/memflow`).
+- Nazwa pliku symboli i identyfikator wersji są czytane z pamięci gościa i stają się częścią ścieżki pliku oraz adresu pobierania. Skaner przyjmuje tylko zwykłą nazwę `*.pdb` i identyfikator szesnastkowy; w przeciwnym razie się zatrzymuje.
+- Gość wybierany po nazwie musi być procesem QEMU uruchomionym z konta systemowego (root albo konto usługi, np. `qemu`). Nazwę gościa ustawia ten, kto uruchamia QEMU, więc maszynę zwykłego użytkownika wskazuje się tylko numerem PID.
 
 Po otwarciu gościa skaner sprawdza, czy lista procesów zawiera proces `System` o numerze 4. Jeśli nie, symbole nie pasują do jądra i skan się zatrzymuje, zamiast zwrócić pusty albo błędny wynik.
 

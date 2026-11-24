@@ -12,6 +12,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - Sample modes `patch`, `touch`, `hdr-wiped`, `pe-wiped` and end-to-end tests for dumps.
 - `nanshe vm <guest>`: scan of the processes of a running Windows guest from the KVM/QEMU host, without an agent in the guest (optional `vm` build feature, crate `nanshe-vm`). Kernel symbols are read from a local directory; the network is used only with `--fetch-symbols`. The QEMU process of a guest is accepted only when its program file, as reported by the kernel, is `qemu-system-*` or `qemu-kvm` in a system directory; the number of page tables and of page ranges read per guest process is limited. First version, measured on one Windows Server 2025 guest, see `docs/hypervisor.md`.
 - Report: processes of the same program (same program file and name) with the same set of findings, priority and severity share one overview row ("+N" next to the PID) and one chapter ("and N similar"); repeated scanner notes are listed once.
+- `nanshe vm` validates the symbol file name and identifier reported by the guest before using them in a path, and selects a guest by name only among QEMU processes started by a system account.
 - `scripts/build-linux-static.sh` (static musl binaries for x86_64 and aarch64) and `scripts/build-linux-vm.sh` (x86_64 binary with the `vm` feature).
 
 ### Changed

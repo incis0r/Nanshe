@@ -18,7 +18,7 @@ Exit code of the e2e scripts: 0 when everything matches, 1 when anything deviate
 
 | Layer | Result |
 |---|---|
-| Unit tests | 137 pass (analyze 26, core 3, dump 5, kb 7, live 20, llm 40, report 30, vm 6) |
+| Unit tests | 138 pass (analyze 26, core 3, dump 5, kb 7, live 20, llm 40, report 30, vm 7) |
 | Hypervisor read (`nanshe vm`) | one live run against a Windows Server 2025 guest on KVM (see [hypervisor.md](hypervisor.md)); no automated end-to-end test |
 | Full live scans, Linux | `nanshe scan --all` on 20 hosts of one lab (19 x86_64, 1 arm64), 2026-11-23, before and after the detection tuning; no process was verified manually |
 | e2e Linux (aarch64, container) | 16 static samples, 2 dynamic and 8 groups of additional assertions |
@@ -159,6 +159,7 @@ In addition, the PDF from a sample was opened with an external tool (`pypdf`: 5 
 | `page_walk_survives_unreadable_and_looping_tables` | a missing root table, an unreadable lower table (result marked incomplete), a table that points at itself (bounded by the table limit `MAX_TABLES`), tables whose protection changes on every page (the number of ranges is bounded by `MAX_RANGES` and the result is marked incomplete) and a table of the wrong length |
 | `page_ranges_become_regions_split_at_module_borders` | ranges are merged and split at module borders; a module includes one page after its image, up to the 64 KiB boundary and no further; without a module list the region type is unknown |
 | `empty_and_degenerate_input_gives_no_regions` | empty input, zero-sized ranges and modules, clipping at the end of user space |
+| `symbol_identifiers_from_the_guest_cannot_form_a_path` | the symbol file name and identifier reported by the guest are accepted only as a plain `*.pdb` name and a hexadecimal string; path separators, `..`, other extensions and empty values are refused |
 | `guest_name_is_read_from_qemu_arguments_only` | the guest name is taken from `-name` of `qemu-system-*` and `qemu-kvm` only; other programs with the same argument are ignored |
 | `symbol_download_is_impossible_without_consent` | with an empty symbol directory and downloading not allowed, loading kernel symbols fails quickly (under 2 seconds), without a connection attempt, and leaves no file in the directory |
 

@@ -56,6 +56,8 @@ The scanner needs the layout of kernel structures for the exact Windows build of
 - By default the scanner makes **no network connection**. If the file is missing, it stops with an error that says so. Without `--fetch-symbols` the symbol server address is replaced with one that the HTTP client cannot use, so no connection is attempted; a unit test checks this.
 - `--fetch-symbols` allows downloading the missing file from the Microsoft symbol server into the symbol directory. This is the only network code in this feature, and it sends only the identifier of the kernel build. Run it once on a machine with network access, then copy the directory to the host.
 - Without `--symbols` the directory is the user's cache directory (`~/.cache/memflow`).
+- The symbol file name and build identifier are read from guest memory and become part of a file path and of the download address. The scanner accepts only a plain `*.pdb` name and a hexadecimal identifier, and stops otherwise.
+- A guest selected by name must be a QEMU process started by a system account (root or a service account such as `qemu`). The guest name is set by whoever starts QEMU, so a machine started by an ordinary user is selected only by PID.
 
 After opening the guest, the scanner checks that the process list contains the `System` process with PID 4. If it does not, the symbols do not match the kernel and the scan stops, instead of returning an empty or wrong result.
 

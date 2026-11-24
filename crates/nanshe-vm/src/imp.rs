@@ -2,6 +2,7 @@ use crate::{build_regions, walk_page_tables, GuestProc, Module, PageRange, Symbo
 use memflow::prelude::v1::{Address, ConnectorArgs, MemoryView, Os, PartialError, PhysicalAddress, Pid, Process, ProcessInfo, ProcessState};
 use memflow_win32::prelude::v1::{SymbolStore, Win32Kernel};
 use nanshe_core::{tr, trf, Error, MemorySource, Region, Result, SourceInfo};
+use memflow::cglue::forward::ForwardMut;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -51,9 +52,14 @@ pub struct Guest { kernel: Rc<RefCell<Box<dyn Kernel>>>, pub target: String }
 pub fn open(target: &str, symbols: Symbols) -> Result<Guest> {
     let pid = match target.parse::<u32>() { Ok(p) => p, Err(_) => qemu_pid(target)? };
     let args: ConnectorArgs = pid.to_string().parse().map_err(|e| fail("QEMU", e))?;
-    let connector = memflow_qemu::create_connector(&args).map_err(|e| Error::Access(trf!(
+    let mut connector = memflow_qemu::create_connector(&args).map_err(|e| Error::Access(trf!(
         "nie udało się otworzyć pamięci procesu QEMU {pid} ({e}); potrzebne są uprawnienia root na hoście",
         "could not open the memory of QEMU process {pid} ({e}); root privileges on the host are required")))?;
+    // Nazwa pliku symboli i jego identyfikator pochodzą z pamięci gościa, a biblioteka składa z nich ścieżkę
+    // w katalogu symboli (i adres pobierania). Sprawdzamy je, zanim zostaną użyte, i ponownie po rozpoznaniu jądra.
+    let scanned = memflow_win32::prelude::v1::Win32KernelInfo::scanner((&mut connector).forward_mut()).scan()
+        .map_err(|e| Error::Invalid(trf!("nie udało się znaleźć jądra Windows w pamięci gościa: {e}", "could not find the Windows kernel in guest memory: {e}")))?;
+    check_symbol_id(scanned.kernel_guid.as_ref().map(|g| (g.file_name.as_str(), g.guid.as_str())))?;
     let mut store = SymbolStore::new();
     if let Some(d) = symbols.dir { store = store.cache_path(d); }
     // Bez zgody na pobieranie liczy się tylko katalog lokalny: adres serwera ma schemat, którego klient HTTP
@@ -65,6 +71,7 @@ pub fn open(target: &str, symbols: Symbols) -> Result<Guest> {
         trf!("nie udało się rozpoznać jądra Windows w pamięci gościa: {e}. Najczęstsza przyczyna: brak pliku symboli jądra w katalogu symboli; --fetch-symbols pozwala pobrać go z serwera symboli Microsoftu",
              "could not identify the Windows kernel in guest memory: {e}. The usual cause is a missing kernel symbol file in the symbol directory; --fetch-symbols allows downloading it from the Microsoft symbol server")
     }))?;
+    check_symbol_id(kernel.kernel_info.kernel_guid.as_ref().map(|g| (g.file_name.as_str(), g.guid.as_str())))?;
     let guest = Guest { kernel: Rc::new(RefCell::new(Box::new(kernel))), target: target.to_string() };
     // Bez właściwych symboli biblioteka potrafi przyjąć przesunięcia innej wersji jądra i zwrócić pustą albo
     // błędną listę procesów. Proces System ma w każdym Windows numer 4: jego brak oznacza złe symbole.
@@ -76,6 +83,22 @@ pub fn open(target: &str, symbols: Symbols) -> Result<Guest> {
 }
 
 const NO_DOWNLOAD: &str = "pobieranie-wylaczone://brak";
+
+/// Nazwa pliku symboli jądra i identyfikator wersji odczytane z gościa: tylko znaki, z których nie da się
+/// zbudować ścieżki poza katalog symboli ani innego adresu pobierania.
+pub(crate) fn check_symbol_id(id: Option<(&str, &str)>) -> Result<()> {
+    let Some((file, guid)) = id else { return Ok(()) };
+    let file_ok = !file.is_empty() && file.len() <= 64 && file.to_ascii_lowercase().ends_with(".pdb") && !file.starts_with('.')
+        && file.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')) && !file.contains("..");
+    let guid_ok = (32..=40).contains(&guid.len()) && guid.chars().all(|c| c.is_ascii_hexdigit());
+    if file_ok && guid_ok { Ok(()) } else {
+        Err(Error::Invalid(tr!("gość podaje nieprawidłową nazwę albo identyfikator pliku symboli jądra; skan przerwany, bo te wartości trafiają do ścieżki pliku",
+            "the guest reports an invalid kernel symbol file name or identifier; the scan was stopped because these values are used in a file path").into()))
+    }
+}
+
+/// Konta systemowe mają numery poniżej tej wartości; maszyny libvirt działają jako root albo konto usługi.
+const FIRST_USER_UID: u32 = 1000;
 
 /// Proces QEMU po nazwie gościa. Biblioteka rozpoznaje tylko programy o nazwie `qemu-system-*`,
 /// a systemy z rodziny RHEL uruchamiają maszyny programem `qemu-kvm`, więc szukamy sami.
@@ -89,11 +112,15 @@ fn qemu_pid(name: &str) -> Result<u32> {
         // argv[0] ustawia sam proces: liczy się plik programu wg jądra, z katalogu systemowego
         let exe = std::fs::read_link(e.path().join("exe")).ok();
         let real = exe.as_deref().and_then(|p| p.to_str()).map(|p| is_qemu_program(p.rsplit('/').next().unwrap_or("")) && ["/usr/", "/opt/", "/bin/", "/sbin/"].iter().any(|d| p.starts_with(d)) && !p.contains("/../")).unwrap_or(false);
-        if real { found.push(pid); }
+        // maszyna uruchomiona przez zwykłego użytkownika nie jest wybierana po nazwie: nazwę gościa ustawia
+        // ten, kto uruchamia QEMU, więc mógłby podstawić własną maszynę pod nazwę cudzej (PID można podać jawnie)
+        use std::os::unix::fs::MetadataExt;
+        let system_owned = std::fs::metadata(e.path()).map(|m| m.uid() < FIRST_USER_UID).unwrap_or(false);
+        if real && system_owned { found.push(pid); }
     }
     match found.as_slice() {
         [p] => Ok(*p),
-        [] => Err(Error::NotFound(trf!("maszyna wirtualna „{name}\" (brak procesu QEMU z taką nazwą gościa)", "virtual machine \"{name}\" (no QEMU process with this guest name)"))),
+        [] => Err(Error::NotFound(trf!("maszyna wirtualna „{name}\" (brak procesu QEMU z taką nazwą gościa uruchomionego z konta systemowego; maszynę zwykłego użytkownika wskaż numerem PID)", "virtual machine \"{name}\" (no QEMU process with this guest name started by a system account; point at a user's machine by PID)"))),
         _ => Err(Error::Invalid(trf!("kilka procesów QEMU ma nazwę gościa „{name}\"; podaj numer PID procesu", "several QEMU processes have the guest name \"{name}\"; pass the process PID instead"))),
     }
 }
@@ -161,6 +188,19 @@ mod tests {
         assert!(t.elapsed() < std::time::Duration::from_secs(2));
         assert_eq!(std::fs::read_dir(&dir).unwrap().flatten().filter(|e| e.path().is_file()).count(), 0);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn symbol_identifiers_from_the_guest_cannot_form_a_path() {
+        use super::check_symbol_id as c;
+        assert!(c(None).is_ok());
+        assert!(c(Some(("ntkrnlmp.pdb", "953A8DE880B0818C32DA2DEC1D79C2D91"))).is_ok());
+        assert!(c(Some(("ntkrpamp.pdb", "0123456789abcdef0123456789abcdef1"))).is_ok());
+        for (file, guid) in [("../../etc/x.pdb", "953A8DE880B0818C32DA2DEC1D79C2D91"), ("/etc/passwd", "953A8DE880B0818C32DA2DEC1D79C2D91"), ("a/b.pdb", "953A8DE880B0818C32DA2DEC1D79C2D91"),
+            ("..pdb", "953A8DE880B0818C32DA2DEC1D79C2D91"), ("ntkrnlmp.exe", "953A8DE880B0818C32DA2DEC1D79C2D91"), ("", "953A8DE880B0818C32DA2DEC1D79C2D91"),
+            ("ntkrnlmp.pdb", "../../../../tmp/x"), ("ntkrnlmp.pdb", "953A8DE880B0818C32DA2DEC1D79C2D9/"), ("ntkrnlmp.pdb", "abc"), ("ntkrnlmp.pdb", ""), ("nt krnl.pdb", "953A8DE880B0818C32DA2DEC1D79C2D91")] {
+            assert!(c(Some((file, guid))).is_err(), "{file} {guid}");
+        }
     }
 
     #[test]
