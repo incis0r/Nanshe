@@ -10,7 +10,13 @@ nanshe-core = { path = "../nanshe-core" }
 
 # Tylko host Linux z KVM/QEMU. Biblioteka memflow (MIT) znajduje jądro Windows w pamięci fizycznej gościa
 # i tłumaczy adresy; symbole jądra (plik PDB) bierze z katalogu lokalnego, a z sieci tylko na wyraźne życzenie.
+# Cecha "guest" włącza faktyczny odczyt gościa. Bez niej zostaje czysta logika (tablice stron, regiony),
+# która buduje się wszędzie i jest celem fuzzingu.
 [target.'cfg(target_os = "linux")'.dependencies]
-memflow = "0.2"
-memflow-win32 = "0.2"
-memflow-qemu = { version = "0.2", default-features = false }
+memflow = { version = "0.2", optional = true }
+memflow-win32 = { version = "0.2", optional = true }
+memflow-qemu = { version = "0.2", default-features = false, optional = true }
+
+[features]
+default = []
+guest = ["dep:memflow", "dep:memflow-win32", "dep:memflow-qemu"]

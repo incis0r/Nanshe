@@ -14,7 +14,7 @@ default = []
 llm = ["dep:nanshe-llm"]
 # Odczyt pamięci gościa Windows z hosta KVM/QEMU (polecenie `vm`). Tylko Linux; wnosi bibliotekę memflow
 # i kod pobierania symboli jądra, używany wyłącznie z opcją --fetch-symbols.
-vm = ["dep:nanshe-vm"]
+vm = ["dep:nanshe-vm", "nanshe-vm/guest"]
 
 [dependencies]
 nanshe-core = { path = "../nanshe-core" }

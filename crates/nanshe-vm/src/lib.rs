@@ -25,12 +25,12 @@ pub struct Symbols<'a> {
     pub fetch: bool,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "guest"))]
 mod imp;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "guest"))]
 pub use imp::{open, Guest, GuestProcess};
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(all(target_os = "linux", feature = "guest")))]
 pub fn open(_target: &str, _symbols: Symbols) -> nanshe_core::Result<()> {
     Err(nanshe_core::Error::Unsupported(nanshe_core::tr!("odczyt z hiperwizora działa tylko na hoście Linux z KVM/QEMU", "hypervisor reads work only on a Linux host with KVM/QEMU").into()))
 }
@@ -122,10 +122,14 @@ pub fn build_regions(ranges: &[PageRange], modules: &[Module]) -> Vec<nanshe_cor
     // pamięć od adresów podzielnych przez 64 KiB, więc reszta tego ziarna nie może należeć do innej alokacji.
     // Znane ograniczenie: gdy obraz kończy się dokładnie na granicy 64 KiB, jedna strona za nim nie jest
     // odróżniana od osobnej alokacji.
-    let grown: Vec<Module> = modules.iter().filter(|m| m.size > 0).map(|m| {
-        let end = m.base.saturating_add(m.size).saturating_add(0xfff) / 0x1000 * 0x1000 + 0x1000;
-        Module { base: m.base, size: end.saturating_add(ALLOC - 1) / ALLOC * ALLOC - m.base, path: m.path.clone() }
-    }).collect();
+    // Adres i rozmiar modułu pochodzą z pamięci gościa: moduł spoza przestrzeni użytkownika jest pomijany,
+    // a koniec przycinany do jej granicy, zanim cokolwiek zostanie doliczone (znalezione fuzzingiem: adres
+    // bliski końca zakresu liczb przepełniał zaokrąglenie).
+    let grown: Vec<Module> = modules.iter().filter(|m| m.size > 0 && m.base <= USER_MAX).map(|m| {
+        let end = (m.base.saturating_add(m.size).min(USER_MAX + 1).saturating_add(0xfff) / 0x1000 * 0x1000 + 0x1000).min(USER_MAX + 1);
+        let end = (end.saturating_add(ALLOC - 1) / ALLOC * ALLOC).min(USER_MAX + 1).max(m.base);
+        Module { base: m.base, size: end - m.base, path: m.path.clone() }
+    }).filter(|m| m.size > 0).collect();
     let mut mods: Vec<&Module> = grown.iter().collect();
     mods.sort_by_key(|m| m.base);
     // punkty podziału: początki i końce modułów
@@ -183,6 +187,12 @@ mod tests {
         let exact = [Module { base: 0x7ff0_0000, size: 0x1_0000, path: "b.dll".into() }];
         let e = build_regions(&[pr(0x7ff1_0000, 0x1000, false, true), pr(0x7ff2_0000, 0x1000, false, true)], &exact);
         assert_eq!(e.iter().map(|r| (r.base, r.backing.is_some())).collect::<Vec<_>>(), vec![(0x7ff1_0000, true), (0x7ff2_0000, false)]);
+        // moduły z adresem albo rozmiarem na granicy zakresu liczb (dane gościa): bez przepełnienia, moduł spoza
+        // przestrzeni użytkownika pomijany, a sięgający poza nią przycięty
+        let hostile = [Module { base: u64::MAX - 0x10, size: u64::MAX, path: "a".into() }, Module { base: 0xc4c4_c4c4_c4c4_c4c4, size: 0xc4c4_c4c4_c4c4_c4c4, path: "b".into() },
+            Module { base: USER_MAX - 0xfff, size: u64::MAX, path: "c".into() }, Module { base: 0x1000, size: u64::MAX, path: "d".into() }];
+        let h = build_regions(&[pr(0x2000, 0x1000, false, true), pr(USER_MAX - 0xfff, 0x1000, false, true)], &hostile);
+        assert_eq!(h.iter().map(|r| (r.base, r.size, r.backing.as_deref())).collect::<Vec<_>>(), vec![(0x2000, 0x1000, Some("d")), (USER_MAX - 0xfff, 0x1000, Some("c"))]);
         // bez listy modułów rodzaj regionu jest nieznany, a nie "prywatny"
         assert_eq!(build_regions(&[pr(0x1000, 0x1000, false, true)], &[])[0].kind, nanshe_core::RegionKind::Unknown);
         assert_eq!(regs[3].kind, nanshe_core::RegionKind::Image);
