@@ -6,8 +6,13 @@ OUT="${1:-/tmp/nanshe-e2e}"; mkdir -p "$OUT"
 cargo build -q --workspace --features nanshe-cli/llm || exit 2
 N=/target/debug/nanshe; S=/target/debug/nanshe-sample
 fail=0
-check() { # nazwa, oczekiwany kod, oczekiwane tagi (posortowane, po przecinku)
-  mode=$1; want_rc=$2; want_tags=$3
+# Tło platformy: tagi, które ma na tej architekturze nawet próbka "clean" (w kontenerze arm64 jest to ENT-X
+# poniżej progu "podejrzane", na x86_64 nic). Oczekiwania poniżej podają tylko to, co wnosi sama próbka;
+# tło jest do nich doliczane. Bez tego test przechodził tylko na architekturze, na której go strojono.
+BASE=""
+union() { printf '%s\n%s\n' "$1" "$2" | tr ',' '\n' | grep -v '^$' | sort -u | paste -sd, -; }
+check() { # nazwa, oczekiwany kod, tagi wnoszone przez próbkę (posortowane, po przecinku)
+  mode=$1; want_rc=$2; want_tags=$(union "$3" "$BASE")
   $S "$mode" 60 > "$OUT/$mode.pid" & sleep 0.5
   pid=$(awk '{print $2}' "$OUT/$mode.pid")
   $N scan --pid "$pid" --json "$OUT/$mode.json" 2> "$OUT/$mode.txt"; rc=$?
@@ -26,16 +31,22 @@ check() { # nazwa, oczekiwany kod, oczekiwane tagi (posortowane, po przecinku)
 regions() {
   grep -E '^  0x' "$1" | sed "s/^ */FAIL-REGION $2: /" | cut -c1-220
 }
-check clean  0 "ENT-X"
+# próbka "clean" wyznacza tło: nie może mieć nic poza ENT-X i nie może przekraczać progu (kod 0)
+$S clean 60 > "$OUT/base.pid" & sleep 0.5
+$N scan --pid "$(awk '{print $2}' "$OUT/base.pid")" --json "$OUT/base.json" 2>/dev/null
+BASE=$(grep -o '"tag": "[A-Z-]*"' "$OUT/base.json" | cut -d'"' -f4 | sort -u | paste -sd, -)
+kill "$(awk '{print $2}' "$OUT/base.pid")" 2>/dev/null
+case "$BASE" in ""|"ENT-X") echo "tło platformy: [$BASE]";; *) echo "tło platformy FAIL: próbka clean ma tagi [$BASE]"; fail=1;; esac
+check clean  0 ""
 check rwx    1 "ENT-X,RWX,X-PRIV"
-check elf    1 "ENT-X,HDR,X-PRIV"
+check elf    1 "HDR,X-PRIV"
 check memfd  1 "ENT-X,MEMFD"
 check inject 1 "ENT-X,RWX,X-PRIV"
 # red team: kontrola i ewazja
-check data-noise   0 "ENT-X"             # wysoka entropia w danych RW to nie znalezisko
-check rx-file      1 "ENT-X,X-TMP"       # R-X z pliku w /tmp: łapie X-TMP (katalog zapisywalny dla wszystkich)
-check rwx-lowent   1 "ENT-X,RWX,X-PRIV"  # jak rwx, ale bez ENT-X na ładunku (asercja wyniku niżej)
-check rx-stage     1 "ENT-X,X-PRIV"      # staging RW->R-X: RWX ominięty, X-PRIV łapie
+check data-noise   0 ""                  # wysoka entropia w danych RW to nie znalezisko
+check rx-file      1 "X-TMP"             # R-X z pliku w /tmp: łapie X-TMP (katalog zapisywalny dla wszystkich)
+check rwx-lowent   1 "RWX,X-PRIV"        # jak rwx, ale bez ENT-X na ładunku (asercja wyniku niżej)
+check rx-stage     1 "X-PRIV"            # staging RW->R-X: RWX ominięty, X-PRIV łapie
 check hdr-corrupt  1 "ENT-X,X-PRIV"      # e_type spoza zakresu i brak tablicy segmentów: HDR głuchy (kontrola)
 check hdr-wiped    1 "ENT-X,HDR,X-PRIV"  # sygnatura wyzerowana, tablica segmentów została: HDR po tablicy
 check hdr-offset   1 "ENT-X,HDR,X-PRIV"  # nagłówek w środku strony: HDR szuka pod dowolnym przesunięciem

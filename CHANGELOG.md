@@ -19,6 +19,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
+- HTTP client `ureq` updated from 2 to 3; the interpretation layer keeps the same behaviour (time limits, no redirects for cloud providers, the start of an error response in the message).
 - Report: table-of-contents entries and finding rows of the address space map are links; command lines and verification commands are set off as code; priority and severity are colour-coded; verification steps explain how to read the result; model hypotheses show supporting and undermining arguments side by side; clearer confidence labels.
 - Knowledge base: verification steps are objects with `do`, `cmd` and `look`.
 - Detection tuning from full scans of 20 Linux hosts (processes to verify fell from 455 to 191, with no host change in between other than time):
@@ -31,6 +32,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- End-to-end tests on Linux no longer depend on the architecture they were tuned on: tags that even the clean sample has on a platform are measured first and added to the expectations.
 - Report: fields of a PE header located near the end of the 256-byte preview are now shown.
 - Linux: kernel threads (recognised by the `PF_KTHREAD` flag, not by name) are skipped in the process list and no longer counted as inaccessible processes.
 
