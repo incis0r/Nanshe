@@ -56,7 +56,8 @@ pub fn open(target: &str, symbols: Symbols) -> Result<Guest> {
         "nie udało się otworzyć pamięci procesu QEMU {pid} ({e}); potrzebne są uprawnienia root na hoście",
         "could not open the memory of QEMU process {pid} ({e}); root privileges on the host are required")))?;
     // Nazwa pliku symboli i jego identyfikator pochodzą z pamięci gościa, a biblioteka składa z nich ścieżkę
-    // w katalogu symboli (i adres pobierania). Sprawdzamy je, zanim zostaną użyte, i ponownie po rozpoznaniu jądra.
+    // w katalogu symboli (i adres pobierania). Jądro jest rozpoznawane raz: sprawdzone tu wartości są tymi samymi,
+    // których używa dalsza część (bez drugiego odczytu, który gość mógłby w międzyczasie podmienić).
     let scanned = memflow_win32::prelude::v1::Win32KernelInfo::scanner((&mut connector).forward_mut()).scan()
         .map_err(|e| Error::Invalid(trf!("nie udało się znaleźć jądra Windows w pamięci gościa: {e}", "could not find the Windows kernel in guest memory: {e}")))?;
     check_symbol_id(scanned.kernel_guid.as_ref().map(|g| (g.file_name.as_str(), g.guid.as_str())))?;
@@ -65,13 +66,18 @@ pub fn open(target: &str, symbols: Symbols) -> Result<Guest> {
     // Bez zgody na pobieranie liczy się tylko katalog lokalny: adres serwera ma schemat, którego klient HTTP
     // nie obsługuje, więc żadne połączenie nie jest nawiązywane (także z usługą na tym samym hoście).
     if !symbols.fetch { store = store.base_url(NO_DOWNLOAD); }
-    let kernel = Win32Kernel::builder(connector).symbol_store(store).build_default_caches().build().map_err(|e| Error::Invalid(if symbols.fetch {
+    let arch = scanned.os_info.arch;
+    let built = memflow_win32::offsets::offset_builder_with_kernel_info(&scanned).symbol_store(store).build().map(|offsets| {
+        let phys = memflow::prelude::v1::CachedPhysicalMemory::builder(connector).arch(arch).build().unwrap();
+        let vat = memflow::prelude::v1::CachedVirtualTranslate::builder(memflow::prelude::v1::DirectTranslate::new()).arch(arch).build().unwrap();
+        Win32Kernel::new(phys, vat, offsets, scanned)
+    });
+    let kernel = built.map_err(|e| Error::Invalid(if symbols.fetch {
         trf!("nie udało się rozpoznać jądra Windows w pamięci gościa: {e}", "could not identify the Windows kernel in guest memory: {e}")
     } else {
         trf!("nie udało się rozpoznać jądra Windows w pamięci gościa: {e}. Najczęstsza przyczyna: brak pliku symboli jądra w katalogu symboli; --fetch-symbols pozwala pobrać go z serwera symboli Microsoftu",
              "could not identify the Windows kernel in guest memory: {e}. The usual cause is a missing kernel symbol file in the symbol directory; --fetch-symbols allows downloading it from the Microsoft symbol server")
     }))?;
-    check_symbol_id(kernel.kernel_info.kernel_guid.as_ref().map(|g| (g.file_name.as_str(), g.guid.as_str())))?;
     let guest = Guest { kernel: Rc::new(RefCell::new(Box::new(kernel))), target: target.to_string() };
     // Bez właściwych symboli biblioteka potrafi przyjąć przesunięcia innej wersji jądra i zwrócić pustą albo
     // błędną listę procesów. Proces System ma w każdym Windows numer 4: jego brak oznacza złe symbole.
@@ -100,6 +106,15 @@ pub(crate) fn check_symbol_id(id: Option<(&str, &str)>) -> Result<()> {
 /// Konta systemowe mają numery poniżej tej wartości; maszyny libvirt działają jako root albo konto usługi.
 const FIRST_USER_UID: u32 = 1000;
 
+/// Wszystkie identyfikatory użytkownika procesu (rzeczywisty, efektywny, zapisany, plikowy) z `/proc/<pid>/status`
+/// należą do kont systemowych. Właściciel katalogu `/proc/<pid>` się do tego nie nadaje: dla procesu, który
+/// wyłączył zrzuty pamięci, jest nim root niezależnie od tego, kto proces uruchomił.
+pub(crate) fn all_uids_system(status: &str) -> bool {
+    let Some(line) = status.lines().find(|l| l.starts_with("Uid:")) else { return false };
+    let ids: Vec<Option<u32>> = line[4..].split_whitespace().map(|v| v.parse().ok()).collect();
+    ids.len() == 4 && ids.iter().all(|v| matches!(v, Some(u) if *u < FIRST_USER_UID))
+}
+
 /// Proces QEMU po nazwie gościa. Biblioteka rozpoznaje tylko programy o nazwie `qemu-system-*`,
 /// a systemy z rodziny RHEL uruchamiają maszyny programem `qemu-kvm`, więc szukamy sami.
 fn qemu_pid(name: &str) -> Result<u32> {
@@ -114,8 +129,7 @@ fn qemu_pid(name: &str) -> Result<u32> {
         let real = exe.as_deref().and_then(|p| p.to_str()).map(|p| is_qemu_program(p.rsplit('/').next().unwrap_or("")) && ["/usr/", "/opt/", "/bin/", "/sbin/"].iter().any(|d| p.starts_with(d)) && !p.contains("/../")).unwrap_or(false);
         // maszyna uruchomiona przez zwykłego użytkownika nie jest wybierana po nazwie: nazwę gościa ustawia
         // ten, kto uruchamia QEMU, więc mógłby podstawić własną maszynę pod nazwę cudzej (PID można podać jawnie)
-        use std::os::unix::fs::MetadataExt;
-        let system_owned = std::fs::metadata(e.path()).map(|m| m.uid() < FIRST_USER_UID).unwrap_or(false);
+        let system_owned = std::fs::read_to_string(e.path().join("status")).map(|s| all_uids_system(&s)).unwrap_or(false);
         if real && system_owned { found.push(pid); }
     }
     match found.as_slice() {
@@ -200,6 +214,17 @@ mod tests {
             ("..pdb", "953A8DE880B0818C32DA2DEC1D79C2D91"), ("ntkrnlmp.exe", "953A8DE880B0818C32DA2DEC1D79C2D91"), ("", "953A8DE880B0818C32DA2DEC1D79C2D91"),
             ("ntkrnlmp.pdb", "../../../../tmp/x"), ("ntkrnlmp.pdb", "953A8DE880B0818C32DA2DEC1D79C2D9/"), ("ntkrnlmp.pdb", "abc"), ("ntkrnlmp.pdb", ""), ("nt krnl.pdb", "953A8DE880B0818C32DA2DEC1D79C2D91")] {
             assert!(c(Some((file, guid))).is_err(), "{file} {guid}");
+        }
+    }
+
+    #[test]
+    fn process_owner_is_read_from_all_four_user_ids() {
+        use super::all_uids_system as f;
+        assert!(f("Name:\tqemu-kvm\nUid:\t107\t107\t107\t107\nGid:\t107\t107\t107\t107\n"));
+        assert!(f("Uid:\t0\t0\t0\t0\n"));
+        // zwykły użytkownik na dowolnej pozycji, brak wiersza, niepełny albo nieliczbowy wiersz
+        for bad in ["Uid:\t1000\t1000\t1000\t1000\n", "Uid:\t0\t1000\t0\t0\n", "Uid:\t107\t107\t107\t65534\n", "Name:\tx\n", "Uid:\t0\t0\n", "Uid:\t0\t0\t0\tx\n", ""] {
+            assert!(!f(bad), "{bad:?}");
         }
     }
 
