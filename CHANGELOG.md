@@ -9,7 +9,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - Detector `SHC`: code patterns typical of shellcode (finding its own address, direct system calls, known loader-stage prologues, reading the PEB, function-name hashing, copies of the kernel entry outside `ntdll`) in executable memory that does not come from a file on disk. Tuned on 20 Linux hosts, two Windows guests and a macOS workstation; see the detector tables in `docs/linux.md` and `docs/windows.md`.
 - `nanshe vm`: reduced weight for just-in-time runtimes on kernel evidence (runtime library and main program are images on the guest's system volume, in their installation directories).
 - Fuzz targets for the Windows system tables, the handling of model responses and the report generator.
-- macOS: process context (parents, children, user, start time, threads, command line), code signature state and notable entitlements in the result; reduced weight for JIT regions when the kernel-checked signature has a hardened runtime and the `allow-jit` entitlement.
+- macOS: process context (parents, children, user, start time, threads, command line), code signature state and notable entitlements in the result; reduced weight for JIT regions when the kernel-checked signature is valid, has a hardened runtime, the `allow-jit` entitlement and a publisher identity (a locally signed program gets none).
 
 ### Fixed
 

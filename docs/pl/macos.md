@@ -44,7 +44,7 @@ Działające detektory: `RWX`, `X-PRIV`, `ENT-X`, `HDR` (nagłówki Mach-O, PE i
 Uwagi do czytania wyników:
 
 - Na Apple Silicon zwykły program nie może mieć pamięci jednocześnie zapisywalnej i wykonywalnej. `RWX` oznacza więc region kompilatora JIT (`MAP_JIT`), który przeglądarki, środowiska JavaScript i maszyny wirtualne mają zasadnie.
-- **Obniżona waga regionów JIT opiera się na dowodzie z systemu, a nie na nazwach programów.** Procesowi z ważnym podpisem, utwardzonym środowiskiem i uprawnieniem `allow-jit` sam macOS pozwala tworzyć kod; jego znaleziska JIT mają obniżoną wagę (znacznik `jit:macos-allow-jit`). Wszystkie trzy fakty sprawdza jądro i proces nie może ich sobie nadać po uruchomieniu. Program bez utwardzonego środowiska (własna kompilacja, narzędzie podpisane lokalnie) nie dostaje obniżki, bo każdy taki program może utworzyć region JIT.
+- **Obniżona waga regionów JIT opiera się na dowodzie z systemu, a nie na nazwach programów.** Znaleziska JIT mają obniżoną wagę (znacznik `jit:macos-allow-jit`) tylko wtedy, gdy zachodzą cztery fakty: ważny podpis, utwardzone środowisko, uprawnienie `allow-jit` i tożsamość wydawcy (identyfikator zespołu z certyfikatu wydanego przez Apple albo program systemowy Apple). Wszystkie sprawdza jądro. Program podpisany lokalnie nie dostaje obniżki nawet z tym uprawnieniem: każdy może tak podpisać własny program. Tożsamość wydawcy mówi, kto podpisał program, a nie że program jest nieszkodliwy.
 
 ## Jeszcze niezaimplementowane
 

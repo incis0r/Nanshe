@@ -234,6 +234,7 @@ const PROC_PIDTASKINFO: i32 = 4;
 const PROC_PIDT_SHORTBSDINFO: i32 = 13;
 const CS_OPS_STATUS: u32 = 0;
 const CS_OPS_ENTITLEMENTS_BLOB: u32 = 7;
+const CS_OPS_TEAMID: u32 = 14;
 const CS_VALID: u32 = 0x1;
 const CS_ADHOC: u32 = 0x2;
 const CS_GET_TASK_ALLOW: u32 = 0x4;
@@ -304,7 +305,9 @@ fn user_name(uid: u32) -> String {
 
 /// Stan podpisu kodu procesu według jądra i lista jego istotnych uprawnień (entitlements).
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct Signing { flags: u32, entitlements: Vec<String> }
+pub(crate) struct Signing { flags: u32, entitlements: Vec<String>,
+    /// Identyfikator zespołu wydawcy z podpisu (certyfikat wydany przez Apple); brak przy podpisie lokalnym.
+    team: Option<String> }
 
 fn signing(pid: u32) -> Option<Signing> {
     let mut flags = 0u32;
@@ -313,7 +316,10 @@ fn signing(pid: u32) -> Option<Signing> {
     let mut blob = vec![0u8; 64 << 10];
     // SAFETY: bufor ma podany rozmiar. Przy zbyt małym buforze albo braku uprawnień wywołanie zwraca błąd i lista jest pusta.
     let ok = unsafe { csops(pid as i32, CS_OPS_ENTITLEMENTS_BLOB, blob.as_mut_ptr() as *mut c_void, blob.len()) } == 0;
-    Some(Signing { flags, entitlements: if ok { entitlements_in(&blob) } else { Vec::new() } })
+    let mut tb = [0u8; 64];
+    // SAFETY: bufor ma podany rozmiar. Program bez tożsamości wydawcy nie ma identyfikatora zespołu i wywołanie zwraca błąd.
+    let team = (unsafe { csops(pid as i32, CS_OPS_TEAMID, tb.as_mut_ptr() as *mut c_void, tb.len()) } == 0).then(|| team_in(&tb)).flatten();
+    Some(Signing { flags, entitlements: if ok { entitlements_in(&blob) } else { Vec::new() }, team })
 }
 
 /// Uprawnienia ustawione na "prawda" w dokumencie XML uprawnień. Dokument jest częścią podpisu sprawdzanego przez jądro.
@@ -325,22 +331,37 @@ pub(crate) fn entitlements_in(blob: &[u8]) -> Vec<String> {
     }).map(|e| e.to_string()).collect()
 }
 
+/// Identyfikator zespołu z odpowiedzi jądra: 8 bajtów nagłówka, potem napis. Przyjmujemy tylko postać, jaką
+/// nadaje Apple (10 znaków, wielkie litery i cyfry).
+pub(crate) fn team_in(blob: &[u8]) -> Option<String> {
+    let id = cstr_at(blob, 8, 32);
+    (id.len() == 10 && id.bytes().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())).then_some(id)
+}
+
 /// Opis podpisu dla człowieka.
 pub(crate) fn signing_text(s: &Signing) -> String {
     let mut parts: Vec<&str> = Vec::new();
     parts.push(if s.flags & CS_VALID != 0 { tr!("ważny", "valid") } else { tr!("NIEWAŻNY albo brak", "INVALID or missing") });
     if s.flags & CS_PLATFORM_BINARY != 0 { parts.push(tr!("program systemowy Apple", "Apple platform binary")); }
-    if s.flags & CS_ADHOC != 0 { parts.push(tr!("lokalny (adhoc), bez tożsamości wydawcy", "local (adhoc), no publisher identity")); }
+    let team;
+    match &s.team {
+        Some(t) => { team = trf!("wydawca: zespół {t}", "publisher: team {t}"); parts.push(&team); }
+        None if s.flags & CS_PLATFORM_BINARY == 0 => parts.push(tr!("bez tożsamości wydawcy (podpis lokalny)", "no publisher identity (local signature)")),
+        None => {}
+    }
     if s.flags & CS_RUNTIME != 0 { parts.push(tr!("utwardzone środowisko", "hardened runtime")); } else { parts.push(tr!("bez utwardzonego środowiska", "no hardened runtime")); }
     if s.flags & (CS_HARD | CS_KILL) != 0 { parts.push(tr!("wymuszanie podpisu stron", "page signature enforcement")); }
     if s.flags & CS_GET_TASK_ALLOW != 0 { parts.push(tr!("pozwala się debugować", "allows debugging")); }
     parts.join(", ")
 }
 
-/// Dowód, że region JIT jest w tym procesie dozwolony przez system: ważny podpis z utwardzonym środowiskiem
-/// i uprawnienie allow-jit. Obie rzeczy sprawdza jądro, proces nie może ich sobie nadać po uruchomieniu.
+/// Dowód, że region JIT jest w tym procesie dozwolony przez system i że za programem stoi znany wydawca:
+/// ważny podpis z utwardzonym środowiskiem, uprawnienie allow-jit oraz tożsamość wydawcy (identyfikator zespołu
+/// z certyfikatu Apple albo program systemowy). Podpis lokalny (adhoc) nie wystarcza: każdy może nim podpisać
+/// własny program razem z dowolnymi uprawnieniami.
 pub(crate) fn jit_allowed(s: &Signing) -> bool {
-    s.flags & CS_VALID != 0 && s.flags & CS_RUNTIME != 0 && s.entitlements.iter().any(|e| e == "com.apple.security.cs.allow-jit")
+    let publisher = s.flags & CS_ADHOC == 0 && (s.team.is_some() || s.flags & CS_PLATFORM_BINARY != 0);
+    s.flags & CS_VALID != 0 && s.flags & CS_RUNTIME != 0 && publisher && s.entitlements.iter().any(|e| e == "com.apple.security.cs.allow-jit")
 }
 
 /// Obraz hosta zebrany raz na skan: lista procesów z rodzicami.
@@ -467,8 +488,16 @@ mod tests {
         let xml = b"<plist><dict><key>com.apple.security.cs.allow-jit</key><true/><key>com.apple.security.get-task-allow</key><false/><key>com.apple.security.cs.debugger</key>\n\t<true/></dict></plist>";
         let ent = entitlements_in(xml);
         assert_eq!(ent, ["com.apple.security.cs.allow-jit", "com.apple.security.cs.debugger"]);
-        let ok = Signing { flags: CS_VALID | CS_RUNTIME, entitlements: ent.clone() };
+        let ok = Signing { flags: CS_VALID | CS_RUNTIME, entitlements: ent.clone(), team: Some("ABCDE12345".into()) };
         assert!(jit_allowed(&ok));
+        assert!(jit_allowed(&Signing { flags: CS_VALID | CS_RUNTIME | CS_PLATFORM_BINARY, team: None, ..ok.clone() }), "program systemowy Apple");
+        // podpis lokalny z tymi samymi uprawnieniami: każdy może taki zrobić, więc nie jest dowodem
+        assert!(!jit_allowed(&Signing { team: None, ..ok.clone() }), "brak tożsamości wydawcy");
+        assert!(!jit_allowed(&Signing { flags: CS_VALID | CS_RUNTIME | CS_ADHOC, ..ok.clone() }), "podpis adhoc mimo podanego zespołu");
+        // identyfikator zespołu: tylko postać nadawana przez Apple
+        let blob = |id: &[u8]| { let mut b = vec![0u8; 8]; b.extend(id); b.push(0); b };
+        assert_eq!(team_in(&blob(b"ABCDE12345")).as_deref(), Some("ABCDE12345"));
+        assert_eq!((team_in(&blob(b"abcde12345")), team_in(&blob(b"ABC")), team_in(&blob(b"")), team_in(&[])), (None, None, None, None));
         // każdy brakujący element odbiera obniżkę: nieważny podpis, brak utwardzonego środowiska, brak uprawnienia
         assert!(!jit_allowed(&Signing { flags: CS_RUNTIME, ..ok.clone() }));
         assert!(!jit_allowed(&Signing { flags: CS_VALID | CS_ADHOC, ..ok.clone() }));

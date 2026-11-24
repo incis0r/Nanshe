@@ -44,7 +44,7 @@ Detectors that apply: `RWX`, `X-PRIV`, `ENT-X`, `HDR` (Mach-O, PE and ELF header
 Notes for reading results:
 
 - On Apple Silicon an ordinary program cannot have memory that is writable and executable at once. `RWX` therefore means a JIT region (`MAP_JIT`), which browsers, JavaScript runtimes and virtual machines legitimately have.
-- **Reduced weight for JIT regions rests on evidence from the system, not on program names.** A process with a valid signature, a hardened runtime and the `allow-jit` entitlement is allowed by macOS itself to generate code; its JIT findings get a reduced weight (token `jit:macos-allow-jit`). All three facts are checked by the kernel and cannot be granted by the process to itself after start. A program without a hardened runtime (an own build, a locally signed tool) gets no reduction, because any such program may create a JIT region.
+- **Reduced weight for JIT regions rests on evidence from the system, not on program names.** JIT findings get a reduced weight (token `jit:macos-allow-jit`) only when four facts hold: a valid signature, a hardened runtime, the `allow-jit` entitlement and a publisher identity (a team identifier from a certificate issued by Apple, or an Apple platform binary). The kernel checks all of them. A locally signed program gets no reduction even with the entitlement: anyone can sign their own program that way. A publisher identity says who signed the program, not that the program is harmless.
 
 ## Not implemented yet
 

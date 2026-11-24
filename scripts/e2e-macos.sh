@@ -37,20 +37,21 @@ check macho      1 "ENT-X,HDR,X-PRIV" # nagłówek Mach-O w pamięci bez pliku
 check jit        1 "RWX,X-PRIV"       # region kompilatora JIT: jedyna pamięć RWX na Apple Silicon
 check all        1 "ENT-X,HDR,X-PRIV"
 
-# Program z utwardzonym środowiskiem i uprawnieniem allow-jit (jak przeglądarka): system sam zezwala mu na region
-# JIT, więc waga jest obniżona i proces nie przekracza progu. Ta sama próbka bez takiego podpisu (wyżej) go przekracza.
+# Program podpisany lokalnie z utwardzonym środowiskiem i uprawnieniem allow-jit: każdy może taki podpis zrobić,
+# więc nie jest dowodem na zasadny JIT. Waga zostaje pełna, a wynik pokazuje brak tożsamości wydawcy.
+# (Ścieżkę z prawdziwą tożsamością wydawcy sprawdza test jednostkowy; lokalnie nie da się jej podrobić.)
 SJ="$OUT/nanshe-sample-jit"
 cp "$S" "$SJ" && codesign -f -s - --options runtime --entitlements packaging/macos/sample-jit.entitlements "$SJ" 2>/dev/null
 "$SJ" jit 30 > /dev/null 2>&1 & spid=$!; sleep 0.7
-"$N" scan --pid "$spid" --min info --json "$OUT/jit-allowed.json" > /dev/null 2> "$OUT/jit-allowed.txt"
-"$N" scan --pid "$spid" --json /dev/null > /dev/null 2>&1; rc=$?
+"$N" scan --pid "$spid" --json "$OUT/jit-adhoc.json" > /dev/null 2> "$OUT/jit-adhoc.txt"; rc=$?
 { kill "$spid"; wait "$spid"; } 2>/dev/null
 res=OK
-[ "$rc" = 0 ] || { res=FAIL; echo "  kod=$rc (oczek. 0)"; }
-grep -q '"allowlisted": "jit:macos-allow-jit"' "$OUT/jit-allowed.json" || { res=FAIL; echo "  brak dowodu allow-jit w wyniku"; tail -2 "$OUT/jit-allowed.txt" | cut -c1-200; }
-grep -q '"tag": "RWX"' "$OUT/jit-allowed.json" || { res=FAIL; echo "  region RWX nie został odnotowany"; }
+[ "$rc" = 1 ] || { res=FAIL; echo "  kod=$rc (oczek. 1)"; }
+grep -q '"allowlisted"' "$OUT/jit-adhoc.json" && { res=FAIL; echo "  obniżka wagi mimo podpisu lokalnego"; }
+grep -q 'allow-jit' "$OUT/jit-adhoc.json" || { res=FAIL; echo "  uprawnienie allow-jit nie zostało pokazane"; }
+grep -q 'bez tożsamości wydawcy' "$OUT/jit-adhoc.json" || { res=FAIL; echo "  brak informacji o braku tożsamości wydawcy"; }
 [ $res = OK ] || fail=1
-echo "region JIT z uprawnieniem systemu (obnizona waga): $res"
+echo "region JIT z podpisem lokalnym (bez obnizki): $res"
 # kontekst procesu: rodzic, wiersz poleceń, podpis kodu
 res=OK
 "$S" rx-stage 30 > /dev/null 2>&1 & spid=$!; sleep 0.7
