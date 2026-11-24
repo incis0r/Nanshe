@@ -66,22 +66,20 @@ After opening the guest, the scanner checks that the process list contains the `
 | | Live scan inside Windows | Scan from the host |
 |---|---|---|
 | Protected processes (LSASS, antivirus) | not accessible | scanned |
-| Region list | from the memory manager (all reserved and committed regions) | from page tables: only pages present in physical memory |
+| Region list | from the memory manager (all reserved and committed regions) | region borders from the kernel VAD tree; only parts present in physical memory are examined (pages in the working set and transition pages) |
 | Region protection | as set by the process | effective protection from the page tables, combined across levels as the processor does |
-| Region type | private, mapped, image | image if inside a module of the process, otherwise private; unknown if the module list cannot be read |
-| Files mapped as data | known, with path | not distinguishable from private memory |
+| Region type | private, mapped, image | private, mapped or image from the kernel VAD tree; from the process module list only when the VAD layout of the kernel is not known (older symbol files) |
+| Files mapped as data | known, with path | known, with the path from the kernel file object (without the drive letter) |
 | Comparison of code with the file on disk (`IMG-MOD`) | yes | no (the host does not see the guest's files) |
 | Threads, network, open files, process tree | yes | no |
 | Reduced weight for just-in-time runtimes | yes | no (the program file cannot be verified from the host) |
 
 Consequences worth knowing before reading a report:
 
-- **False `X-PRIV` findings are possible when the module list of a process is incomplete.** The list is read from the running guest and can miss libraries; their code then looks like private executable memory. A process with hundreds of `X-PRIV` findings in the high address range is the typical sign. Treat such a result as a reason to rescan or to run a live scan, not as a finding. The planned fix is to take regions from the kernel VAD tree.
-- **Pages swapped out are not seen.** A region can be shorter than in a live scan, or missing.
+- **Region types come from the kernel, not from the process.** The VAD tree and the file objects are kernel structures, so a process cannot hide a library by editing its own module list, and an incomplete module list no longer produces false `X-PRIV` findings (measured: one process went from 430 such findings to 2, four others from hundreds to none). If the kernel symbol file lacks the VAD structures, the scanner falls back to the module list and says so in the result; the old weakness then applies.
+- **Pages written out to the page file are not seen.** A region can be shorter than in a live scan, or missing. Transition pages (taken from the working set but still in physical memory) are read. On the second guest two processes flagged by a live scan eight hours earlier (`dwm.exe`, `ShellExperienceHost.exe`) had no private executable page in physical memory at the time of the later scan from the host; whether those pages were paged out or released was not established.
 - **The guest keeps running during the scan,** so the result is not a consistent snapshot.
-- **`HDR` is reported only in executable regions.** Files mapped as data start with an image header and cannot be told apart from private memory; on the measured guest this produced 466 such regions before the rule was added. A header in non-executable private memory is therefore not reported in this mode.
-- **One page after each module is counted as part of it.** Windows Server 2025 maps one extra code page right after every image. A module's extent is its image size plus one page, rounded up to the 64 KiB allocation boundary. When an image ends exactly on a 64 KiB boundary, a separate one-page allocation placed right after it would not be distinguished.
-- **Processes without a module list** (`System`, `Secure System`, `Registry`, and processes whose loader data is swapped out) have regions of unknown type: code without a file is not detected in them, and the report says so.
+- **`HDR` in non-executable memory is reported only for regions the kernel marks as private.** Sections without a file and regions of unknown type are skipped, because files mapped as data start with an image header. Anti-malware engines keep many program images in private memory and are reported with many `HDR` findings (228 in `MsMpEng.exe` on the first guest).
 - Just-in-time runtimes (.NET, antivirus engines) appear with full weight, as in a dump.
 
 ## What was measured
@@ -98,18 +96,17 @@ Second guest, 2026-11-24: Windows 11 Enterprise LTSC (build 26100.9974, 4 GiB RA
 - 137 to 162 guest processes per run, 18 to 34 seconds, no read errors. The live scan could not open 17 processes (among them `lsass.exe`, `MsMpEng.exe`, `csrss.exe`, `services.exe`); the scan from the host read all of them.
 - The first runs on this guest were wrong in both directions: no executable page was seen in any process of an ordinary user. Cause: kernel page-table isolation. Such a process has two sets of page tables, and in the kernel set the whole user half is marked no-execute. The scanner now reads the user set (`UserDirectoryTableBase`) when the process has one. On the first guest every flagged process was a system process with a single set, so the fault did not show.
 - After the fix, of 14 processes flagged by the live scan, 12 were also flagged from the host. For `TrueConf.exe`, 87 of the 101 flagged region addresses of the live scan were found again; for `QtWebEngineProcess.exe` the findings were the same apart from `IMG-MOD`. `dwm.exe` (57 `X-PRIV` regions in the live scan) and `ShellExperienceHost.exe` were not flagged from the host; the cause was not established.
-- False positives remain: four processes (`svchost.exe` twice, `StartMenuExperienceHost.exe`, and a much higher count in one application process) had hundreds of `X-PRIV` findings that the live scan does not have. Assessment: the module list read from the running guest was incomplete, so code of libraries missing from the list looks like private memory. Which processes are affected changed from run to run.
+- With regions taken from the VAD tree (later the same day) the false positives of the earlier runs disappeared: of the 14 processes flagged by the live scan, 12 were flagged from the host with the same tags apart from `IMG-MOD` (for example `QtWebEngineProcess.exe`: `X-PRIV` 6 and `ENT-X` 3 in both), no process was flagged from the host that the live scan had examined and not flagged, and `MsMpEng.exe`, which the live scan cannot open, was read. Region counts of JIT-heavy processes differ between the two scans, taken eight hours apart.
 - Counts are not comparable one to one: the live scan counts regions, the scan from the host counts runs of present pages, so one region can appear as many findings.
 
 ## Implementation notes
 
 - Crate `nanshe-vm`. Guest physical memory and the Windows kernel are located with the [memflow](https://github.com/memflow/memflow) library (MIT); process listing and module lists come from it.
-- Page tables are walked by Nanshe itself (`walk_page_tables`). memflow 0.2.4 combines the write bit of page-table levels with "or" instead of "and", which makes every page look writable and every code page `RWX`.
+- Page tables are walked and guest memory is read by Nanshe itself (`walk_page_tables`, `leaf_entry`), including transition pages and entries whose address bits Windows inverts on processors affected by L1TF. memflow 0.2.4 combines the write bit of page-table levels with "or" instead of "and", which makes every page look writable and every code page `RWX`, and it does not translate transition pages.
 - A process under kernel page-table isolation has a second set of page tables for user mode; its address is read from `_KPROCESS.UserDirectoryTableBase` (offset from the same symbol file) and used when present.
 - The guest is untrusted input. The page walk is bounded by the number of tables read (`MAX_TABLES`) and by the number of page ranges per process (`MAX_RANGES`); when a limit is reached the result for the process is marked incomplete. Both limits are tested, together with unreadable and self-referencing tables.
 
 ## Roadmap for this feature
 
-- Region list from the kernel's VAD tree (true region types, file names of mapped files, reserved regions).
-- Transition and prototype pages (present in physical memory but not marked present in the page tables).
+- Prototype pages (shared pages not yet touched by the process) and pages in the page file.
 - Other hypervisors (Proxmox uses QEMU and is expected to work; Hyper-V and VMware need a different way to reach guest memory) and Linux guests.

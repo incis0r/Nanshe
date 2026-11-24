@@ -18,8 +18,8 @@ Exit code of the e2e scripts: 0 when everything matches, 1 when anything deviate
 
 | Layer | Result |
 |---|---|
-| Unit tests | 144 pass (analyze 26, core 3, dump 8, kb 7, live 21, llm 40, report 30, vm 9) |
-| macOS (arm64, native) | 143 unit tests (4 of them for the macOS backend, which run only there) and `scripts/e2e-macos.sh`: 7 samples and 4 groups of additional assertions; see [macos.md](macos.md) |
+| Unit tests | 148 pass (analyze 26, core 3, dump 8, kb 7, live 21, llm 40, report 30, vm 13) |
+| macOS (arm64, native) | 147 unit tests (4 of them for the macOS backend, which run only there) and `scripts/e2e-macos.sh`: 7 samples and 4 groups of additional assertions; see [macos.md](macos.md) |
 | Hypervisor read (`nanshe vm`) | one live run against a Windows Server 2025 guest on KVM (see [hypervisor.md](hypervisor.md)); no automated end-to-end test |
 | Full live scans, Linux | `nanshe scan --all` on 20 hosts of one lab (19 x86_64, 1 arm64), 2026-11-23, before and after the detection tuning; no process was verified manually |
 | e2e Linux (aarch64, container) | 16 static samples, 2 dynamic and 8 groups of additional assertions |
@@ -165,6 +165,9 @@ In addition, the PDF from a sample was opened with an external tool (`pypdf`: 5 
 | `symbol_identifiers_from_the_guest_cannot_form_a_path` | the symbol file name and identifier reported by the guest are accepted only as a plain `*.pdb` name and a hexadecimal string; path separators, `..`, other extensions and empty values are refused |
 | `process_owner_is_read_from_all_four_user_ids` | a QEMU process counts as started by a system account only when all four user identifiers in its status file are below 1000; a missing, short or non-numeric line is refused |
 | `user_page_tables_are_used_only_when_the_process_has_them` | the user-mode page table address is taken from the field without its flag bits; a field holding only flags, zero or an unreadable field means the process has one set of tables |
+| `vad_tree_gives_sorted_regions_with_their_kind`, `vad_walk_survives_hostile_trees` | the VAD tree walk: region ranges above 4 GiB of pages, private and image flags; an empty, misplaced, unaligned or unreadable root, a node pointing at itself, reversed and overlapping ranges, field offsets outside a node |
+| `regions_take_protection_from_pages_and_kind_from_vads` | regions take protection from page ranges and type and file name from VAD entries; pages of one VAD region with a gap form one region; pages outside any VAD have an unknown type |
+| `transition_pages_are_part_of_the_map_and_can_be_located` | transition pages and transition page tables (also with the inverted high address bit) are part of the map with the protection from their entry; prototype and page-file entries are not; address translation finds the entry |
 | `guest_name_is_read_from_qemu_arguments_only` | the guest name is taken from `-name` of `qemu-system-*` and `qemu-kvm` only; other programs with the same argument are ignored |
 | `symbol_download_is_impossible_without_consent` | with an empty symbol directory and downloading not allowed, loading kernel symbols fails quickly (under 2 seconds), without a connection attempt, and leaves no file in the directory |
 

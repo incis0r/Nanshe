@@ -1,5 +1,5 @@
-use crate::{build_regions, walk_page_tables, GuestProc, Module, PageRange, Symbols};
-use memflow::prelude::v1::{Address, ConnectorArgs, MemoryView, Os, PartialError, PhysicalAddress, Pid, Process, ProcessInfo, ProcessState};
+use crate::{build_regions, regions_from_vads, walk_page_tables, walk_vads, GuestProc, Module, Symbols, Vad, VadOffsets};
+use memflow::prelude::v1::{Address, ConnectorArgs, MemoryView, Os, PhysicalAddress, Pid, Process, ProcessInfo, ProcessState};
 use memflow_win32::prelude::v1::{SymbolStore, Win32Kernel};
 use nanshe_core::{tr, trf, Error, MemorySource, Region, Result, SourceInfo};
 use memflow::cglue::forward::ForwardMut;
@@ -10,11 +10,34 @@ use std::rc::Rc;
 trait Kernel {
     fn procs(&mut self) -> Result<Vec<ProcessInfo>>;
     /// Zakresy stron, moduły i znacznik, czy tablice stron przeczytano w całości.
-    fn layout(&mut self, p: &ProcessInfo) -> Result<(Vec<PageRange>, Vec<Module>, bool)>;
+    fn layout(&mut self, p: &ProcessInfo) -> Result<Layout>;
     fn read(&mut self, p: &ProcessInfo, addr: u64, buf: &mut [u8]) -> Result<usize>;
 }
 
 fn fail(what: &str, e: impl std::fmt::Display) -> Error { Error::Invalid(format!("{what}: {e}")) }
+
+/// Nazwa pliku regionu mapowanego: węzeł VAD -> podsekcja -> obszar kontrolny -> obiekt pliku -> nazwa.
+/// Każdy wskaźnik pochodzi z pamięci gościa: musi wskazywać pamięć jądra, a długość nazwy jest ograniczona.
+/// Wynik dla danego obszaru kontrolnego jest zapamiętywany (wiele regionów wskazuje ten sam plik).
+fn file_name<M: MemoryView>(mem: &mut M, v: &VadPaths, node: u64, seen: &mut std::collections::HashMap<u64, Option<String>>) -> Option<String> {
+    let kernel = |a: u64| (a >= 0xffff_8000_0000_0000).then_some(a);
+    let subsection = kernel(mem.read::<u64>(Address::from(node + v.subsection as u64)).ok()?)?;
+    let control_area = kernel(mem.read::<u64>(Address::from(subsection + v.control_area as u64)).ok()?)?;
+    if let Some(n) = seen.get(&control_area) { return n.clone(); }
+    let name = (|| {
+        // wskaźnik na obiekt pliku ma w młodszych 4 bitach licznik odwołań
+        let file = kernel(mem.read::<u64>(Address::from(control_area + v.file_pointer as u64)).ok()? & !0xf)?;
+        let len = mem.read::<u16>(Address::from(file + v.file_name as u64)).ok()? as usize;
+        let buffer = kernel(mem.read::<u64>(Address::from(file + v.file_name as u64 + 8)).ok()?)?;
+        if len == 0 || len % 2 != 0 { return None; }
+        let mut raw = vec![0u8; len.min(MAX_FILE_NAME * 2)];
+        mem.read_raw_into(Address::from(buffer), &mut raw).ok()?;
+        let wide: Vec<u16> = raw.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        Some(String::from_utf16_lossy(&wide)).filter(|s| !s.is_empty())
+    })();
+    seen.insert(control_area, name.clone());
+    name
+}
 
 /// Adres tablic stron trybu użytkownika z pola UserDirectoryTableBase albo None, gdy proces ich nie ma.
 pub(crate) fn user_dtb_root(field: Option<u64>) -> Option<u64> {
@@ -22,40 +45,109 @@ pub(crate) fn user_dtb_root(field: Option<u64>) -> Option<u64> {
 }
 
 /// Jądro gościa razem z tym, czego biblioteka nie zna: położeniem adresu tablic stron trybu użytkownika.
-struct WinKernel<T, V> { k: Win32Kernel<T, V>, user_dtb_offset: Option<usize> }
+struct WinKernel<T, V> { k: Win32Kernel<T, V>, user_dtb_offset: Option<usize>, vad: Option<VadPaths>,
+    /// Tablice stron ostatnio czytanego procesu (pid i adres tablicy głównej), żeby nie czytać ich dla każdej strony od nowa.
+    tables: std::collections::HashMap<u64, Option<Rc<[u64]>>>, tables_for: (u32, u64) }
+
+/// Mapa regionów procesu gościa i to, na ile można jej ufać.
+pub(crate) struct Layout {
+    regions: Vec<Region>,
+    /// Rodzaj regionów jest znany (z drzewa VAD albo z listy modułów).
+    kinds_known: bool,
+    /// Tablice stron i drzewo VAD przeczytane w całości.
+    complete: bool,
+    /// Regiony pochodzą z drzewa VAD jądra (false: z listy modułów programu ładującego).
+    from_vad: bool,
+}
+
+/// Położenia pól potrzebnych do przejścia drzewa VAD i odczytania nazwy pliku, z pliku symboli jądra.
+#[derive(Clone, Copy, Debug)]
+struct VadPaths { vad_root: usize, tree: VadOffsets, subsection: usize, control_area: usize, file_pointer: usize, file_name: usize }
+
+/// Nazwa pliku w obiekcie pliku jądra: najwyżej tyle znaków.
+const MAX_FILE_NAME: usize = 520;
 
 impl<T, V> Kernel for WinKernel<T, V>
 where T: memflow::prelude::v1::PhysicalMemory + Clone + 'static, V: memflow::prelude::v1::VirtualTranslate2 + Clone + 'static {
     fn procs(&mut self) -> Result<Vec<ProcessInfo>> {
         self.k.process_info_list().map_err(|e| fail(tr!("lista procesów gościa", "guest process list"), e))
     }
-    fn layout(&mut self, p: &ProcessInfo) -> Result<(Vec<PageRange>, Vec<Module>, bool)> {
+    fn layout(&mut self, p: &ProcessInfo) -> Result<Layout> {
         if p.dtb1.is_null() { return Err(Error::Invalid(tr!("proces gościa nie ma tablic stron (kończy się albo jest procesem minimalnym)", "the guest process has no page tables (it is exiting or is a minimal process)").into())); }
         // Przy izolacji tablic stron jądra (ochrona przed Meltdown) proces bez uprawnień administratora ma dwa
         // zestawy tablic. W jądrowych cała przestrzeń użytkownika jest oznaczona jako niewykonywalna, więc
         // faktyczną ochronę stron widać tylko w tablicach trybu użytkownika (pole UserDirectoryTableBase).
         // Młodsze 12 bitów pola to znaczniki; proces z jednym zestawem tablic ma w nim sam znacznik (pomiar na
         // Windows 11 build 26100: wartość 1 dla procesów systemowych, adres z końcówką 001 dla pozostałych).
-        let root = user_dtb_root(self.user_dtb_offset.and_then(|off| self.k.virt_mem.read::<u64>(p.address + off).ok())).unwrap_or(p.dtb1.to_umem());
+        let user_root = user_dtb_root(self.user_dtb_offset.and_then(|off| self.k.virt_mem.read::<u64>(p.address + off).ok()));
+        let root = user_root.unwrap_or(p.dtb1.to_umem());
+        let root_tables = root;
         let phys = self.k.virt_mem.phys_mem();
         let (ranges, complete) = walk_page_tables(root, |addr| {
             let mut raw = [0u8; 4096];
             phys.phys_read_into(PhysicalAddress::from(addr), &mut raw).ok()?;
             Some(raw.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect())
         });
+        // Regiony z drzewa VAD jądra: prawdziwe granice, rodzaj i nazwa pliku każdego regionu, niezależnie od
+        // listy modułów prowadzonej przez sam proces (która bywa niepełna albo nieczytelna).
+        if let Some(v) = self.vad {
+            if let Ok(root) = self.k.virt_mem.read::<u64>(p.address + v.vad_root) {
+                let mem = &mut self.k.virt_mem;
+                let (vads, tree_complete) = walk_vads(root, &v.tree, |addr, buf| mem.read_raw_into(Address::from(addr), buf).is_ok());
+                if !vads.is_empty() {
+                    let mut names: std::collections::HashMap<u64, Option<String>> = std::collections::HashMap::new();
+                    let named: Vec<(Vad, Option<String>)> = vads.into_iter().map(|vad| {
+                        let name = if vad.private { None } else { file_name(mem, &v, vad.node, &mut names) };
+                        (vad, name)
+                    }).collect();
+                    let regions = regions_from_vads(&ranges, &named);
+                    if std::env::var_os("NANSHE_VM_DEBUG").is_some() {
+                        let x: Vec<&Region> = regions.iter().filter(|r| r.is_x()).collect();
+                        let count = |k: nanshe_core::RegionKind| x.iter().filter(|r| r.kind == k).count();
+                        eprintln!("DBG pid={} {} tables={root_tables:x} user_tables={} vads={} tree_complete={tree_complete} ranges={} exec: private={} image={} mapped={} unknown={}", p.pid, p.name, user_root.is_some(),
+                            named.len(), ranges.len(), count(nanshe_core::RegionKind::Private), count(nanshe_core::RegionKind::Image), count(nanshe_core::RegionKind::Mapped), count(nanshe_core::RegionKind::Unknown));
+                        for r in x.iter().filter(|r| r.kind != nanshe_core::RegionKind::Image).take(6) { eprintln!("DBG    {:x}+{:x} {:?} {:?} {:?}", r.base, r.size, r.kind, r.label, r.backing); }
+                    }
+                    return Ok(Layout { regions, kinds_known: true, complete: complete && tree_complete, from_vad: true });
+                }
+            }
+        }
         let mut proc = self.k.process_by_info(p.clone()).map_err(|e| fail(tr!("proces gościa", "guest process"), e))?;
         // lista modułów bywa nieczytelna (strony wyrzucone z pamięci): wtedy regiony zostają bez nazw plików
-        let modules = proc.module_list().unwrap_or_default().into_iter()
+        let modules: Vec<Module> = proc.module_list().unwrap_or_default().into_iter()
             .map(|m| Module { base: m.base.to_umem(), size: m.size, path: m.path.to_string() }).collect();
-        Ok((ranges, modules, complete))
+        Ok(Layout { regions: build_regions(&ranges, &modules), kinds_known: !modules.is_empty(), complete, from_vad: false })
     }
     fn read(&mut self, p: &ProcessInfo, addr: u64, buf: &mut [u8]) -> Result<usize> {
-        let mut proc = self.k.process_by_info(p.clone()).map_err(|e| fail(tr!("proces gościa", "guest process"), e))?;
-        match proc.read_raw_into(Address::from(addr), buf) {
-            // odczyt częściowy: brakujące strony zostają wyzerowane, jak w skanie procesu na żywo
-            Ok(()) | Err(PartialError::PartialVirtualRead(())) => Ok(buf.len()),
-            Err(e) => Err(fail(tr!("odczyt pamięci gościa", "guest memory read"), e)),
+        // Własne tłumaczenie adresów zamiast bibliotecznego: te same tablice co przy budowie mapy (także tablice
+        // trybu użytkownika) i strony przejściowe, których procesor nie uznaje za obecne, choć leżą w pamięci.
+        let root = user_dtb_root(self.user_dtb_offset.and_then(|off| self.k.virt_mem.read::<u64>(p.address + off).ok())).unwrap_or(p.dtb1.to_umem());
+        if self.tables_for != (p.pid, root) || self.tables.len() > 8192 { self.tables.clear(); self.tables_for = (p.pid, root); }
+        let phys = self.k.virt_mem.phys_mem();
+        let tables = &mut self.tables;
+        let mut done = 0usize;
+        let mut any = false;
+        while done < buf.len() {
+            let va = addr.wrapping_add(done as u64);
+            let leaf = crate::leaf_entry(root, va, |a| {
+                if let Some(t) = tables.get(&a) { return t.clone(); }
+                let mut raw = [0u8; 4096];
+                let t: Option<Rc<[u64]>> = phys.phys_read_into(PhysicalAddress::from(a), &mut raw).ok()
+                    .map(|_| raw.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect());
+                tables.insert(a, t.clone());
+                t
+            });
+            // strona poza pamięcią fizyczną: zostaje wyzerowana, jak w odczycie częściowym skanu na żywo
+            let Some((entry, page)) = leaf else { done += (4096 - (va & 4095) as usize).min(buf.len() - done); continue };
+            let within = va & (page - 1);
+            let step = ((page - within) as usize).min(buf.len() - done).min(1 << 20);
+            for frame in crate::frame_candidates(entry) {
+                let base = frame & !(page - 1);
+                if phys.phys_read_into(PhysicalAddress::from(base + within), &mut buf[done..done + step]).is_ok() { any = true; break; }
+            }
+            done += step;
         }
+        if any || buf.is_empty() { Ok(buf.len()) } else { Err(Error::Access(trf!("odczyt pamięci gościa pod adresem {addr:#x}: żadna strona nie leży w pamięci fizycznej", "guest memory read at {addr:#x}: no page is present in physical memory"))) }
     }
 }
 
@@ -83,13 +175,24 @@ pub fn open(target: &str, symbols: Symbols) -> Result<Guest> {
     let arch = scanned.os_info.arch;
     // położenie pola z adresem tablic stron trybu użytkownika, z tego samego pliku symboli; brak pola albo
     // pliku nie przerywa pracy (starsze systemy nie mają tego pola), tylko wyłącza korzystanie z tych tablic
-    let user_dtb_offset = scanned.kernel_guid.as_ref().and_then(|g| store.load(g).ok())
-        .and_then(|pdb| memflow_win32::offsets::pdb::PdbStruct::new(&pdb, "_KPROCESS").ok())
-        .and_then(|k| k.find_field("UserDirectoryTableBase").map(|f| f.offset));
+    let pdb = scanned.kernel_guid.as_ref().and_then(|g| store.load(g).ok());
+    let field = |st: &str, name: &str| pdb.as_deref().and_then(|b| memflow_win32::offsets::pdb::PdbStruct::new(b, st).ok()).and_then(|k| k.find_field(name).map(|f| (f.offset, f.bit_offset as u32)));
+    let user_dtb_offset = field("_KPROCESS", "UserDirectoryTableBase").map(|f| f.0);
+    // położenia pól drzewa VAD; gdy którekolwiek jest nieznane, regiony powstają po staremu, z listy modułów
+    let vad = (|| Some(VadPaths {
+        vad_root: field("_EPROCESS", "VadRoot")?.0,
+        tree: VadOffsets { left: 0, right: 8,
+            start_vpn: field("_MMVAD_SHORT", "StartingVpn")?.0, end_vpn: field("_MMVAD_SHORT", "EndingVpn")?.0,
+            start_high: field("_MMVAD_SHORT", "StartingVpnHigh")?.0, end_high: field("_MMVAD_SHORT", "EndingVpnHigh")?.0,
+            flags: field("_MMVAD_SHORT", "u")?.0, type_bit: field("_MMVAD_FLAGS", "VadType")?.1, private_bit: field("_MMVAD_FLAGS", "PrivateMemory")?.1 },
+        subsection: field("_MMVAD", "Subsection")?.0, control_area: field("_SUBSECTION", "ControlArea")?.0,
+        file_pointer: field("_CONTROL_AREA", "FilePointer")?.0, file_name: field("_FILE_OBJECT", "FileName")?.0,
+    }))();
+    if std::env::var_os("NANSHE_VM_DEBUG").is_some() { eprintln!("DBG vad offsets: {vad:?} user_dtb: {user_dtb_offset:?}"); }
     let built = memflow_win32::offsets::offset_builder_with_kernel_info(&scanned).symbol_store(store).build().map(|offsets| {
         let phys = memflow::prelude::v1::CachedPhysicalMemory::builder(connector).arch(arch).build().unwrap();
         let vat = memflow::prelude::v1::CachedVirtualTranslate::builder(memflow::prelude::v1::DirectTranslate::new()).arch(arch).build().unwrap();
-        WinKernel { k: Win32Kernel::new(phys, vat, offsets, scanned), user_dtb_offset }
+        WinKernel { k: Win32Kernel::new(phys, vat, offsets, scanned), user_dtb_offset, vad, tables: Default::default(), tables_for: (0, 0) }
     });
     let kernel = built.map_err(|e| Error::Invalid(if symbols.fetch {
         trf!("nie udało się rozpoznać jądra Windows w pamięci gościa: {e}", "could not identify the Windows kernel in guest memory: {e}")
@@ -182,12 +285,14 @@ impl Guest {
     pub fn process(&self, pid: u32) -> Result<GuestProcess> {
         let info = self.infos()?.into_iter().find(|p| p.pid == pid as Pid && matches!(p.state, ProcessState::Alive))
             .ok_or_else(|| Error::NotFound(trf!("proces gościa {pid}", "guest process {pid}")))?;
-        let (ranges, modules, tables_complete) = self.kernel.borrow_mut().layout(&info)?;
-        Ok(GuestProcess { kernel: self.kernel.clone(), regions: build_regions(&ranges, &modules), modules_known: !modules.is_empty(), tables_complete, info })
+        let l = self.kernel.borrow_mut().layout(&info)?;
+        Ok(GuestProcess { kernel: self.kernel.clone(), regions: l.regions, modules_known: l.kinds_known, tables_complete: l.complete, from_vad: l.from_vad, info })
     }
 }
 
-pub struct GuestProcess { kernel: Rc<RefCell<Box<dyn Kernel>>>, info: ProcessInfo, regions: Vec<Region>, pub modules_known: bool, pub tables_complete: bool }
+pub struct GuestProcess { kernel: Rc<RefCell<Box<dyn Kernel>>>, info: ProcessInfo, regions: Vec<Region>, pub modules_known: bool, pub tables_complete: bool,
+    /// Regiony pochodzą z drzewa VAD jądra, a nie z listy modułów procesu.
+    pub from_vad: bool }
 
 impl GuestProcess {
     pub fn cmdline(&self) -> String { self.info.command_line.to_string() }

@@ -18,8 +18,8 @@ Kod wyjścia skryptów e2e: 0 gdy wszystko zgodne, 1 gdy cokolwiek odbiega.
 
 | Warstwa | Wynik |
 |---|---|
-| Testy jednostkowe | 144 przechodzi (analyze 26, core 3, dump 8, kb 7, live 21, llm 40, report 30, vm 9) |
-| macOS (arm64, natywnie) | 143 testów jednostkowych (w tym 4 backendu macOS, uruchamiane tylko tam) oraz `scripts/e2e-macos.sh`: 7 próbek i 4 grupy asercji dodatkowych; zob. [macos.md](macos.md) |
+| Testy jednostkowe | 148 przechodzi (analyze 26, core 3, dump 8, kb 7, live 21, llm 40, report 30, vm 13) |
+| macOS (arm64, natywnie) | 147 testów jednostkowych (w tym 4 backendu macOS, uruchamiane tylko tam) oraz `scripts/e2e-macos.sh`: 7 próbek i 4 grupy asercji dodatkowych; zob. [macos.md](macos.md) |
 | Odczyt z hiperwizora (`nanshe vm`) | jedno uruchomienie na żywo na gościu Windows Server 2025 pod KVM (zob. [hiperwizor.md](hiperwizor.md)); bez automatycznego testu end-to-end |
 | Pełne skany na żywo, Linux | `nanshe scan --all` na 20 hostach jednego labu (19 x86_64, 1 arm64), 2026-11-23, przed strojeniem detekcji i po nim; żadnego procesu nie weryfikowano ręcznie |
 | e2e Linux (aarch64, kontener) | 16 próbek statycznych, 2 dynamiczne i 8 grup asercji dodatkowych |
@@ -165,6 +165,9 @@ Dodatkowo PDF z próbki został otwarty zewnętrznym narzędziem (`pypdf`: 5 str
 | `symbol_identifiers_from_the_guest_cannot_form_a_path` | nazwa pliku symboli i identyfikator podane przez gościa są przyjmowane tylko jako zwykła nazwa `*.pdb` i ciąg szesnastkowy; separatory ścieżki, `..`, inne rozszerzenia i wartości puste są odrzucane |
 | `process_owner_is_read_from_all_four_user_ids` | proces QEMU liczy się jako uruchomiony z konta systemowego tylko wtedy, gdy wszystkie cztery identyfikatory użytkownika w jego pliku statusu są poniżej 1000; wiersz brakujący, niepełny albo nieliczbowy jest odrzucany |
 | `user_page_tables_are_used_only_when_the_process_has_them` | adres tablic stron trybu użytkownika jest brany z pola bez bitów znaczników; pole z samymi znacznikami, zerowe albo nieprzeczytane oznacza, że proces ma jeden zestaw tablic |
+| `vad_tree_gives_sorted_regions_with_their_kind`, `vad_walk_survives_hostile_trees` | przejście drzewa VAD: zakresy powyżej 4 GiB stron, znaczniki regionu prywatnego i obrazu; korzeń pusty, spoza pamięci jądra, niewyrównany albo nieczytelny, węzeł wskazujący na siebie, zakresy odwrócone i nakładające się, położenia pól poza węzłem |
+| `regions_take_protection_from_pages_and_kind_from_vads` | regiony biorą ochronę z zakresów stron, a rodzaj i nazwę pliku z wpisów VAD; strony jednego regionu VAD z przerwą tworzą jeden region; strony poza VAD mają rodzaj nieznany |
+| `transition_pages_are_part_of_the_map_and_can_be_located` | strony przejściowe i przejściowe tablice stron (także z odwróconym wysokim bitem adresu) są częścią mapy z ochroną ze swojego wpisu; wpisy prototypowe i pliku wymiany nie; tłumaczenie adresu znajduje wpis |
 | `guest_name_is_read_from_qemu_arguments_only` | nazwa gościa jest brana z `-name` tylko dla `qemu-system-*` i `qemu-kvm`; inne programy z takim argumentem są ignorowane |
 | `symbol_download_is_impossible_without_consent` | przy pustym katalogu symboli i bez zgody na pobieranie wczytanie symboli jądra kończy się błędem szybko (poniżej 2 sekund), bez próby połączenia, i nie zostawia w katalogu żadnego pliku |
 

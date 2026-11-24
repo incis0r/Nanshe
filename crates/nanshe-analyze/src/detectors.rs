@@ -239,11 +239,11 @@ impl Detector for Hdr {
     fn id(&self) -> &'static str { "hdr" }
     fn scan(&self, r: &Region, d: &[u8], ctx: &Ctx) -> Vec<Finding> {
         if r.backing.is_some() || is_kernel_special(r) { return vec![]; }
-        // Odczyt z hiperwizora zna tylko moduły z listy programu ładującego: plików zmapowanych jako dane
-        // (biblioteki zasobów, pliki językowe) nie odróżni od pamięci prywatnej, a każdy z nich zaczyna się
-        // nagłówkiem. Pomiar na kontrolerze domeny LAB (2026-11-23): 466 takich regionów w 96 procesach.
-        // Dlatego w tym trybie nagłówek liczy się tylko w regionie wykonywalnym.
-        if ctx.info.source_type == "vm" && !r.is_x() { return vec![]; }
+        // Odczyt z hiperwizora: nagłówek w regionie niewykonywalnym liczy się tylko wtedy, gdy wiadomo, że region
+        // jest prywatny (rodzaj z drzewa VAD jądra). Gdy rodzaj jest nieznany (regiony z samej listy modułów) albo
+        // region jest sekcją bez pliku, nie da się go odróżnić od pliku zmapowanego jako dane, a takie zaczynają
+        // się nagłówkiem: na kontrolerze domeny LAB dawało to 466 regionów w 96 procesach (2026-11-23).
+        if ctx.info.source_type == "vm" && !r.is_x() && r.kind != RegionKind::Private { return vec![]; }
         // Niewykonywalny stos pomijamy: program ładujący trzyma na nim kopię nagłówka każdej ładowanej
         // biblioteki, a przy losowym położeniu stosu kopia co jakiś czas wypada na początku strony
         // (zaobserwowane w e2e na próbce delexec, 2026-11-22).

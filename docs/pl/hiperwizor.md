@@ -66,22 +66,20 @@ Po otwarciu gościa skaner sprawdza, czy lista procesów zawiera proces `System`
 | | Skan na żywo w Windows | Skan z hosta |
 |---|---|---|
 | Procesy chronione (LSASS, antywirus) | niedostępne | skanowane |
-| Lista regionów | z menedżera pamięci (wszystkie regiony zarezerwowane i przydzielone) | z tablic stron: tylko strony obecne w pamięci fizycznej |
+| Lista regionów | z menedżera pamięci (wszystkie regiony zarezerwowane i przydzielone) | granice regionów z drzewa VAD jądra; badane są tylko części obecne w pamięci fizycznej (strony w zestawie roboczym i strony przejściowe) |
 | Ochrona regionu | ustawiona przez proces | faktyczna, z tablic stron, łączona między poziomami tak jak w procesorze |
-| Rodzaj regionu | prywatny, mapowany, obraz | obraz, jeśli leży w module procesu, w przeciwnym razie prywatny; nieznany, gdy listy modułów nie da się przeczytać |
-| Pliki mapowane jako dane | znane, ze ścieżką | nieodróżnialne od pamięci prywatnej |
+| Rodzaj regionu | prywatny, mapowany, obraz | prywatny, mapowany albo obraz z drzewa VAD jądra; z listy modułów procesu tylko wtedy, gdy układ VAD jądra nie jest znany (starsze pliki symboli) |
+| Pliki mapowane jako dane | znane, ze ścieżką | znane, ze ścieżką z obiektu pliku jądra (bez litery dysku) |
 | Porównanie kodu z plikiem na dysku (`IMG-MOD`) | tak | nie (host nie widzi plików gościa) |
 | Wątki, sieć, otwarte pliki, drzewo procesów | tak | nie |
 | Obniżka wagi dla środowisk tworzących kod w locie | tak | nie (pliku programu nie da się sprawdzić z hosta) |
 
 Skutki, o których warto wiedzieć przed lekturą raportu:
 
-- **Możliwe są fałszywe znaleziska `X-PRIV`, gdy lista modułów procesu jest niepełna.** Lista jest czytana z działającego gościa i może nie zawierać części bibliotek; ich kod wygląda wtedy jak prywatna pamięć wykonywalna. Typowy objaw to proces z setkami znalezisk `X-PRIV` w wysokich adresach. Taki wynik to powód do ponownego skanu albo skanu na żywo, a nie znalezisko. Planowana poprawka: regiony z drzewa VAD jądra.
-- **Stron wyrzuconych do pliku wymiany nie widać.** Region może być krótszy niż w skanie na żywo albo może go nie być.
+- **Rodzaj regionów pochodzi z jądra, nie z procesu.** Drzewo VAD i obiekty plików to struktury jądra, więc proces nie ukryje biblioteki, edytując własną listę modułów, a niepełna lista modułów nie daje już fałszywych znalezisk `X-PRIV` (zmierzone: jeden proces spadł z 430 takich znalezisk do 2, cztery inne z setek do zera). Jeśli plik symboli jądra nie zawiera struktur VAD, skaner wraca do listy modułów i mówi o tym w wyniku; wtedy dawna słabość obowiązuje.
+- **Stron zapisanych do pliku wymiany nie widać.** Region może być krótszy niż w skanie na żywo albo może go nie być. Strony przejściowe (zdjęte z zestawu roboczego, ale nadal w pamięci fizycznej) są czytane. Na drugim gościu dwa procesy wskazane przez skan na żywo osiem godzin wcześniej (`dwm.exe`, `ShellExperienceHost.exe`) nie miały w chwili późniejszego skanu z hosta żadnej prywatnej strony wykonywalnej w pamięci fizycznej; nie ustalono, czy te strony trafiły do pliku wymiany, czy zostały zwolnione.
 - **Gość działa w trakcie skanu,** więc wynik nie jest spójną migawką.
-- **`HDR` jest zgłaszany tylko w regionach wykonywalnych.** Pliki mapowane jako dane zaczynają się nagłówkiem obrazu i nie da się ich odróżnić od pamięci prywatnej; na zmierzonym gościu dawało to 466 takich regionów, zanim dodano tę regułę. Nagłówek w niewykonywalnej pamięci prywatnej nie jest więc w tym trybie zgłaszany.
-- **Jedna strona za każdym modułem jest liczona jako jego część.** Windows Server 2025 mapuje tuż za każdym obrazem dodatkową stronę kodu. Zasięg modułu to rozmiar obrazu plus jedna strona, zaokrąglony w górę do granicy alokacji 64 KiB. Gdy obraz kończy się dokładnie na granicy 64 KiB, osobna jednostronicowa alokacja umieszczona tuż za nim nie zostanie odróżniona.
-- **Procesy bez listy modułów** (`System`, `Secure System`, `Registry` oraz procesy, których dane programu ładującego są poza pamięcią) mają regiony o nieznanym rodzaju: kod bez pliku nie jest w nich wykrywany, a raport to mówi.
+- **`HDR` w pamięci niewykonywalnej jest zgłaszany tylko dla regionów, które jądro oznacza jako prywatne.** Sekcje bez pliku i regiony o nieznanym rodzaju są pomijane, bo pliki mapowane jako dane zaczynają się nagłówkiem obrazu. Silniki antywirusowe trzymają w pamięci prywatnej wiele obrazów programów i mają wiele znalezisk `HDR` (228 w `MsMpEng.exe` na pierwszym gościu).
 - Środowiska tworzące kod w locie (.NET, silniki antywirusowe) mają pełną wagę, jak w zrzucie.
 
 ## Co zmierzono
@@ -98,18 +96,17 @@ Drugi gość, 2026-11-24: Windows 11 Enterprise LTSC (build 26100.9974, 4 GiB RA
 - 137 do 162 procesów gościa na przebieg, 18 do 34 sekund, bez błędów odczytu. Skan na żywo nie otworzył 17 procesów (między innymi `lsass.exe`, `MsMpEng.exe`, `csrss.exe`, `services.exe`); skan z hosta przeczytał wszystkie.
 - Pierwsze przebiegi na tym gościu były błędne w obie strony: w żadnym procesie zwykłego użytkownika nie było widać ani jednej strony wykonywalnej. Przyczyna: izolacja tablic stron jądra. Taki proces ma dwa zestawy tablic stron, a w zestawie jądrowym cała połowa użytkownika jest oznaczona jako niewykonywalna. Skaner czyta teraz zestaw użytkownika (`UserDirectoryTableBase`), gdy proces go ma. Na pierwszym gościu wszystkie wskazane procesy były systemowe i miały jeden zestaw, więc błąd się nie ujawnił.
 - Po poprawce z 14 procesów wskazanych przez skan na żywo 12 zostało wskazanych także z hosta. Dla `TrueConf.exe` odnalazło się 87 ze 101 adresów regionów wskazanych przez skan na żywo; dla `QtWebEngineProcess.exe` znaleziska były te same poza `IMG-MOD`. `dwm.exe` (57 regionów `X-PRIV` w skanie na żywo) i `ShellExperienceHost.exe` nie zostały wskazane z hosta; przyczyny nie ustalono.
-- Fałszywe alarmy pozostają: cztery procesy (dwa razy `svchost.exe`, `StartMenuExperienceHost.exe` i dużo wyższa liczba w jednym procesie aplikacji) miały setki znalezisk `X-PRIV`, których skan na żywo nie ma. Ocena: lista modułów czytana z działającego gościa była niepełna, więc kod bibliotek, których na niej brakuje, wygląda jak pamięć prywatna. To, których procesów to dotyczy, zmieniało się między przebiegami.
+- Przy regionach z drzewa VAD (później tego samego dnia) fałszywe alarmy z wcześniejszych przebiegów zniknęły: z 14 procesów wskazanych przez skan na żywo 12 zostało wskazanych z hosta z tymi samymi cechami poza `IMG-MOD` (na przykład `QtWebEngineProcess.exe`: `X-PRIV` 6 i `ENT-X` 3 w obu), żaden proces zbadany i niewskazany przez skan na żywo nie został wskazany z hosta, a `MsMpEng.exe`, którego skan na żywo nie otwiera, został przeczytany. Liczby regionów w procesach z intensywnym JIT różnią się między skanami wykonanymi w odstępie ośmiu godzin.
 - Liczb nie da się porównywać jeden do jednego: skan na żywo liczy regiony, skan z hosta liczy ciągi obecnych stron, więc jeden region może dać wiele znalezisk.
 
 ## Uwagi o implementacji
 
 - Moduł `nanshe-vm`. Pamięć fizyczną gościa i jądro Windows odnajduje biblioteka [memflow](https://github.com/memflow/memflow) (MIT); z niej pochodzi lista procesów i listy modułów.
-- Tablice stron przechodzi sam Nanshe (`walk_page_tables`). memflow 0.2.4 łączy bit zapisu poziomów tablic stron przez „lub" zamiast „i", przez co każda strona wygląda na zapisywalną, a każda strona kodu na `RWX`.
+- Tablice stron przechodzi i pamięć gościa czyta sam Nanshe (`walk_page_tables`, `leaf_entry`), razem ze stronami przejściowymi i wpisami, w których Windows odwraca bity adresu na procesorach podatnych na L1TF. memflow 0.2.4 łączy bit zapisu poziomów tablic stron przez „lub" zamiast „i", przez co każda strona wygląda na zapisywalną, a każda strona kodu na `RWX`, i nie tłumaczy stron przejściowych.
 - Proces objęty izolacją tablic stron jądra ma drugi zestaw tablic dla trybu użytkownika; jego adres jest czytany z `_KPROCESS.UserDirectoryTableBase` (przesunięcie z tego samego pliku symboli) i używany, gdy istnieje.
 - Gość jest daną niezaufaną. Przejście tablic ma limit liczby czytanych tablic (`MAX_TABLES`) i limit liczby zakresów stron na proces (`MAX_RANGES`); po osiągnięciu limitu wynik procesu jest oznaczany jako niepełny. Oba limity są testowane, razem z tablicami nieczytelnymi i wskazującymi na siebie.
 
 ## Plan dla tej funkcji
 
-- Lista regionów z drzewa VAD jądra (prawdziwe rodzaje regionów, nazwy plików mapowanych, regiony zarezerwowane).
-- Strony przejściowe i prototypowe (obecne w pamięci fizycznej, ale nieoznaczone jako obecne w tablicach stron).
+- Strony prototypowe (wspólne, jeszcze nietknięte przez proces) i strony w pliku wymiany.
 - Inne hiperwizory (Proxmox używa QEMU i powinien działać; Hyper-V i VMware wymagają innej drogi do pamięci gościa) oraz goście Linux.

@@ -723,15 +723,15 @@ mod tests {
         assert_eq!(weights(&guest("/usr/libexec/qemu-kvm", 16384, "rw-"), "HDR"), [40, 40], "mały region w procesie hiperwizora");
         assert_eq!(weights(&guest("/usr/libexec/qemu-kvm", 16 << 20, "r-x"), "HDR"), [40, 40], "region wykonywalny w procesie hiperwizora");
 
-        // 3b. odczyt z hiperwizora: nagłówek liczy się tylko w regionie wykonywalnym
-        struct Vm(Fake);
+        // 3b. odczyt z hiperwizora: nagłówek w regionie niewykonywalnym liczy się tylko przy znanym rodzaju "prywatny"
+        struct Vm(Fake, RegionKind);
         impl MemorySource for Vm {
             fn info(&self) -> SourceInfo { SourceInfo { os: "windows".into(), source_type: "vm".into(), ..self.0.info() } }
-            fn regions(&self) -> nanshe_core::Result<Vec<Region>> { self.0.regions() }
+            fn regions(&self) -> nanshe_core::Result<Vec<Region>> { self.0.regions().map(|v| v.into_iter().map(|mut r| { r.kind = self.1; r }).collect()) }
             fn read_at(&self, a: u64, b: &mut [u8]) -> nanshe_core::Result<usize> { self.0.read_at(a, b) }
         }
-        let vm_hdr = |prot: &'static str| -> usize { scan_source(&Vm(guest("/usr/sbin/sshd", 16384, prot)), &cfg).regions.iter().flat_map(|r| &r.findings).filter(|x| x.tag == "HDR").count() };
-        assert_eq!((vm_hdr("rw-"), vm_hdr("r-x")), (0, 2));
+        let vm_hdr = |prot: &'static str, kind: RegionKind| -> usize { scan_source(&Vm(guest("/usr/sbin/sshd", 16384, prot), kind), &cfg).regions.iter().flat_map(|r| &r.findings).filter(|x| x.tag == "HDR").count() };
+        assert_eq!((vm_hdr("rw-", RegionKind::Unknown), vm_hdr("rw-", RegionKind::Mapped), vm_hdr("rw-", RegionKind::Private), vm_hdr("r-x", RegionKind::Unknown)), (0, 0, 2, 2));
 
         // 4. interpretery i programy z własną kompilacją w locie: obniżka także dla nazw z numerem wersji
         let rwx = |exe: &'static str, verified: bool| scan_source(&fake(exe, verified, vec![(reg(0x10000, 8192, "rwx", RegionKind::Private, None), code.clone())]), &cfg);
