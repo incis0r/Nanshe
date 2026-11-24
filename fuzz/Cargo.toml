@@ -18,6 +18,9 @@ nanshe-dump = { path = "../crates/nanshe-dump" }
 nanshe-live = { path = "../crates/nanshe-live" }
 nanshe-vm = { path = "../crates/nanshe-vm" }
 nanshe-analyze = { path = "../crates/nanshe-analyze" }
+nanshe-llm = { path = "../crates/nanshe-llm" }
+nanshe-report = { path = "../crates/nanshe-report" }
+serde_json = "1"
 
 [profile.release]
 debug = 1
@@ -53,6 +56,27 @@ bench = false
 [[bin]]
 name = "detectors"
 path = "fuzz_targets/detectors.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wintables"
+path = "fuzz_targets/wintables.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "llm"
+path = "fuzz_targets/llm.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "report"
+path = "fuzz_targets/report.rs"
 test = false
 doc = false
 bench = false
