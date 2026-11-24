@@ -25,6 +25,30 @@ fn reg_index(machine: u16) -> Option<(usize, usize)> {
     match machine { 62 => Some((16, 19)), 183 => Some((32, 31)), _ => None }
 }
 
+/// Limity list budowanych z notatek. Plik core jest daną niezaufaną: jeden blok notatek może być wskazany
+/// przez tysiące nagłówków, a w bloku mogą być setki tysięcy minimalnych wpisów.
+const MAX_THREADS: usize = 1 << 16;
+const MAX_STACKS: usize = 4096;
+const MAX_NAME: usize = 4096;
+
+/// Bloki notatek do przeczytania: każdy adres w pliku najwyżej raz (największy zadeklarowany rozmiar),
+/// przycięte do pliku, a łącznie nie więcej niż `budget` bajtów na cały plik. Drugi element: czy coś pominięto.
+pub(crate) fn note_blocks(mut at: Vec<(u64, u64)>, file_len: u64, mut budget: u64) -> (Vec<(u64, usize)>, bool) {
+    at.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
+    at.dedup_by_key(|n| n.0);
+    let (mut out, mut limited) = (Vec::new(), false);
+    for (off, size) in at {
+        let size = size.min(file_len.saturating_sub(off.min(file_len)));
+        if size == 0 { continue; }
+        let take = size.min(budget);
+        if take < size { limited = true; }
+        if take == 0 { break; }
+        budget -= take;
+        out.push((off, take as usize));
+    }
+    (out, limited)
+}
+
 fn cstr(b: &[u8]) -> String {
     let end = b.iter().position(|c| *c == 0).unwrap_or(b.len());
     String::from_utf8_lossy(&b[..end]).trim().to_string()
@@ -77,9 +101,10 @@ pub(crate) fn parse(src: &mut Src) -> Result<Parsed> {
     let mut stacks: Vec<u64> = Vec::new();
     let mut execfn: Option<u64> = None;
     let mut vdso: Option<u64> = None;
-    for (off, size) in notes_at {
-        let size = (size.min(src.len.saturating_sub(off.min(src.len)))) as usize;
-        if size == 0 || size > MAX_TABLE { continue; }
+    // Budżet bajtów notatek jest jeden na cały plik, nie na blok: nagłówki wskazujące ten sam albo nakładające
+    // się fragmenty nie mogą wymusić wielokrotnego parsowania tych samych danych.
+    let (blocks, mut limited) = note_blocks(notes_at, src.len, MAX_TABLE as u64);
+    for (off, size) in blocks {
         let b = src.read(off, size)?;
         let mut o = 0usize;
         while o + 12 <= b.len() {
@@ -100,8 +125,8 @@ pub(crate) fn parse(src: &mut Src) -> Result<Parsed> {
                 NT_PRSTATUS => {
                     if let Some((pc_i, sp_i)) = reg_index(machine) {
                         if let (Some(tid), Some(pc), Some(sp)) = (u32le(d, 32), u64le(d, PR_REG + pc_i * 8), u64le(d, PR_REG + sp_i * 8)) {
-                            if tid != 0 && pc != 0 { p.threads.push(ThreadInfo { tid, addr: pc }); }
-                            stacks.push(sp);
+                            if tid != 0 && pc != 0 { if p.threads.len() < MAX_THREADS { p.threads.push(ThreadInfo { tid, addr: pc }); } else { limited = true; } }
+                            if stacks.len() < MAX_STACKS { stacks.push(sp); } else { limited = true; }
                         }
                     }
                 }
@@ -117,12 +142,17 @@ pub(crate) fn parse(src: &mut Src) -> Result<Parsed> {
                     let mut it = names.split(|c| *c == 0);
                     for k in 0..count {
                         let (Some(s), Some(e), Some(n)) = (u64le(d, 16 + k * 24), u64le(d, 24 + k * 24), it.next()) else { break };
-                        files.push((s, e, String::from_utf8_lossy(n).into_owned()));
+                        if files.len() >= MAX_REGIONS { limited = true; break; }
+                        files.push((s, e, String::from_utf8_lossy(&n[..n.len().min(MAX_NAME)]).into_owned()));
                     }
                 }
                 _ => {}
             }
         }
+    }
+    if limited {
+        p.notes.push(tr!("plik core ma więcej notatek, wątków albo zmapowanych plików, niż wynoszą limity skanera; nadmiar został pominięty, więc lista wątków i nazwy plików mogą być niepełne",
+            "the core file has more notes, threads or mapped files than the scanner's limits; the excess was skipped, so the thread list and file names may be incomplete").into());
     }
     p.threads.sort_by_key(|t| t.tid);
     p.threads.dedup_by_key(|t| t.tid);
@@ -130,7 +160,6 @@ pub(crate) fn parse(src: &mut Src) -> Result<Parsed> {
     // nazwy plików z NT_FILE i stos (region, w którym leży wskaźnik stosu któregoś wątku)
     files.sort_by_key(|f| f.0);
     p.segs.sort_by_key(|s| s.vaddr);
-    stacks.truncate(4096);
     for r in &mut p.regions {
         if let Some(n) = range_at(&files, r.base) {
             let (name, deleted) = match n.strip_suffix(" (deleted)") { Some(x) => (x.to_string(), true), None => (n.clone(), false) };
@@ -258,6 +287,64 @@ pub(crate) mod tests {
             assert!(d.read_at(0x40_0000, &mut buf).is_err() && d.read_at(0x10_1000, &mut buf).is_err() && d.read_at(u64::MAX, &mut buf).is_err());
             assert!(d.notes.iter().any(|n| n.contains("2 regionów nie ma treści")), "{:?}", d.notes);
         }
+    }
+
+    #[test]
+    fn note_blocks_are_read_once_and_within_one_budget() {
+        // ten sam adres wskazany wiele razy: jeden blok, o największym zadeklarowanym rozmiarze, przycięty do pliku
+        assert_eq!(note_blocks(vec![(100, 50), (100, 400), (100, 10)], 300, 1 << 20), (vec![(100, 200)], false));
+        // nakładające się bloki pod różnymi adresami: łącznie nie więcej niż budżet, reszta pominięta i odnotowana
+        let overlapping: Vec<(u64, u64)> = (0..1000u64).map(|i| (i, 1 << 20)).collect();
+        let (blocks, limited) = note_blocks(overlapping, 1 << 20, 3 << 20);
+        assert!(limited && blocks.iter().map(|b| b.1 as u64).sum::<u64>() <= 3 << 20 && blocks.len() <= 4, "{}", blocks.len());
+        // bloki puste, poza plikiem i zerowy budżet
+        assert_eq!(note_blocks(vec![(10, 0), (5000, 100), (u64::MAX, u64::MAX)], 1000, 1 << 20), (vec![], false));
+        assert_eq!(note_blocks(vec![(0, 100)], 1000, 0), (vec![], true));
+    }
+
+    /// Plik core, w którym `headers` nagłówków PT_NOTE wskazuje ten sam blok z `threads` minimalnymi wpisami wątków
+    /// i jedną listą `files` zmapowanych plików. Bez limitów praca i pamięć rosły jak headers x zawartość bloku.
+    fn amplified(headers: usize, threads: u32, files: u64) -> Vec<u8> {
+        let (pc_i, _) = reg_index(62).unwrap();
+        let mut block = Vec::new();
+        for t in 1..=threads {
+            let mut st = vec![0u8; PR_REG + 34 * 8];
+            st[32..36].copy_from_slice(&t.to_le_bytes());
+            st[PR_REG + pc_i * 8..PR_REG + pc_i * 8 + 8].copy_from_slice(&0x40_0000u64.to_le_bytes());
+            block.extend(note(NT_PRSTATUS, &st));
+        }
+        let mut nf = Vec::new();
+        nf.extend(files.to_le_bytes()); nf.extend(0x1000u64.to_le_bytes());
+        for k in 0..files { nf.extend((k * 0x1000).to_le_bytes()); nf.extend((k * 0x1000 + 0x1000).to_le_bytes()); nf.extend(0u64.to_le_bytes()); }
+        for _ in 0..files { nf.extend(b"/x\0"); }
+        block.extend(note(NT_FILE, &nf));
+        let data_off = (64 + headers * 56) as u64;
+        let mut h = vec![0u8; 64];
+        h[..4].copy_from_slice(b"\x7fELF"); h[4] = 2; h[5] = 1; h[6] = 1;
+        h[16..18].copy_from_slice(&4u16.to_le_bytes()); h[18..20].copy_from_slice(&62u16.to_le_bytes());
+        h[0x20..0x28].copy_from_slice(&64u64.to_le_bytes()); h[0x36..0x38].copy_from_slice(&56u16.to_le_bytes()); h[0x38..0x3a].copy_from_slice(&(headers as u16).to_le_bytes());
+        for _ in 0..headers {
+            h.extend(PT_NOTE.to_le_bytes()); h.extend(0u32.to_le_bytes()); h.extend(data_off.to_le_bytes()); h.extend(0u64.to_le_bytes());
+            h.extend(0u64.to_le_bytes()); h.extend((block.len() as u64).to_le_bytes()); h.extend(0u64.to_le_bytes()); h.extend(4u64.to_le_bytes());
+        }
+        h.extend(block);
+        h
+    }
+
+    #[test]
+    fn repeated_note_headers_do_not_multiply_work_or_memory() {
+        // 65534 nagłówki wskazujące jeden blok z 2000 wątków: blok jest parsowany raz
+        let t = Tmp::new("core-amp", &amplified(65534, 2000, 50));
+        let started = std::time::Instant::now();
+        let d = crate::open(&t.0).unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(5), "{:?}", started.elapsed());
+        assert_eq!(d.threads().len(), 2000);
+        assert!(!d.notes.iter().any(|n| n.contains("limity")), "{:?}", d.notes);
+        // więcej wpisów niż limit: listy są obcinane w trakcie budowania, a wynik to mówi
+        let t = Tmp::new("core-many", &amplified(3, MAX_THREADS as u32 + 500, 10));
+        let d = crate::open(&t.0).unwrap();
+        assert_eq!(d.threads().len(), MAX_THREADS);
+        assert!(d.notes.iter().any(|n| n.contains("limity")), "{:?}", d.notes);
     }
 
     #[test]

@@ -18,8 +18,8 @@ Kod wyjścia skryptów e2e: 0 gdy wszystko zgodne, 1 gdy cokolwiek odbiega.
 
 | Warstwa | Wynik |
 |---|---|
-| Testy jednostkowe | 140 przechodzi (analyze 26, core 3, dump 5, kb 7, live 20, llm 40, report 30, vm 9) |
-| macOS (arm64, natywnie) | 139 testów jednostkowych (w tym 4 backendu macOS, uruchamiane tylko tam) oraz `scripts/e2e-macos.sh`: 7 próbek i 4 grupy asercji dodatkowych; zob. [macos.md](macos.md) |
+| Testy jednostkowe | 142 przechodzi (analyze 26, core 3, dump 7, kb 7, live 20, llm 40, report 30, vm 9) |
+| macOS (arm64, natywnie) | 141 testów jednostkowych (w tym 4 backendu macOS, uruchamiane tylko tam) oraz `scripts/e2e-macos.sh`: 7 próbek i 4 grupy asercji dodatkowych; zob. [macos.md](macos.md) |
 | Odczyt z hiperwizora (`nanshe vm`) | jedno uruchomienie na żywo na gościu Windows Server 2025 pod KVM (zob. [hiperwizor.md](hiperwizor.md)); bez automatycznego testu end-to-end |
 | Pełne skany na żywo, Linux | `nanshe scan --all` na 20 hostach jednego labu (19 x86_64, 1 arm64), 2026-11-23, przed strojeniem detekcji i po nim; żadnego procesu nie weryfikowano ręcznie |
 | e2e Linux (aarch64, kontener) | 16 próbek statycznych, 2 dynamiczne i 8 grup asercji dodatkowych |
@@ -107,6 +107,8 @@ Nowe w tej wersji (analiza i odczyt na żywo):
 | `hostile_headers_do_not_panic_or_read_outside_the_file` | plik core: segment deklarujący treść poza plikiem jest przycinany i odnotowany; tablica segmentów poza plikiem, zły typ pliku i zrzut 32-bitowy dają błąd; każde obcięcie pliku i notatka z rozmiarem przepełniającym licznik nie powodują awarii |
 | `minidump_gives_regions_modules_threads_and_memory` | minidump: regiony z uprawnieniami i rodzajem jak w skanie na żywo, moduł przypisany do regionu obrazu, strona strażnika i strona bez dostępu jako nieczytelne, adresy startu wątków; odczyt przechodzi przez przylegające fragmenty i kończy na luce |
 | `hostile_minidump_does_not_panic_or_read_outside_the_file` | minidump: każde obcięcie pliku i każdy bajt nagłówka oraz katalogu ustawiony na 0xff nie powodują awarii ani odczytu poza plik; nieprawdopodobna liczba strumieni to błąd |
+| `note_blocks_are_read_once_and_within_one_budget` | plik core: bloki notatek pod tym samym adresem w pliku są czytane raz, nakładające się bloki mają jeden budżet bajtów na cały plik, bloki puste i spoza pliku są pomijane |
+| `repeated_note_headers_do_not_multiply_work_or_memory` | plik core: 65534 nagłówki notatek wskazujące jeden blok z 2000 wątków są parsowane raz i szybko; wątki ponad limit są odcinane w trakcie budowania list, a wynik to mówi. Każda z blokad została sprawdzona przez jej usunięcie |
 | `unknown_or_short_files_are_rejected` | plik pusty, za krótki i tekstowy są odrzucane |
 
 ### `nanshe-kb` (baza wiedzy)

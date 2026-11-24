@@ -33,6 +33,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- Core files: a hostile file could make the scanner parse the same note block tens of thousands of times and grow its thread and file lists without bound (CPU and memory exhaustion from a 64 MiB file). Note blocks are now read once per file offset, all note blocks share one byte budget per file, and list limits are applied while the lists are built.
 - End-to-end tests on Linux no longer depend on the architecture they were tuned on: tags that even the clean sample has on a platform are measured first and added to the expectations.
 - Report: fields of a PE header located near the end of the 256-byte preview are now shown.
 - Linux: kernel threads (recognised by the `PF_KTHREAD` flag, not by name) are skipped in the process list and no longer counted as inaccessible processes.
