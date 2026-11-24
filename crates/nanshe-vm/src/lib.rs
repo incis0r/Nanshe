@@ -256,8 +256,15 @@ pub fn regions_from_vads(ranges: &[PageRange], vads: &[(Vad, Option<String>)]) -
             let prot = Prot(Prot::R | if r.write { Prot::W } else { 0 } | if r.exec { Prot::X } else { 0 });
             let (kind, backing, label, id) = match owner {
                 Some((v, _)) if v.private => (RegionKind::Private, None, None, v.node),
-                Some((v, name)) if v.image => (RegionKind::Image, name.clone(), name.is_none().then(|| "[image]".to_string()), v.node),
+                Some((v, Some(name))) if v.image => (RegionKind::Image, Some(name.clone()), None, v.node),
+                // Obraz, którego pliku nie da się nazwać: tak wygląda proces utworzony z pliku usuniętego albo
+                // podmienionego przed uruchomieniem. Nie jest traktowany jak zwykły moduł, tylko jak mapowanie
+                // bez pliku, które detektory oceniają.
+                Some((v, None)) if v.image => (RegionKind::Mapped, None, Some("[image without file name]".to_string()), v.node),
                 Some((v, name)) => (RegionKind::Mapped, name.clone(), name.is_none().then(|| "[section]".to_string()), v.node),
+                // Strona obecna w tablicach stron, której nie opisuje żaden region VAD: tak ukrywa się pamięć przez
+                // odpięcie jej opisu z drzewa. Kod w takim miejscu jest traktowany jak prywatny i oceniany.
+                None if r.exec => (RegionKind::Private, None, Some("[no VAD]".to_string()), 0),
                 None => (RegionKind::Unknown, None, None, 0),
             };
             match out.last_mut() {
@@ -510,13 +517,16 @@ mod tests {
         assert_eq!(s, vec![
             (0x10_000, 0x2000, "private", None, None), (0x12_000, 0x1000, "private", None, None),
             (0x7ff0_0000, 0x8000, "image", Some("\\Windows\\System32\\a.dll"), None), (0x7ff0_8000, 0x2000, "mapped", None, Some("[section]")),
-            (0x7ff1_0000, 0x1000, "image", None, Some("[image]")), (0x7ff1_1000, 0x1000, "unknown", None, None)]);
+            (0x7ff1_0000, 0x1000, "mapped", None, Some("[image without file name]")), (0x7ff1_1000, 0x1000, "private", None, Some("[no VAD]"))]);
         assert!(regs[1].is_x() && regs[1].is_w() && !regs[0].is_x());
         // strony tego samego regionu VAD z przerwą (część poza pamięcią fizyczną): jeden region obejmujący przerwę;
         // inna ochrona w środku dzieli region, a strony spoza VAD z przerwą pozostają osobne
         let gap = regions_from_vads(&[pr(0x10_000, 0x1000, false, true), pr(0x14_000, 0x2000, false, true), pr(0x18_000, 0x1000, true, false), pr(0x1a_000, 0x1000, false, true),
             pr(0x30_000, 0x1000, false, true), pr(0x32_000, 0x1000, false, true)], &vads);
         assert_eq!(gap.iter().map(|r| (r.base, r.size)).collect::<Vec<_>>(), vec![(0x10_000, 0x6000), (0x18_000, 0x1000), (0x1a_000, 0x1000), (0x30_000, 0x1000), (0x32_000, 0x1000)]);
+        // strona wykonywalna poza jakimkolwiek VAD jest oceniana jak pamięć prywatna; niewykonywalna ma rodzaj nieznany
+        let hidden = regions_from_vads(&[pr(0x30_000, 0x1000, false, true), pr(0x40_000, 0x1000, true, false)], &vads);
+        assert_eq!(hidden.iter().map(|r| (kind(r), r.label.as_deref())).collect::<Vec<_>>(), vec![("private", Some("[no VAD]")), ("unknown", None)]);
         assert!(regions_from_vads(&[], &vads).is_empty() && regions_from_vads(&[pr(0x1000, 0x1000, false, false)], &[])[0].kind == nanshe_core::RegionKind::Unknown);
     }
     type RegionKindT = &'static str;
