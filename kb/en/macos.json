@@ -1,0 +1,178 @@
+{
+ "os": "macos",
+ "tags": {
+  "RWX": {
+   "tech": "Region with read, write and execute rights at the same time according to the kernel (mach_vm_region_recurse). On Apple Silicon an ordinary program cannot get such memory; it exists only as a JIT compiler region (MAP_JIT), where each thread switches between writing and executing."
+  },
+  "X-PRIV": {
+   "tech": "Executable region without a file (proc_pidinfo PROC_PIDREGIONPATHINFO returns no path), outside the shared memory of system libraries (dyld shared cache)."
+  },
+  "ENT-X": {
+   "tech": "Entropy of the pages of an executable region, computed from bytes read with mach_vm_read_overwrite. Code of libraries in the system shared cache is not read."
+  },
+  "HDR": {
+   "tech": "Mach-O header (magic 0xfeedfacf or 0xfeedface with a valid CPU and file type) at the start of a page in a region without a file; PE and ELF headers are searched for as on other systems."
+  },
+  "THR-PRIV": {
+   "tech": "On macOS the scanner does not collect thread addresses yet, so this characteristic is not raised here; the description applies to results from other sources."
+  },
+  "IMG-MOD": {
+   "tech": "On macOS the scanner does not compare code in memory with the file on disk yet, so this characteristic is not raised here; the description applies to results from other sources."
+  }
+ },
+ "combos": [],
+ "verify": {
+  "*": [
+   {
+    "do": "See what this region is in the memory map of the process",
+    "cmd": "vmmap {pid} | grep -i {start_plain}",
+    "look": "The result is one line: region type, address range, current and maximum permissions (for example r-x/rwx) and a file name if there is one. Benign case: a __TEXT line with the name of the program or of a library from /System or /usr/lib. An executable region (letter x) of type VM_ALLOCATE or without a file name should worry you: save it to a file (next step). No result: the region may be gone already."
+   },
+   {
+    "do": "Save the contents of the region to a file (requires lldb and root, pauses the process briefly)",
+    "cmd": "sudo lldb -p {pid} --batch -o \"memory read --force --binary --outfile /tmp/region-{pid}-{start_plain}.bin {start} {end}\" -o detach",
+    "look": "A file /tmp/region-<pid>-<address>.bin with the bytes of the region is created. Inspect it with file and strings: names of network functions, URLs or shell commands in a region without a file need an explanation. An access error means the process is protected by the system (SIP or hardened runtime)."
+   },
+   {
+    "do": "Check the signature of the program the process belongs to",
+    "cmd": "codesign -dv --verbose=4 $(ps -o comm= -p {pid}) 2>&1 | grep -E \"Identifier|TeamIdentifier|flags|Authority\"",
+    "look": "A program from Apple or a known vendor has Authority lines with the publisher name and a TeamIdentifier. An adhoc signature or a missing TeamIdentifier on a program that claims to be a known product needs an explanation. flags containing runtime means a hardened runtime, where executable memory without a file is possible only with a permission recorded in the program's entitlements."
+   }
+  ],
+  "RWX": [
+   {
+    "do": "Check whether the program has the system's permission to generate code at run time",
+    "cmd": "codesign -d --entitlements - $(ps -o comm= -p {pid}) 2>&1 | grep -E \"allow-jit|allow-unsigned-executable-memory|disable-executable-page-protection\"",
+    "look": "A line with allow-jit means a program with a JIT compiler (a browser, a JavaScript runtime, a virtual machine): a writable and executable region is normal for it. No result for a program with a hardened runtime means it should not have such a region. A program without a hardened runtime (adhoc signature, own build) can create a JIT region without this permission."
+   }
+  ],
+  "HDR": [
+   {
+    "do": "Count the program and library images that the system itself loaded into the process",
+    "cmd": "vmmap {pid} | grep -c \"__TEXT\"",
+    "look": "The number shows how many images the system knows. A program header found in a region that is not among the __TEXT lines with a file name is an image loaded behind the system's back: save the region to a file (general steps) and inspect it with otool -l."
+   }
+  ]
+ },
+ "terms": {
+  "SIP": "System Integrity Protection: the macOS protection that prevents even an administrator from reading the memory of system processes",
+  "hardened runtime": "a mode in which a program cannot have code outside its signed file or be debugged unless it carries a recorded permission",
+  "dyld shared cache": "one shared file with all system libraries, mapped into every process at the same address",
+  "MAP_JIT": "the flag of memory intended for a compiler that generates code while the program runs",
+  "Mach-O": "the format of program and library files on macOS",
+  "task port": "the handle through which the system allows reading the memory of another process; obtaining it requires privileges"
+ },
+ "flags": {},
+ "handles": {},
+ "processes": [
+  {
+   "names": [
+    "launchd"
+   ],
+   "what": "The first process of the system; it starts services and is the ancestor of all others.",
+   "paths": [
+    "/sbin/launchd"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "WindowServer"
+   ],
+   "what": "Draws windows and drives the display; a system process protected by SIP.",
+   "paths": [
+    "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+   ],
+   "parents": [
+    "launchd"
+   ]
+  },
+  {
+   "names": [
+    "Finder"
+   ],
+   "what": "The file manager and the user's desktop.",
+   "paths": [
+    "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder"
+   ],
+   "parents": [
+    "launchd"
+   ]
+  },
+  {
+   "names": [
+    "mds",
+    "mds_stores",
+    "mdworker_shared"
+   ],
+   "what": "File indexing for Spotlight search.",
+   "paths": [
+    "/System/Library/Frameworks/CoreServices.framework/"
+   ],
+   "parents": [
+    "launchd"
+   ]
+  },
+  {
+   "names": [
+    "sshd",
+    "sshd-session"
+   ],
+   "what": "The SSH remote login server.",
+   "paths": [
+    "/usr/sbin/sshd",
+    "/usr/libexec/sshd-session"
+   ],
+   "parents": [
+    "launchd",
+    "sshd"
+   ]
+  }
+ ],
+ "modules": [
+  {
+   "names": [
+    "dyld"
+   ],
+   "what": "the system loader; present in every process"
+  },
+  {
+   "names": [
+    "JavaScriptCore"
+   ],
+   "what": "Apple's JavaScript engine; generates code at run time",
+   "runtime": "JavaScriptCore"
+  },
+  {
+   "names": [
+    "libnode",
+    "node"
+   ],
+   "what": "the Node.js runtime; generates code at run time",
+   "runtime": "Node.js"
+  },
+  {
+   "names": [
+    "libjvm"
+   ],
+   "what": "the Java virtual machine; generates code at run time",
+   "runtime": "Java"
+  },
+  {
+   "names": [
+    "Electron Framework",
+    "Chromium Embedded Framework",
+    "Google Chrome Framework"
+   ],
+   "what": "the Chromium browser engine (also in Electron applications); generates code at run time",
+   "runtime": "Chromium"
+  },
+  {
+   "names": [
+    "libcoreclr"
+   ],
+   "what": "the .NET runtime; generates code at run time",
+   "runtime": ".NET"
+  }
+ ]
+}

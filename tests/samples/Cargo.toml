@@ -9,7 +9,7 @@ publish = false
 name = "nanshe-sample"
 path = "src/main.rs"
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]

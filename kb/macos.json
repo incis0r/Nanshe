@@ -1,0 +1,178 @@
+{
+ "os": "macos",
+ "tags": {
+  "RWX": {
+   "tech": "Region z prawami odczytu, zapisu i wykonania jednocześnie według jądra (mach_vm_region_recurse). Na Apple Silicon zwykły program nie dostanie takiej pamięci; istnieje tylko jako region kompilatora JIT (MAP_JIT), w którym zapis i wykonanie przełącza osobno każdy wątek."
+  },
+  "X-PRIV": {
+   "tech": "Wykonywalny region bez pliku (proc_pidinfo PROC_PIDREGIONPATHINFO nie zwraca ścieżki), poza wspólną pamięcią bibliotek systemowych (dyld shared cache)."
+  },
+  "ENT-X": {
+   "tech": "Entropia stron wykonywalnego regionu liczona z bajtów przeczytanych przez mach_vm_read_overwrite. Kod bibliotek ze wspólnej pamięci systemowej nie jest czytany."
+  },
+  "HDR": {
+   "tech": "Nagłówek Mach-O (sygnatura 0xfeedfacf albo 0xfeedface z poprawnym typem procesora i pliku) na początku strony w regionie bez pliku; nagłówki PE i ELF są szukane tak samo jak na innych systemach."
+  },
+  "THR-PRIV": {
+   "tech": "Na macOS skaner nie zbiera jeszcze adresów wątków, więc ta cecha nie jest tu zgłaszana; opis dotyczy wyników z innych źródeł."
+  },
+  "IMG-MOD": {
+   "tech": "Na macOS skaner nie porównuje jeszcze kodu w pamięci z plikiem na dysku, więc ta cecha nie jest tu zgłaszana; opis dotyczy wyników z innych źródeł."
+  }
+ },
+ "combos": [],
+ "verify": {
+  "*": [
+   {
+    "do": "Zobacz, czym jest ten region w mapie pamięci procesu",
+    "cmd": "vmmap {pid} | grep -i {start_plain}",
+    "look": "Wynik to jeden wiersz: rodzaj regionu, zakres adresów, uprawnienia bieżące i maksymalne (np. r-x/rwx) oraz nazwa pliku, jeśli jest. Niegroźny przypadek: wiersz typu __TEXT z nazwą programu albo biblioteki z /System lub /usr/lib. Niepokoić powinien region wykonywalny (litera x) typu VM_ALLOCATE albo bez nazwy pliku: wtedy zapisz go do pliku (następny krok). Brak wyniku: region mógł już zniknąć."
+   },
+   {
+    "do": "Zapisz zawartość regionu do pliku (wymaga lldb i uprawnień root, zatrzymuje proces na chwilę)",
+    "cmd": "sudo lldb -p {pid} --batch -o \"memory read --force --binary --outfile /tmp/region-{pid}-{start_plain}.bin {start} {end}\" -o detach",
+    "look": "Powstaje plik /tmp/region-<pid>-<adres>.bin z bajtami regionu. Sprawdź go poleceniami file i strings: nazwy funkcji sieciowych, adresy URL albo polecenia powłoki w regionie bez pliku wymagają wyjaśnienia. Komunikat o braku dostępu oznacza proces chroniony przez system (SIP albo utwardzone środowisko)."
+   },
+   {
+    "do": "Sprawdź podpis programu, do którego należy proces",
+    "cmd": "codesign -dv --verbose=4 $(ps -o comm= -p {pid}) 2>&1 | grep -E \"Identifier|TeamIdentifier|flags|Authority\"",
+    "look": "Program firmy Apple albo znanego dostawcy ma wiersze Authority z nazwą wydawcy i TeamIdentifier. Podpis adhoc albo brak TeamIdentifier przy programie, który podaje się za znany produkt, wymaga wyjaśnienia. flags z wartością runtime oznacza utwardzone środowisko, w którym pamięć wykonywalna bez pliku jest możliwa tylko za zgodą zapisaną w uprawnieniach programu."
+   }
+  ],
+  "RWX": [
+   {
+    "do": "Sprawdź, czy program ma zgodę systemu na tworzenie kodu w trakcie działania",
+    "cmd": "codesign -d --entitlements - $(ps -o comm= -p {pid}) 2>&1 | grep -E \"allow-jit|allow-unsigned-executable-memory|disable-executable-page-protection\"",
+    "look": "Wiersz z allow-jit oznacza program z kompilatorem JIT (przeglądarka, środowisko JavaScript, maszyna wirtualna): region zapisywalny i wykonywalny jest dla niego normalny. Brak wyniku przy programie z utwardzonym środowiskiem oznacza, że takiego regionu mieć nie powinien. Program bez utwardzonego środowiska (podpis adhoc, własna kompilacja) może utworzyć region JIT bez tej zgody."
+   }
+  ],
+  "HDR": [
+   {
+    "do": "Policz obrazy programów i bibliotek, które system sam załadował do procesu",
+    "cmd": "vmmap {pid} | grep -c \"__TEXT\"",
+    "look": "Liczba pokazuje, ile obrazów zna system. Nagłówek programu znaleziony w regionie, którego nie ma wśród wierszy __TEXT z nazwą pliku, to obraz załadowany z pominięciem systemu: zapisz region do pliku (kroki ogólne) i sprawdź go poleceniem otool -l."
+   }
+  ]
+ },
+ "terms": {
+  "SIP": "System Integrity Protection: ochrona macOS, która nie pozwala nawet administratorowi czytać pamięci procesów systemowych",
+  "utwardzone środowisko": "tryb, w którym program nie może mieć kodu spoza podpisanego pliku ani być debugowany, chyba że ma na to zapisaną zgodę",
+  "dyld shared cache": "jeden wspólny plik ze wszystkimi bibliotekami systemowymi, zmapowany w każdym procesie pod tym samym adresem",
+  "MAP_JIT": "znacznik pamięci przeznaczonej dla kompilatora tworzącego kod w trakcie działania programu",
+  "Mach-O": "format plików programów i bibliotek na macOS",
+  "port zadania": "uchwyt, przez który system pozwala czytać pamięć innego procesu; jego wydanie wymaga uprawnień"
+ },
+ "flags": {},
+ "handles": {},
+ "processes": [
+  {
+   "names": [
+    "launchd"
+   ],
+   "what": "Pierwszy proces systemu; uruchamia usługi i jest przodkiem wszystkich pozostałych.",
+   "paths": [
+    "/sbin/launchd"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "WindowServer"
+   ],
+   "what": "Rysuje okna i obsługuje ekran; proces systemowy chroniony przez SIP.",
+   "paths": [
+    "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+   ],
+   "parents": [
+    "launchd"
+   ]
+  },
+  {
+   "names": [
+    "Finder"
+   ],
+   "what": "Menedżer plików i pulpit użytkownika.",
+   "paths": [
+    "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder"
+   ],
+   "parents": [
+    "launchd"
+   ]
+  },
+  {
+   "names": [
+    "mds",
+    "mds_stores",
+    "mdworker_shared"
+   ],
+   "what": "Indeksowanie plików dla wyszukiwarki Spotlight.",
+   "paths": [
+    "/System/Library/Frameworks/CoreServices.framework/"
+   ],
+   "parents": [
+    "launchd"
+   ]
+  },
+  {
+   "names": [
+    "sshd",
+    "sshd-session"
+   ],
+   "what": "Serwer zdalnego logowania SSH.",
+   "paths": [
+    "/usr/sbin/sshd",
+    "/usr/libexec/sshd-session"
+   ],
+   "parents": [
+    "launchd",
+    "sshd"
+   ]
+  }
+ ],
+ "modules": [
+  {
+   "names": [
+    "dyld"
+   ],
+   "what": "program ładujący systemu; jest w każdym procesie"
+  },
+  {
+   "names": [
+    "JavaScriptCore"
+   ],
+   "what": "silnik JavaScript firmy Apple; tworzy kod w trakcie działania",
+   "runtime": "JavaScriptCore"
+  },
+  {
+   "names": [
+    "libnode",
+    "node"
+   ],
+   "what": "środowisko Node.js; tworzy kod w trakcie działania",
+   "runtime": "Node.js"
+  },
+  {
+   "names": [
+    "libjvm"
+   ],
+   "what": "maszyna wirtualna Javy; tworzy kod w trakcie działania",
+   "runtime": "Java"
+  },
+  {
+   "names": [
+    "Electron Framework",
+    "Chromium Embedded Framework",
+    "Google Chrome Framework"
+   ],
+   "what": "silnik przeglądarki Chromium (także w aplikacjach Electron); tworzy kod w trakcie działania",
+   "runtime": "Chromium"
+  },
+  {
+   "names": [
+    "libcoreclr"
+   ],
+   "what": "środowisko .NET; tworzy kod w trakcie działania",
+   "runtime": ".NET"
+  }
+ ]
+}

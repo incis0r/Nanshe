@@ -652,8 +652,69 @@ mod imp {
     }
 }
 
-#[cfg(any(target_os = "linux", windows))]
+/// Próbki macOS. Na Apple Silicon system nie pozwala zwykłemu programowi mieć pamięci jednocześnie
+/// zapisywalnej i wykonywalnej (poza regionami MAP_JIT), więc ładunki powstają drogą zapis -> zmiana ochrony.
+#[cfg(target_os = "macos")]
+mod imp {
+    use std::io::Write;
+
+    fn noise(n: usize) -> Vec<u8> {
+        let mut x = 0x2545f4914f6cdd1du64;
+        (0..n).map(|_| { x ^= x << 13; x ^= x >> 7; x ^= x << 17; (x >> 24) as u8 }).collect()
+    }
+    fn anon(len: usize, prot: i32, flags: i32) -> *mut u8 {
+        // SAFETY: anonimowe mapowanie prywatne, bez wskazanego adresu; wynik sprawdzany.
+        let p = unsafe { libc::mmap(std::ptr::null_mut(), len, prot, libc::MAP_PRIVATE | libc::MAP_ANON | flags, -1, 0) };
+        assert!(p != libc::MAP_FAILED, "mmap: {}", std::io::Error::last_os_error());
+        p as *mut u8
+    }
+    /// Zapis do świeżego mapowania RW, potem zmiana ochrony na R-X.
+    fn staged(data: &[u8]) -> *mut u8 {
+        let len = data.len().next_multiple_of(16384);
+        let p = anon(len, libc::PROT_READ | libc::PROT_WRITE, 0);
+        // SAFETY: p wskazuje świeże mapowanie co najmniej data.len() bajtów z prawem zapisu.
+        unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), p, data.len()) };
+        // SAFETY: zmiana uprawnień własnego mapowania o znanym rozmiarze.
+        assert_eq!(unsafe { libc::mprotect(p as *mut _, len, libc::PROT_READ | libc::PROT_EXEC) }, 0, "mprotect: {}", std::io::Error::last_os_error());
+        p
+    }
+    /// Nagłówek Mach-O 64 (arm64, typ: program wykonywalny) na początku strony, za nim ładunek.
+    fn macho() {
+        let mut d = noise(32768);
+        d[..4].copy_from_slice(&0xfeedfacfu32.to_le_bytes());
+        d[4..8].copy_from_slice(&0x0100000cu32.to_le_bytes());   // CPU_TYPE_ARM64
+        d[8..12].copy_from_slice(&0u32.to_le_bytes());
+        d[12..16].copy_from_slice(&2u32.to_le_bytes());          // MH_EXECUTE
+        d[16..20].copy_from_slice(&16u32.to_le_bytes());         // liczba poleceń ładowania
+        d[20..24].copy_from_slice(&1024u32.to_le_bytes());       // ich rozmiar
+        staged(&d);
+    }
+
+    pub fn main() {
+        let mode = std::env::args().nth(1).unwrap_or_else(|| "clean".into());
+        println!("ready {}", std::process::id());
+        std::io::stdout().flush().ok();
+        let secs = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(60u64);
+        match mode.as_str() {
+            "clean" => {}
+            // ładunek o wysokiej entropii w pamięci prywatnej, wykonywalnej
+            "rx-stage" => { staged(&noise(65536)); }
+            // to samo o niskiej entropii (kod bez szyfrowania)
+            "rx-lowent" => { staged(&[0x1f, 0x20, 0x03, 0xd5].repeat(8192)); }
+            "macho" => macho(),
+            // region kompilatora JIT: jedyna droga do pamięci RWX; bez uprawnienia allow-jit system może odmówić
+            "jit" => { anon(65536, libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC, libc::MAP_JIT); }
+            // wysoka entropia w zwykłych danych: nie jest znaleziskiem
+            "data-noise" => { let d = noise(1 << 20); std::mem::forget(d); }
+            "all" => { staged(&noise(65536)); macho(); }
+            other => { eprintln!("nieznany tryb: {other}"); std::process::exit(2); }
+        }
+        std::thread::sleep(std::time::Duration::from_secs(secs));
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 fn main() { imp::main() }
 
-#[cfg(not(any(target_os = "linux", windows)))]
-fn main() { eprintln!("próbki działają tylko na Linuksie i Windows"); std::process::exit(2); }
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn main() { eprintln!("próbki działają tylko na Linuksie, macOS i Windows"); std::process::exit(2); }

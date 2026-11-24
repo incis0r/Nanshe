@@ -12,12 +12,14 @@ use std::collections::BTreeMap;
 const COMMON: &str = include_str!("../../../kb/common.json");
 const LINUX: &str = include_str!("../../../kb/linux.json");
 const WINDOWS: &str = include_str!("../../../kb/windows.json");
+const MACOS: &str = include_str!("../../../kb/macos.json");
 const COMMON_EN: &str = include_str!("../../../kb/en/common.json");
 const LINUX_EN: &str = include_str!("../../../kb/en/linux.json");
 const WINDOWS_EN: &str = include_str!("../../../kb/en/windows.json");
+const MACOS_EN: &str = include_str!("../../../kb/en/macos.json");
 
 /// Systemy, które mają własny plik bazy. Pozostałe (macOS, FreeBSD) dostają część wspólną.
-pub const SYSTEMS: [&str; 2] = ["linux", "windows"];
+pub const SYSTEMS: [&str; 3] = ["linux", "windows", "macos"];
 
 #[derive(Deserialize, Clone, Debug, Default)]
 pub struct TagInfo {
@@ -174,8 +176,8 @@ impl Kb {
 
     pub fn embedded_lang(os: &str, l: Lang) -> Kb {
         let (common, system) = match l {
-            Lang::Pl => (COMMON, match os { "linux" => Some(LINUX), "windows" => Some(WINDOWS), _ => None }),
-            Lang::En => (COMMON_EN, match os { "linux" => Some(LINUX_EN), "windows" => Some(WINDOWS_EN), _ => None }),
+            Lang::Pl => (COMMON, match os { "linux" => Some(LINUX), "windows" => Some(WINDOWS), "macos" => Some(MACOS), _ => None }),
+            Lang::En => (COMMON_EN, match os { "linux" => Some(LINUX_EN), "windows" => Some(WINDOWS_EN), "macos" => Some(MACOS_EN), _ => None }),
         };
         Kb::build(common, system, os).expect("wbudowana baza wiedzy jest sprawdzana testem")
     }
@@ -329,7 +331,9 @@ mod tests {
         for os in SYSTEMS {
             let kb = Kb::embedded(os);
             assert!(kb.verify.get("*").map(|v| v.len() >= 2).unwrap_or(false), "{os}: brak ogólnych kroków sprawdzenia");
-            assert!(!kb.processes.is_empty() && !kb.modules.is_empty() && !kb.flags.is_empty() && !kb.handles.is_empty(), "{os}");
+            assert!(!kb.processes.is_empty() && !kb.modules.is_empty(), "{os}");
+            // cechy procesu i rodzaje uchwytów opisują kontekst systemowy, którego na macOS skaner jeszcze nie zbiera
+            if os != "macos" { assert!(!kb.flags.is_empty() && !kb.handles.is_empty(), "{os}"); }
         }
     }
 

@@ -98,6 +98,9 @@ impl<'a> Ctx<'a> {
 fn skip_read(r: &Region) -> bool {
     !r.readable || !r.prot.map(|p| p.r()).unwrap_or(true)
         || matches!(r.label.as_deref(), Some("[vvar]") | Some("[vsyscall]") | Some("[vvar_vclock]"))
+        // macOS: kod bibliotek systemowych we wspólnej pamięci (ponad 1 GiB, identyczny w każdym procesie)
+        // nie jest czytany; strona podmieniona prywatnie nie ma tej etykiety i jest czytana jak każda inna
+        || r.label.as_deref() == Some("[dyld shared cache]")
 }
 
 /// Czyta region kawałkami; zatrzymuje się na pierwszym błędzie (częściowy wynik, Z8).

@@ -157,6 +157,15 @@ pub fn open_process(pid: u32) -> Result<Box<dyn MemorySource>> {
 #[cfg(target_os = "linux")]
 pub fn list_processes() -> Result<Vec<ProcEntry>> { linux::list() }
 
+#[cfg(target_os = "macos")]
+pub mod macos;
+#[cfg(target_os = "macos")]
+pub fn open_process(pid: u32) -> Result<Box<dyn MemorySource>> {
+    Ok(Box::new(macos::MacProcess::open(pid)?))
+}
+#[cfg(target_os = "macos")]
+pub fn list_processes() -> Result<Vec<ProcEntry>> { macos::list() }
+
 #[cfg(windows)]
 pub fn open_process(pid: u32) -> Result<Box<dyn MemorySource>> {
     Ok(Box::new(windows::WinProcess::open(pid)?))
@@ -173,11 +182,11 @@ pub fn prepare() -> Option<String> {
     None
 }
 
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub fn open_process(_pid: u32) -> Result<Box<dyn MemorySource>> {
     Err(Error::Unsupported(trf!("skan żywego procesu na {} nie jest jeszcze zaimplementowany (etap M3: macOS, FreeBSD)", "live process scanning on {} is not implemented yet (stage M3: macOS, FreeBSD)", std::env::consts::OS)))
 }
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub fn list_processes() -> Result<Vec<ProcEntry>> {
     Err(Error::Unsupported(trf!("lista procesów na {} nie jest jeszcze zaimplementowana", "process listing on {} is not implemented yet", std::env::consts::OS)))
 }
@@ -205,6 +214,8 @@ mod tests {
 }
 
 pub fn hostname() -> String {
+    #[cfg(target_os = "macos")]
+    if let Some(h) = macos::hostname() { return h; }
     std::fs::read_to_string("/proc/sys/kernel/hostname").ok().map(|s| s.trim().to_string())
         .or_else(|| std::env::var("HOSTNAME").ok())
         .or_else(|| std::env::var("COMPUTERNAME").ok())
