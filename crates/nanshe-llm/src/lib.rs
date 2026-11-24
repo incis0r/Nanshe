@@ -3,6 +3,7 @@
 //! ani kody wyjścia. Jej wynik to osobny dokument oznaczony jako niedeterministyczny.
 #![forbid(unsafe_code)]
 
+mod http;
 pub mod backend;
 pub mod cloud;
 pub mod context;

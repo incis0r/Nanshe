@@ -198,28 +198,25 @@ pub struct Cloud {
 impl Cloud {
     pub fn new(p: &'static Provider, model: &str, key: String, timeout: Duration) -> Self {
         Cloud { p, model: model.to_string(), key, params: RefCell::new(None),
-            agent: ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout(timeout).redirects(0).build() }
+            agent: crate::http::agent(Duration::from_secs(10), timeout, Some(0)) }
     }
     pub fn provider(&self) -> &'static Provider { self.p }
 
-    fn auth(&self, r: ureq::Request) -> ureq::Request {
+    fn auth<B>(&self, r: ureq::RequestBuilder<B>) -> ureq::RequestBuilder<B> {
         match self.p.api {
-            Api::OpenAi => r.set("Authorization", &format!("Bearer {}", self.key)),
-            Api::Anthropic => r.set("x-api-key", &self.key).set("anthropic-version", ANTHROPIC_VERSION),
+            Api::OpenAi => r.header("Authorization", format!("Bearer {}", self.key)),
+            Api::Anthropic => r.header("x-api-key", self.key.as_str()).header("anthropic-version", ANTHROPIC_VERSION),
         }
     }
-    fn err(&self, e: ureq::Error) -> String {
-        let s = match e {
-            ureq::Error::Status(code, r) => format!("{} HTTP {code}: {}", self.p.id, r.into_string().unwrap_or_default().chars().take(300).collect::<String>()),
-            ureq::Error::Transport(t) => format!("{} transport: {t}", self.p.id),
-        };
+    /// Odpowiedź jako JSON albo komunikat błędu z nazwą dostawcy.
+    fn json(&self, resp: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<Value, String> {
         // gdyby serwer odbił klucz w treści błędu
-        s.replace(&self.key, "[klucz]")
+        crate::http::json(resp).map_err(|e| format!("{} {e}", self.p.id).replace(&self.key, "[klucz]"))
     }
 
     pub fn list_models(&self) -> Result<Vec<CloudModel>, String> {
         let url = match self.p.api { Api::OpenAi => format!("{}/models", self.p.base_url), Api::Anthropic => format!("{}/v1/models?limit=1000", self.p.base_url) };
-        let v: Value = self.auth(self.agent.get(&url)).call().map_err(|e| self.err(e))?.into_json().map_err(|e| e.to_string())?;
+        let v: Value = self.json(self.auth(self.agent.get(&url)).call())?;
         let mut l = parse_models(&v);
         l.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(l)
@@ -240,7 +237,7 @@ impl LlmBackend for Cloud {
             Api::OpenAi => (format!("{}/chat/completions", self.p.base_url), openai_body(self.p.id, &self.model, req, self.params.borrow().as_deref())),
             Api::Anthropic => (format!("{}/v1/messages", self.p.base_url), anthropic_body(&self.model, req)),
         };
-        let v: Value = self.auth(self.agent.post(&url)).send_json(body).map_err(|e| self.err(e))?.into_json().map_err(|e| e.to_string())?;
+        let v: Value = self.json(self.auth(self.agent.post(&url)).send_json(body))?;
         match self.p.api { Api::OpenAi => openai_response(&v), Api::Anthropic => anthropic_response(&v) }
     }
 }

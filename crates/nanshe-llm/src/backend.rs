@@ -46,26 +46,17 @@ impl Ollama {
     pub fn new(url: &str, model: &str, insecure: bool, timeout: Duration) -> Result<Self, String> {
         let parsed = check_url(url, insecure)?;
         Ok(Ollama { url: parsed.as_str().trim_end_matches('/').to_string(), model: model.to_string(),
-            agent: ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(5)).timeout(timeout).build() })
-    }
-    fn err(e: ureq::Error) -> String {
-        match e {
-            ureq::Error::Status(code, r) => format!("HTTP {code}: {}", r.into_string().unwrap_or_default().chars().take(300).collect::<String>()),
-            ureq::Error::Transport(t) => format!("transport: {t}"),
-        }
+            agent: crate::http::agent(Duration::from_secs(5), timeout, None) })
     }
 }
 
 impl LlmBackend for Ollama {
     fn info(&self) -> Result<ModelInfo, String> {
-        let ver: Value = self.agent.get(&format!("{}/api/version", self.url)).call().map_err(Self::err)?
-            .into_json().map_err(|e| e.to_string())?;
-        let tags: Value = self.agent.get(&format!("{}/api/tags", self.url)).call().map_err(Self::err)?
-            .into_json().map_err(|e| e.to_string())?;
+        let ver: Value = crate::http::json(self.agent.get(&format!("{}/api/version", self.url)).call())?;
+        let tags: Value = crate::http::json(self.agent.get(&format!("{}/api/tags", self.url)).call())?;
         let entry = tags["models"].as_array().and_then(|a| a.iter().find(|m| m["name"] == self.model.as_str()))
             .ok_or_else(|| format!("model {} nie jest dostępny na {}", self.model, self.url))?;
-        let show: Value = self.agent.post(&format!("{}/api/show", self.url)).send_json(json!({ "model": self.model }))
-            .map_err(Self::err)?.into_json().map_err(|e| e.to_string())?;
+        let show: Value = crate::http::json(self.agent.post(&format!("{}/api/show", self.url)).send_json(json!({ "model": self.model })))?;
         let ctx = show["model_info"].as_object()
             .and_then(|o| o.iter().find(|(k, _)| k.ends_with(".context_length")).and_then(|(_, v)| v.as_u64()));
         Ok(ModelInfo { backend: "ollama".into(), model: self.model.clone(),
@@ -79,8 +70,7 @@ impl LlmBackend for Ollama {
             "messages": [ { "role": "system", "content": req.system }, { "role": "user", "content": req.user } ],
             "options": { "temperature": TEMPERATURE, "seed": SEED, "num_ctx": req.num_ctx, "num_predict": req.max_tokens }
         });
-        let v: Value = self.agent.post(&format!("{}/api/chat", self.url)).send_json(body).map_err(Self::err)?
-            .into_json().map_err(|e| e.to_string())?;
+        let v: Value = crate::http::json(self.agent.post(&format!("{}/api/chat", self.url)).send_json(body))?;
         let text = v["message"]["content"].as_str().ok_or("odpowiedź bez message.content")?.to_string();
         Ok(Response { text, prompt_tokens: v["prompt_eval_count"].as_u64().unwrap_or(0), output_tokens: v["eval_count"].as_u64().unwrap_or(0) })
     }
