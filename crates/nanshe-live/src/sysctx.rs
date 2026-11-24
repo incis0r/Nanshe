@@ -23,6 +23,16 @@ pub fn parse_stat(s: &str) -> Option<(String, u32, u32, u64)> {
     Some((name, f.get(1)?.parse().ok()?, f.get(17)?.parse().ok()?, f.get(19)?.parse().ok()?))
 }
 
+/// Czy wiersz /proc/<pid>/stat opisuje wątek jądra (flaga PF_KTHREAD w polu flags). Wątek jądra nie ma
+/// pamięci użytkownika, więc nie ma czego skanować; proces, który tylko nazywa się jak wątek jądra
+/// (np. "[kworker/0:1]"), tej flagi nie ma i jest skanowany normalnie.
+pub fn is_kernel_thread(stat: &str) -> bool {
+    const PF_KTHREAD: u64 = 0x0020_0000;
+    let Some(close) = stat.rfind(')') else { return false };
+    // po nazwie w nawiasach: stan, ppid, pgrp, sesja, tty, tpgid, flags
+    stat.get(close + 1..).and_then(|r| r.split_whitespace().nth(6)).and_then(|f| f.parse::<u64>().ok()).map(|f| f & PF_KTHREAD != 0).unwrap_or(false)
+}
+
 /// Wartość pola z /proc/<pid>/status, np. "Uid" -> "1000 1000 1000 1000".
 pub fn status_field<'a>(status: &'a str, key: &str) -> Option<&'a str> {
     status.lines().find_map(|l| l.strip_prefix(key).and_then(|r| r.strip_prefix(':'))).map(str::trim)
@@ -384,6 +394,11 @@ mod tests {
         for bad in ["running", "", "73 0x0", "73 0x0 0x0 zz", "-1 0x0 0x0"] { assert_eq!(syscall_pc(bad), None, "{bad}"); }
         let smaps = "55d0c3a02000-55d0c3a06000 r-xp 00002000 fd:01 1234 /usr/bin/cat\nSize:                 16 kB\nRss:                  16 kB\nAnonymous:             4 kB\nVmFlags: rd ex mr\n7f1000000000-7f1000010000 r-xp 00000000 fd:01 77 /usr/lib/libc.so.6\nSize:                 64 kB\nAnonymous:             0 kB\nAnonHugePages:         0 kB\n";
 
+        // wątek jądra po fladze PF_KTHREAD; nazwa w nawiasach nie ma znaczenia, także gdy sama zawiera nawiasy
+        assert!(is_kernel_thread("2 (kthreadd) S 0 0 0 0 -1 2129984 0 0 0 0 0 0 0 0 20 0 1 0 1 0 0"));
+        assert!(is_kernel_thread("35 (kworker/3:0H-kblockd) I 2 0 0 0 -1 69238880 0 0 0 0"));
+        assert!(!is_kernel_thread("4242 ([kworker/0:1]) S 1 4242 4242 0 -1 4194560 120 0 0 0"), "proces udający wątek jądra jest skanowany");
+        assert!(!is_kernel_thread("77 (a) b) S 1 77 77 0 -1 4194304 1 0") && !is_kernel_thread("") && !is_kernel_thread("1 (x) S 1"));
         let m = smaps_anonymous(smaps);
         assert_eq!((m[&0x55d0c3a02000].anonymous, m[&0x7f1000000000].anonymous, m.len()), (4096, 0, 2));
         assert_eq!(m[&0x55d0c3a02000], SmapsEntry { anonymous: 4096, offset: 0x2000, dev: "fd:01".into(), inode: 1234 });

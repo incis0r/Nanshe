@@ -47,6 +47,8 @@ mod linux {
         match e.kind() {
             std::io::ErrorKind::PermissionDenied => Error::Access(trf!("pid {pid}: {e} (root lub CAP_SYS_PTRACE; kernel.yama.ptrace_scope)", "pid {pid}: {e} (root or CAP_SYS_PTRACE; kernel.yama.ptrace_scope)")),
             std::io::ErrorKind::NotFound => Error::NotFound(format!("pid {pid}")),
+            // ESRCH: proces zakończył się między listą a otwarciem (albo nie ma pamięci użytkownika)
+            _ if e.raw_os_error() == Some(3) => Error::NotFound(format!("pid {pid}")),
             _ => Error::Io(e),
         }
     }
@@ -127,6 +129,8 @@ mod linux {
         for e in fs::read_dir("/proc")? {
             let e = e?;
             if let Some(pid) = e.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) {
+                // wątki jądra nie mają pamięci użytkownika: nie są procesami do skanowania
+                if fs::read_to_string(format!("/proc/{pid}/stat")).map(|s| crate::sysctx::is_kernel_thread(&s)).unwrap_or(false) { continue; }
                 let name = fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default().trim_end().to_string();
                 v.push(ProcEntry { pid, name });
             }
