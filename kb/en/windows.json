@@ -376,6 +376,19 @@
    "what": "The test program of the Nanshe tool. It deliberately creates in memory the layouts that the detectors look for; it does not execute any of them.",
    "paths": [],
    "parents": []
+  },
+  {
+   "names": [
+    "msmpeng.exe"
+   ],
+   "what": "The Microsoft Defender anti-malware engine. While scanning files it keeps copies of them and its own definition databases in private memory, and both often have the form of program files: the finding \"program header in memory without a file\" (HDR) in regions without execute permission is an ordinary result of its work here. Such a header in an executable region deserves attention. A scan from inside the system cannot open this process (it is protected); it is visible in a scan from the hypervisor or in a dump.",
+   "paths": [
+    "\\programdata\\microsoft\\windows defender\\platform\\**",
+    "\\program files\\windows defender\\"
+   ],
+   "parents": [
+    "services.exe"
+   ]
   }
  ],
  "modules": [

@@ -376,6 +376,19 @@
    "what": "Program testowy narzędzia Nanshe. Celowo tworzy w pamięci układy, których szukają detektory; niczego z nich nie uruchamia.",
    "paths": [],
    "parents": []
+  },
+  {
+   "names": [
+    "msmpeng.exe"
+   ],
+   "what": "Silnik antywirusa Microsoft Defender. Skanując pliki, trzyma w swojej pamięci prywatnej ich kopie oraz własne bazy definicji, a jedne i drugie często mają postać plików programów: znalezisko „nagłówek programu w pamięci bez pliku” (HDR) w regionach bez prawa wykonywania jest tu zwykłym skutkiem jego pracy. Uwagi wymaga taki nagłówek w regionie wykonywalnym. Skan z wnętrza systemu tego procesu nie otworzy (jest chroniony); widać go w skanie z hiperwizora albo w zrzucie.",
+   "paths": [
+    "\\programdata\\microsoft\\windows defender\\platform\\**",
+    "\\program files\\windows defender\\"
+   ],
+   "parents": [
+    "services.exe"
+   ]
   }
  ],
  "modules": [
