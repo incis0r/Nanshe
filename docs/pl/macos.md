@@ -2,7 +2,7 @@
 
 Wersja angielska: [../macos.md](../macos.md).
 
-Stan: **pierwsza wersja skanu żywych procesów** (dodana po 0.1.0). Budowana i testowana natywnie na Apple Silicon (arm64), macOS 26. Komputery Mac z procesorem Intel, starsze wersje macOS i procesy x86_64 działające pod Rosettą nie były testowane.
+Stan: **pierwsza wersja skanu żywych procesów** (nowa w 0.2.0). Budowana i testowana natywnie na Apple Silicon (arm64), macOS 26. Komputery Mac z procesorem Intel, starsze wersje macOS i procesy x86_64 działające pod Rosettą nie były testowane.
 
 ## Build
 
@@ -36,6 +36,8 @@ Proces, którego nie da się otworzyć, jest w wyniku wymieniony jako niedostęp
 - **Mapa regionów** z jądra (`mach_vm_region_recurse`): adres, rozmiar, bieżąca ochrona, znacznik alokacji. Nazwy plików pochodzą z `proc_pidinfo` (`PROC_PIDREGIONPATHINFO`), ze sprawdzeniem, że opis dotyczy dokładnie pytanego regionu.
 - **Biblioteki systemowe.** macOS mapuje wszystkie biblioteki systemowe z jednego wspólnego pliku (dyld shared cache) pod tym samym adresem w każdym procesie. Regiony widziane przez to wspólne mapowanie mają etykietę `[dyld shared cache]`, nie są zgłaszane jako kod bez pliku i nie są czytane (ponad 1 GiB, wszędzie identyczne). Strona w tym zakresie podmieniona prywatnie nie należy już do wspólnego mapowania i jest badana jak każdy region prywatny.
 - **Zawartość** czytana przez `mach_vm_read_overwrite`, wyłącznie do odczytu.
+
+`nanshe map` (interaktywna mapa pamięci) działa na macOS na tych samych zasadach dostępu.
 
 Działające detektory: `RWX`, `X-PRIV`, `ENT-X`, `HDR` (nagłówki Mach-O, PE i ELF w pamięci bez pliku).
 

@@ -259,8 +259,24 @@ pub fn process_memory(p: ProcEntry) -> ProcessMemory {
         }
         out.notes.push(tr!("Tylko MEM_COMMIT; RSS/PSS nieznane. Nazwy mapowań mogą być ścieżkami urządzeń NT; brak nazwy nie oznacza pamięci anonimowej.", "MEM_COMMIT only; RSS/PSS unknown. Mapping names may be NT device paths; a missing name does not mean anonymous memory.").into());
     }
-    #[cfg(not(any(target_os = "linux", windows)))]
-    { out.error = Some("backend mapowania tego systemu nie jest zaimplementowany".into()); }
+    #[cfg(target_os = "macos")]
+    {
+        match macos::MacProcess::open(out.pid) {
+            Ok(src) => {
+                let info = src.info();
+                if out.name.is_empty() { out.name = info.name.unwrap_or_default(); }
+                out.exe = info.exe;
+                match src.regions() {
+                    Ok(r) => out.regions = r.into_iter().map(Into::into).collect(),
+                    Err(e) => out.error = Some(e.to_string()),
+                }
+            }
+            Err(e) => out.error = Some(e.to_string()),
+        }
+        out.notes.push(tr!("Mapa z jądra (mach_vm_region_recurse); RSS/PSS nieznane. Biblioteki systemowe są częścią wspólnej pamięci [dyld shared cache].", "Map from the kernel (mach_vm_region_recurse); RSS/PSS unknown. System libraries are part of the shared [dyld shared cache] memory.").into());
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    { out.error = Some(tr!("backend mapowania tego systemu nie jest zaimplementowany", "the mapping backend for this system is not implemented").into()); }
     out
 }
 
@@ -275,7 +291,7 @@ pub struct Snapshot;
 impl Snapshot {
     pub fn take() -> Self { Snapshot }
     pub fn host(&self) -> HostContext { HostContext::default() }
-    pub fn context(&self, _pid: u32) -> ProcessContext { ProcessContext { notes: vec!["kontekst systemowy nie jest zbierany na tym systemie".into()], ..Default::default() } }
+    pub fn context(&self, _pid: u32) -> ProcessContext { ProcessContext { notes: vec![tr!("kontekst systemowy nie jest jeszcze zbierany na tym systemie", "system context is not collected on this system yet").into()], ..Default::default() } }
 }
 
 /// Skróty SHA-256 plików z badanej stacji, każdy plik liczony raz na skan. Wyłącznie odczyt.
@@ -318,6 +334,9 @@ impl HashCache {
     pub fn modules(&mut self, pid: u32, layout: &[Region]) {
         for r in layout {
             let Some(b) = r.backing.as_deref() else { continue };
+            // macOS: wspólny plik bibliotek systemowych ma kilka gigabajtów i jest ten sam w każdym procesie;
+            // limit rozmiaru i tak by go odrzucił, więc nie otwieramy go wcale
+            if r.label.as_deref() == Some("[dyld shared cache]") { continue; }
             // plik tylko w pamięci albo usunięty istnieje wyłącznie w tym procesie: klucz z numerem procesu
             let private = b.starts_with("memfd:") || r.backing_deleted;
             let shown = if private { trf!("{b} (proces {pid})", "{b} (process {pid})") } else { b.to_string() };

@@ -2,7 +2,7 @@
 
 Polish version: [pl/macos.md](pl/macos.md).
 
-Status: **first version of live process scanning** (added after 0.1.0). Built and tested natively on Apple Silicon (arm64), macOS 26. Intel Macs, older macOS versions and x86_64 processes running under Rosetta were not tested.
+Status: **first version of live process scanning** (new in 0.2.0). Built and tested natively on Apple Silicon (arm64), macOS 26. Intel Macs, older macOS versions and x86_64 processes running under Rosetta were not tested.
 
 ## Build
 
@@ -36,6 +36,8 @@ A process that cannot be opened is listed in the result as inaccessible, with th
 - **Region map** from the kernel (`mach_vm_region_recurse`): address, size, current protection, allocation tag. File names come from `proc_pidinfo` (`PROC_PIDREGIONPATHINFO`), checked to describe exactly the region asked about.
 - **System libraries.** macOS maps all system libraries from one shared file (the dyld shared cache) at the same address in every process. Regions seen through that shared mapping are labelled `[dyld shared cache]`, are not reported as code without a file and are not read (over 1 GiB, identical everywhere). A page inside that range that was replaced privately is no longer part of the shared mapping and is examined like any private region.
 - **Contents** read with `mach_vm_read_overwrite`, read-only.
+
+`nanshe map` (the interactive memory map) works on macOS with the same access rules.
 
 Detectors that apply: `RWX`, `X-PRIV`, `ENT-X`, `HDR` (Mach-O, PE and ELF headers in memory without a file).
 
