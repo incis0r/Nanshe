@@ -7,7 +7,8 @@ cargo build -q --workspace --features nanshe-cli/llm || exit 2
 N=/target/debug/nanshe; S=/target/debug/nanshe-sample
 fail=0
 # Tło platformy: tagi, które ma na tej architekturze nawet próbka "clean" (w kontenerze arm64 jest to ENT-X
-# poniżej progu "podejrzane", na x86_64 nic). Oczekiwania poniżej podają tylko to, co wnosi sama próbka;
+# poniżej progu "podejrzane" w kodzie biblioteki libc, na x86_64 nic). Własny ENT-X wnoszą tylko próbki
+# z ładunkiem o wysokiej entropii: rwx, memfd, inject, inject-memfd i ctx (ustalone z wyników, 2026-11-24). Oczekiwania poniżej podają tylko to, co wnosi sama próbka;
 # tło jest do nich doliczane. Bez tego test przechodził tylko na architekturze, na której go strojono.
 BASE=""
 union() { printf '%s\n%s\n' "$1" "$2" | tr ',' '\n' | grep -v '^$' | sort -u | paste -sd, -; }
@@ -47,27 +48,27 @@ check data-noise   0 ""                  # wysoka entropia w danych RW to nie zn
 check rx-file      1 "X-TMP"             # R-X z pliku w /tmp: łapie X-TMP (katalog zapisywalny dla wszystkich)
 check rwx-lowent   1 "RWX,X-PRIV"        # jak rwx, ale bez ENT-X na ładunku (asercja wyniku niżej)
 check rx-stage     1 "X-PRIV"            # staging RW->R-X: RWX ominięty, X-PRIV łapie
-check hdr-corrupt  1 "ENT-X,X-PRIV"      # e_type spoza zakresu i brak tablicy segmentów: HDR głuchy (kontrola)
-check hdr-wiped    1 "ENT-X,HDR,X-PRIV"  # sygnatura wyzerowana, tablica segmentów została: HDR po tablicy
-check hdr-offset   1 "ENT-X,HDR,X-PRIV"  # nagłówek w środku strony: HDR szuka pod dowolnym przesunięciem
+check hdr-corrupt  1 "X-PRIV"            # e_type spoza zakresu i brak tablicy segmentów: HDR głuchy (kontrola)
+check hdr-wiped    1 "HDR,X-PRIV"        # sygnatura wyzerowana, tablica segmentów została: HDR po tablicy
+check hdr-offset   1 "HDR,X-PRIV"        # nagłówek w środku strony: HDR szuka pod dowolnym przesunięciem
 # red team: pokrycie detektorów
-check delexec      1 "DEL-EXEC,ENT-X"
+check delexec      1 "DEL-EXEC"
 # zmiana kodu biblioteki: jeden bajt zmieniony w pamięci daje IMG-MOD po porównaniu z plikiem;
 # kontrola: ta sama strona zapisana tą samą treścią (prywatna kopia bez zmiany) nie daje znaleziska
-check patch        1 "ENT-X,IMG-MOD"
-check touch        0 "ENT-X"
-check execstack    1 "ENT-X,RWX,X-PRIV"
+check patch        1 "IMG-MOD"
+check touch        0 ""
+check execstack    1 "RWX,X-PRIV"
 # red team: wstrzyknięcie do warstwy LLM przez metadane
 check inject-memfd 1 "ENT-X,MEMFD"
-check inject-path  1 "DEL-EXEC,ENT-X"
+check inject-path  1 "DEL-EXEC"
 
 # Próbki dynamiczne (pod przyszły --watch): skan w każdej zgłoszonej fazie; fazy czytane na bieżąco
 # z wyjścia próbki, a skan wykonuje się w stabilnym oknie między wpisami.
 phase_want() { case "$1:$2" in
-  churn:quiet|churn:stage-rw|churn:cleanup|sleepmask:masked) echo "ENT-X";;
-  churn:stage-rx|sleepmask:armed) echo "ENT-X,X-PRIV";;
-  churn:hdr) echo "ENT-X,HDR,X-PRIV";;
-  churn:armed-rwx) echo "ENT-X,HDR,RWX,X-PRIV";;
+  churn:quiet|churn:stage-rw|churn:cleanup|sleepmask:masked) echo "";;
+  churn:stage-rx|sleepmask:armed) echo "X-PRIV";;
+  churn:hdr) echo "HDR,X-PRIV";;
+  churn:armed-rwx) echo "HDR,RWX,X-PRIV";;
   *) echo "?";;
 esac }
 check_phases() { # tryb, interwał s, czas s, wymagane fazy (rozdzielone spacją)
@@ -86,6 +87,7 @@ check_phases() { # tryb, interwał s, czas s, wymagane fazy (rozdzielone spacją
       $N scan --pid "$pid" --no-hashes --no-context --json "$OUT/$mode.last.json" 2>/dev/null
       tags=$(grep -o '"tag": "[A-Z-]*"' "$OUT/$mode.last.json" | cut -d'"' -f4 | sort -u | paste -sd, -)
       want=$(phase_want "$mode" "$phase")
+      [ "$want" = "?" ] || want=$(union "$want" "$BASE")
       one=ok; [ "$tags" = "$want" ] || { one="FAIL[$tags]"; res=FAIL; fail=1; }
       got="$got $phase"; detail="$detail $phase:$one"
     fi
@@ -196,8 +198,8 @@ echo "raport różnicowy: $res"
 #    zrzut próbki bez znalezisk nie daje żadnych (kontrola), a raport mówi, że źródłem jest zrzut.
 if command -v gcore >/dev/null 2>&1; then
   res=OK
-  for pair in "ctx:1:ENT-X,HDR,MEMFD,RWX,X-PRIV" "clean:0:ENT-X"; do
-    mode=${pair%%:*}; rest=${pair#*:}; want_rc=${rest%%:*}; want=${rest#*:}
+  for pair in "ctx:1:ENT-X,HDR,MEMFD,RWX,X-PRIV" "clean:0:"; do
+    mode=${pair%%:*}; rest=${pair#*:}; want_rc=${rest%%:*}; want=$(union "${rest#*:}" "$BASE")
     $S "$mode" 60 > "$OUT/dump-$mode.pid" & sleep 0.7
     pid=$(awk '{print $2}' "$OUT/dump-$mode.pid")
     rm -f "$OUT/core-$mode".*
