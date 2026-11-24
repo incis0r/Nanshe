@@ -16,27 +16,41 @@ trait Kernel {
 
 fn fail(what: &str, e: impl std::fmt::Display) -> Error { Error::Invalid(format!("{what}: {e}")) }
 
-impl<T, V> Kernel for Win32Kernel<T, V>
+/// Adres tablic stron trybu użytkownika z pola UserDirectoryTableBase albo None, gdy proces ich nie ma.
+pub(crate) fn user_dtb_root(field: Option<u64>) -> Option<u64> {
+    field.map(|v| v & 0x000f_ffff_ffff_f000).filter(|a| *a != 0)
+}
+
+/// Jądro gościa razem z tym, czego biblioteka nie zna: położeniem adresu tablic stron trybu użytkownika.
+struct WinKernel<T, V> { k: Win32Kernel<T, V>, user_dtb_offset: Option<usize> }
+
+impl<T, V> Kernel for WinKernel<T, V>
 where T: memflow::prelude::v1::PhysicalMemory + Clone + 'static, V: memflow::prelude::v1::VirtualTranslate2 + Clone + 'static {
     fn procs(&mut self) -> Result<Vec<ProcessInfo>> {
-        self.process_info_list().map_err(|e| fail(tr!("lista procesów gościa", "guest process list"), e))
+        self.k.process_info_list().map_err(|e| fail(tr!("lista procesów gościa", "guest process list"), e))
     }
     fn layout(&mut self, p: &ProcessInfo) -> Result<(Vec<PageRange>, Vec<Module>, bool)> {
         if p.dtb1.is_null() { return Err(Error::Invalid(tr!("proces gościa nie ma tablic stron (kończy się albo jest procesem minimalnym)", "the guest process has no page tables (it is exiting or is a minimal process)").into())); }
-        let phys = self.virt_mem.phys_mem();
-        let (ranges, complete) = walk_page_tables(p.dtb1.to_umem(), |addr| {
+        // Przy izolacji tablic stron jądra (ochrona przed Meltdown) proces bez uprawnień administratora ma dwa
+        // zestawy tablic. W jądrowych cała przestrzeń użytkownika jest oznaczona jako niewykonywalna, więc
+        // faktyczną ochronę stron widać tylko w tablicach trybu użytkownika (pole UserDirectoryTableBase).
+        // Młodsze 12 bitów pola to znaczniki; proces z jednym zestawem tablic ma w nim sam znacznik (pomiar na
+        // Windows 11 build 26100: wartość 1 dla procesów systemowych, adres z końcówką 001 dla pozostałych).
+        let root = user_dtb_root(self.user_dtb_offset.and_then(|off| self.k.virt_mem.read::<u64>(p.address + off).ok())).unwrap_or(p.dtb1.to_umem());
+        let phys = self.k.virt_mem.phys_mem();
+        let (ranges, complete) = walk_page_tables(root, |addr| {
             let mut raw = [0u8; 4096];
             phys.phys_read_into(PhysicalAddress::from(addr), &mut raw).ok()?;
             Some(raw.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect())
         });
-        let mut proc = self.process_by_info(p.clone()).map_err(|e| fail(tr!("proces gościa", "guest process"), e))?;
+        let mut proc = self.k.process_by_info(p.clone()).map_err(|e| fail(tr!("proces gościa", "guest process"), e))?;
         // lista modułów bywa nieczytelna (strony wyrzucone z pamięci): wtedy regiony zostają bez nazw plików
         let modules = proc.module_list().unwrap_or_default().into_iter()
             .map(|m| Module { base: m.base.to_umem(), size: m.size, path: m.path.to_string() }).collect();
         Ok((ranges, modules, complete))
     }
     fn read(&mut self, p: &ProcessInfo, addr: u64, buf: &mut [u8]) -> Result<usize> {
-        let mut proc = self.process_by_info(p.clone()).map_err(|e| fail(tr!("proces gościa", "guest process"), e))?;
+        let mut proc = self.k.process_by_info(p.clone()).map_err(|e| fail(tr!("proces gościa", "guest process"), e))?;
         match proc.read_raw_into(Address::from(addr), buf) {
             // odczyt częściowy: brakujące strony zostają wyzerowane, jak w skanie procesu na żywo
             Ok(()) | Err(PartialError::PartialVirtualRead(())) => Ok(buf.len()),
@@ -67,10 +81,15 @@ pub fn open(target: &str, symbols: Symbols) -> Result<Guest> {
     // nie obsługuje, więc żadne połączenie nie jest nawiązywane (także z usługą na tym samym hoście).
     if !symbols.fetch { store = store.base_url(NO_DOWNLOAD); }
     let arch = scanned.os_info.arch;
+    // położenie pola z adresem tablic stron trybu użytkownika, z tego samego pliku symboli; brak pola albo
+    // pliku nie przerywa pracy (starsze systemy nie mają tego pola), tylko wyłącza korzystanie z tych tablic
+    let user_dtb_offset = scanned.kernel_guid.as_ref().and_then(|g| store.load(g).ok())
+        .and_then(|pdb| memflow_win32::offsets::pdb::PdbStruct::new(&pdb, "_KPROCESS").ok())
+        .and_then(|k| k.find_field("UserDirectoryTableBase").map(|f| f.offset));
     let built = memflow_win32::offsets::offset_builder_with_kernel_info(&scanned).symbol_store(store).build().map(|offsets| {
         let phys = memflow::prelude::v1::CachedPhysicalMemory::builder(connector).arch(arch).build().unwrap();
         let vat = memflow::prelude::v1::CachedVirtualTranslate::builder(memflow::prelude::v1::DirectTranslate::new()).arch(arch).build().unwrap();
-        Win32Kernel::new(phys, vat, offsets, scanned)
+        WinKernel { k: Win32Kernel::new(phys, vat, offsets, scanned), user_dtb_offset }
     });
     let kernel = built.map_err(|e| Error::Invalid(if symbols.fetch {
         trf!("nie udało się rozpoznać jądra Windows w pamięci gościa: {e}", "could not identify the Windows kernel in guest memory: {e}")
@@ -226,6 +245,15 @@ mod tests {
         for bad in ["Uid:\t1000\t1000\t1000\t1000\n", "Uid:\t0\t1000\t0\t0\n", "Uid:\t107\t107\t107\t65534\n", "Name:\tx\n", "Uid:\t0\t0\n", "Uid:\t0\t0\t0\tx\n", ""] {
             assert!(!f(bad), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn user_page_tables_are_used_only_when_the_process_has_them() {
+        use super::user_dtb_root as f;
+        assert_eq!(f(Some(0x16de69001)), Some(0x16de69000));
+        assert_eq!(f(Some(0x5d6b3000)), Some(0x5d6b3000));
+        // sam znacznik, zero albo nieprzeczytane pole: proces ma jeden zestaw tablic
+        assert_eq!((f(Some(1)), f(Some(0)), f(Some(0xfff)), f(None)), (None, None, None, None));
     }
 
     #[test]

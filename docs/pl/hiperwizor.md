@@ -4,7 +4,7 @@ Wersja angielska: [../hypervisor.md](../hypervisor.md).
 
 `nanshe vm` skanuje procesy działającej maszyny wirtualnej Windows z hosta Linux, który uruchamia ją pod KVM/QEMU. W gościu nic nie jest instalowane ani uruchamiane. Skaner czyta pamięć procesu QEMU na hoście, znajduje w niej jądro Windows i przechodzi tablice stron każdego procesu gościa. Detektory i raport są te same co przy skanie na żywo.
 
-Stan: pierwsza wersja (zapowiedź 0.4). Zmierzona na razie na jednym gościu; patrz „Co zmierzono".
+Stan: pierwsza wersja (zapowiedź 0.4). Zmierzona na razie na dwóch gościach, w tym na jednym w porównaniu ze skanem na żywo tego samego systemu; patrz „Co zmierzono". Wyniki z tego trybu wymagają większej ostrożności niż wyniki skanu na żywo.
 
 ## Po co
 
@@ -76,6 +76,7 @@ Po otwarciu gościa skaner sprawdza, czy lista procesów zawiera proces `System`
 
 Skutki, o których warto wiedzieć przed lekturą raportu:
 
+- **Możliwe są fałszywe znaleziska `X-PRIV`, gdy lista modułów procesu jest niepełna.** Lista jest czytana z działającego gościa i może nie zawierać części bibliotek; ich kod wygląda wtedy jak prywatna pamięć wykonywalna. Typowy objaw to proces z setkami znalezisk `X-PRIV` w wysokich adresach. Taki wynik to powód do ponownego skanu albo skanu na żywo, a nie znalezisko. Planowana poprawka: regiony z drzewa VAD jądra.
 - **Stron wyrzuconych do pliku wymiany nie widać.** Region może być krótszy niż w skanie na żywo albo może go nie być.
 - **Gość działa w trakcie skanu,** więc wynik nie jest spójną migawką.
 - **`HDR` jest zgłaszany tylko w regionach wykonywalnych.** Pliki mapowane jako dane zaczynają się nagłówkiem obrazu i nie da się ich odróżnić od pamięci prywatnej; na zmierzonym gościu dawało to 466 takich regionów, zanim dodano tę regułę. Nagłówek w niewykonywalnej pamięci prywatnej nie jest więc w tym trybie zgłaszany.
@@ -92,10 +93,19 @@ Jeden gość, 2026-11-23: kontroler domeny Windows Server 2025 (4 GiB RAM) na ho
 - 3 procesy o wadze od „podejrzane": `Microsoft.ActiveDirectory.WebServices.exe` (.NET, `RWX` i `X-PRIV`), `MsMpEng.exe` (`RWX` i `X-PRIV`) oraz `LogonUI.exe` (dwie strony `X-PRIV`). Ocena: środowiska tworzące kod; żadnego nie weryfikowano ręcznie.
 - Nie zmierzono: innych wersji Windows, procesów 32-bitowych, gości z balonem pamięci albo dużymi stronami, gości z włączonym VBS, obciążenia zajętego hosta.
 
+Drugi gość, 2026-11-24: Windows 11 Enterprise LTSC (build 26100.9974, 4 GiB RAM) na tym samym hoście, porównany ze skanem na żywo wykonanym w tym samym gościu około 90 minut wcześniej.
+
+- 137 do 162 procesów gościa na przebieg, 18 do 34 sekund, bez błędów odczytu. Skan na żywo nie otworzył 17 procesów (między innymi `lsass.exe`, `MsMpEng.exe`, `csrss.exe`, `services.exe`); skan z hosta przeczytał wszystkie.
+- Pierwsze przebiegi na tym gościu były błędne w obie strony: w żadnym procesie zwykłego użytkownika nie było widać ani jednej strony wykonywalnej. Przyczyna: izolacja tablic stron jądra. Taki proces ma dwa zestawy tablic stron, a w zestawie jądrowym cała połowa użytkownika jest oznaczona jako niewykonywalna. Skaner czyta teraz zestaw użytkownika (`UserDirectoryTableBase`), gdy proces go ma. Na pierwszym gościu wszystkie wskazane procesy były systemowe i miały jeden zestaw, więc błąd się nie ujawnił.
+- Po poprawce z 14 procesów wskazanych przez skan na żywo 12 zostało wskazanych także z hosta. Dla `TrueConf.exe` odnalazło się 87 ze 101 adresów regionów wskazanych przez skan na żywo; dla `QtWebEngineProcess.exe` znaleziska były te same poza `IMG-MOD`. `dwm.exe` (57 regionów `X-PRIV` w skanie na żywo) i `ShellExperienceHost.exe` nie zostały wskazane z hosta; przyczyny nie ustalono.
+- Fałszywe alarmy pozostają: cztery procesy (dwa razy `svchost.exe`, `StartMenuExperienceHost.exe` i dużo wyższa liczba w jednym procesie aplikacji) miały setki znalezisk `X-PRIV`, których skan na żywo nie ma. Ocena: lista modułów czytana z działającego gościa była niepełna, więc kod bibliotek, których na niej brakuje, wygląda jak pamięć prywatna. To, których procesów to dotyczy, zmieniało się między przebiegami.
+- Liczb nie da się porównywać jeden do jednego: skan na żywo liczy regiony, skan z hosta liczy ciągi obecnych stron, więc jeden region może dać wiele znalezisk.
+
 ## Uwagi o implementacji
 
 - Moduł `nanshe-vm`. Pamięć fizyczną gościa i jądro Windows odnajduje biblioteka [memflow](https://github.com/memflow/memflow) (MIT); z niej pochodzi lista procesów i listy modułów.
 - Tablice stron przechodzi sam Nanshe (`walk_page_tables`). memflow 0.2.4 łączy bit zapisu poziomów tablic stron przez „lub" zamiast „i", przez co każda strona wygląda na zapisywalną, a każda strona kodu na `RWX`.
+- Proces objęty izolacją tablic stron jądra ma drugi zestaw tablic dla trybu użytkownika; jego adres jest czytany z `_KPROCESS.UserDirectoryTableBase` (przesunięcie z tego samego pliku symboli) i używany, gdy istnieje.
 - Gość jest daną niezaufaną. Przejście tablic ma limit liczby czytanych tablic (`MAX_TABLES`) i limit liczby zakresów stron na proces (`MAX_RANGES`); po osiągnięciu limitu wynik procesu jest oznaczany jako niepełny. Oba limity są testowane, razem z tablicami nieczytelnymi i wskazującymi na siebie.
 
 ## Plan dla tej funkcji

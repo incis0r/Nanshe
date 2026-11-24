@@ -4,7 +4,7 @@ Polish version: [pl/hiperwizor.md](pl/hiperwizor.md).
 
 `nanshe vm` scans the processes of a running Windows virtual machine from the Linux host that runs it under KVM/QEMU. Nothing is installed or started inside the guest. The scanner reads the memory of the QEMU process on the host, finds the Windows kernel in it and walks the page tables of every guest process. The same detectors and the same report are used as for a live scan.
 
-State: first version (0.4 preview). Measured on one guest so far; see "What was measured".
+State: first version (0.4 preview). Measured on two guests so far, one of them against a live scan of the same system; see "What was measured". Results from this mode need more care than results of a live scan.
 
 ## Why
 
@@ -76,6 +76,7 @@ After opening the guest, the scanner checks that the process list contains the `
 
 Consequences worth knowing before reading a report:
 
+- **False `X-PRIV` findings are possible when the module list of a process is incomplete.** The list is read from the running guest and can miss libraries; their code then looks like private executable memory. A process with hundreds of `X-PRIV` findings in the high address range is the typical sign. Treat such a result as a reason to rescan or to run a live scan, not as a finding. The planned fix is to take regions from the kernel VAD tree.
 - **Pages swapped out are not seen.** A region can be shorter than in a live scan, or missing.
 - **The guest keeps running during the scan,** so the result is not a consistent snapshot.
 - **`HDR` is reported only in executable regions.** Files mapped as data start with an image header and cannot be told apart from private memory; on the measured guest this produced 466 such regions before the rule was added. A header in non-executable private memory is therefore not reported in this mode.
@@ -92,10 +93,19 @@ One guest, 2026-11-23: Windows Server 2025 domain controller (4 GiB RAM) on a Ro
 - 3 processes at `suspicious` or above: `Microsoft.ActiveDirectory.WebServices.exe` (.NET, `RWX` and `X-PRIV`), `MsMpEng.exe` (`RWX` and `X-PRIV`) and `LogonUI.exe` (two `X-PRIV` pages). Assessment: runtimes that generate code; none was verified manually.
 - Not measured: other Windows versions, 32-bit processes, guests with memory ballooning or huge pages, VBS-enabled guests, load on a busy host.
 
+Second guest, 2026-11-24: Windows 11 Enterprise LTSC (build 26100.9974, 4 GiB RAM) on the same host, compared with a live scan run inside the same guest about 90 minutes earlier.
+
+- 137 to 162 guest processes per run, 18 to 34 seconds, no read errors. The live scan could not open 17 processes (among them `lsass.exe`, `MsMpEng.exe`, `csrss.exe`, `services.exe`); the scan from the host read all of them.
+- The first runs on this guest were wrong in both directions: no executable page was seen in any process of an ordinary user. Cause: kernel page-table isolation. Such a process has two sets of page tables, and in the kernel set the whole user half is marked no-execute. The scanner now reads the user set (`UserDirectoryTableBase`) when the process has one. On the first guest every flagged process was a system process with a single set, so the fault did not show.
+- After the fix, of 14 processes flagged by the live scan, 12 were also flagged from the host. For `TrueConf.exe`, 87 of the 101 flagged region addresses of the live scan were found again; for `QtWebEngineProcess.exe` the findings were the same apart from `IMG-MOD`. `dwm.exe` (57 `X-PRIV` regions in the live scan) and `ShellExperienceHost.exe` were not flagged from the host; the cause was not established.
+- False positives remain: four processes (`svchost.exe` twice, `StartMenuExperienceHost.exe`, and a much higher count in one application process) had hundreds of `X-PRIV` findings that the live scan does not have. Assessment: the module list read from the running guest was incomplete, so code of libraries missing from the list looks like private memory. Which processes are affected changed from run to run.
+- Counts are not comparable one to one: the live scan counts regions, the scan from the host counts runs of present pages, so one region can appear as many findings.
+
 ## Implementation notes
 
 - Crate `nanshe-vm`. Guest physical memory and the Windows kernel are located with the [memflow](https://github.com/memflow/memflow) library (MIT); process listing and module lists come from it.
 - Page tables are walked by Nanshe itself (`walk_page_tables`). memflow 0.2.4 combines the write bit of page-table levels with "or" instead of "and", which makes every page look writable and every code page `RWX`.
+- A process under kernel page-table isolation has a second set of page tables for user mode; its address is read from `_KPROCESS.UserDirectoryTableBase` (offset from the same symbol file) and used when present.
 - The guest is untrusted input. The page walk is bounded by the number of tables read (`MAX_TABLES`) and by the number of page ranges per process (`MAX_RANGES`); when a limit is reached the result for the process is marked incomplete. Both limits are tested, together with unreadable and self-referencing tables.
 
 ## Roadmap for this feature
