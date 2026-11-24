@@ -12,6 +12,9 @@ path = "src/main.rs"
 default = []
 # Warstwa interpretacji LLM: jedyna cecha wnosząca kod sieciowy. Wyłączona w domyślnym buildzie.
 llm = ["dep:nanshe-llm"]
+# Odczyt pamięci gościa Windows z hosta KVM/QEMU (polecenie `vm`). Tylko Linux; wnosi bibliotekę memflow
+# i kod pobierania symboli jądra, używany wyłącznie z opcją --fetch-symbols.
+vm = ["dep:nanshe-vm"]
 
 [dependencies]
 nanshe-core = { path = "../nanshe-core" }
@@ -20,5 +23,6 @@ nanshe-live = { path = "../nanshe-live" }
 nanshe-dump = { path = "../nanshe-dump" }
 nanshe-report = { path = "../nanshe-report" }
 nanshe-llm = { path = "../nanshe-llm", optional = true }
+nanshe-vm = { path = "../nanshe-vm", optional = true }
 clap.workspace = true
 serde_json.workspace = true

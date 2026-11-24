@@ -10,3 +10,7 @@ License; see crates/nanshe-report/fonts/LICENSE-DejaVu.txt.
 This product is built with third-party Rust crates distributed under
 permissive licenses (MIT, Apache-2.0, BSD, ISC, Zlib, Unicode). Their license
 texts are available in the respective crate sources listed in Cargo.lock.
+
+Builds with the optional "vm" feature link the memflow libraries (memflow,
+memflow-win32, memflow-qemu), Copyright (c) memflow contributors, distributed
+under the MIT License.

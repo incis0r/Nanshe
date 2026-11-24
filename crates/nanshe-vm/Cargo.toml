@@ -1,0 +1,16 @@
+[package]
+name = "nanshe-vm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Odczyt pamięci procesów gościa Windows z hosta KVM/QEMU (bez agenta w gościu)"
+
+[dependencies]
+nanshe-core = { path = "../nanshe-core" }
+
+# Tylko host Linux z KVM/QEMU. Biblioteka memflow (MIT) znajduje jądro Windows w pamięci fizycznej gościa
+# i tłumaczy adresy; symbole jądra (plik PDB) bierze z katalogu lokalnego, a z sieci tylko na wyraźne życzenie.
+[target.'cfg(target_os = "linux")'.dependencies]
+memflow = "0.2"
+memflow-win32 = "0.2"
+memflow-qemu = { version = "0.2", default-features = false }
