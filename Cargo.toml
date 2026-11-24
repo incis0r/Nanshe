@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["crates/*", "tests/samples"]
+# fuzzing ma własny obszar roboczy (kompilator nightly)
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.1.0"

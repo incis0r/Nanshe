@@ -233,6 +233,20 @@ mod tests {
         assert_eq!(diff(&plain, BASE, 0x1000, &loaded(BASE)), Some((0, 0x1000)));
     }
 
+    /// Ziarno dla fuzzera: poprawny plik PE z relokacjami, poprzedzony nagłówkiem celu (adres bazowy, adres
+    /// względny, punkt podziału na plik i pamięć). Zapisywane tylko, gdy ustawiono NANSHE_FUZZ_SEEDS.
+    #[test]
+    fn fuzz_seeds() {
+        let Some(dir) = std::env::var_os("NANSHE_FUZZ_SEEDS") else { return };
+        let dir = std::path::Path::new(&dir).join("pediff");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = pe_file(&[0x90; 0x400], &[0x10, 0x20]);
+        let mut seed = Vec::new();
+        seed.extend(0x7ff0_0000_0000u64.to_le_bytes()); seed.extend(0x1000u32.to_le_bytes()); seed.extend((file.len() as u32).to_le_bytes());
+        seed.extend(&file); seed.extend([0x90u8; 0x400]);
+        std::fs::write(dir.join("pe"), seed).unwrap();
+    }
+
     #[test]
     fn image_header_in_memory_must_match_the_file() {
         let file = pe_file(&code(), &[0x10, 0x200]);

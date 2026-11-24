@@ -16,3 +16,12 @@ dist/
 
 # pliki metadanych Findera
 .DS_Store
+
+# fuzzing: korpus roboczy i artefakty builda (znalezione przypadki zapisujemy jako testy regresji)
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/Cargo.lock
+
+# zrzuty awaryjne narzędzi budujących
+*.core

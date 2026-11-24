@@ -1,0 +1,58 @@
+[package]
+name = "nanshe-fuzz"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+# Osobny obszar roboczy: fuzzing wymaga kompilatora nightly i nie jest częścią zwykłego builda.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+nanshe-core = { path = "../crates/nanshe-core" }
+nanshe-dump = { path = "../crates/nanshe-dump" }
+nanshe-live = { path = "../crates/nanshe-live" }
+nanshe-vm = { path = "../crates/nanshe-vm" }
+nanshe-analyze = { path = "../crates/nanshe-analyze" }
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "dump"
+path = "fuzz_targets/dump.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pediff"
+path = "fuzz_targets/pediff.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pagetables"
+path = "fuzz_targets/pagetables.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "maps"
+path = "fuzz_targets/maps.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "detectors"
+path = "fuzz_targets/detectors.rs"
+test = false
+doc = false
+bench = false

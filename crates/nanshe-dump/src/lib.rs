@@ -148,6 +148,21 @@ pub(crate) mod testutil {
 
 #[cfg(test)]
 mod tests {
+    /// Ziarna dla fuzzera: poprawne pliki z budowniczych testowych. Zapisywane tylko, gdy ustawiono NANSHE_FUZZ_SEEDS.
+    #[test]
+    fn fuzz_seeds() {
+        let Some(dir) = std::env::var_os("NANSHE_FUZZ_SEEDS") else { return };
+        let dir = std::path::Path::new(&dir).join("dump");
+        std::fs::create_dir_all(&dir).unwrap();
+        for machine in [62u16, 183] {
+            let core = crate::elfcore::tests::core(machine, &[(0x40_0000, 0x2000, 5, vec![0x90; 0x800]), (0x7f00_0000_0000, 0x1000, 7, vec![1; 0x400])], &crate::elfcore::tests::sample_notes(machine, 0x40_0010, 0x7f00_0000_0100, 0x40_0100));
+            std::fs::write(dir.join(format!("core-{machine}")), core).unwrap();
+        }
+        let md = crate::minidump::tests::minidump(&[(0x10_0000, 0x1000, 0x40, 0x20000, Some(vec![0x90; 0x200])), (0x7ff0_0000_0000, 0x2000, 0x20, 0x1000000, Some(vec![0x4d, 0x5a, 0, 0]))],
+            &[(0x7ff0_0000_0000, 0x2000, "C:\\Windows\\System32\\a.dll")], &[(11, 0x10_0000)], 4321);
+        std::fs::write(dir.join("minidump"), md).unwrap();
+    }
+
     use super::*;
 
     #[test]
