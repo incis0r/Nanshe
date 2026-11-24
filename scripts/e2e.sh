@@ -68,7 +68,7 @@ phase_want() { case "$1:$2" in
   churn:quiet|churn:stage-rw|churn:cleanup|sleepmask:masked) echo "";;
   churn:stage-rx|sleepmask:armed) echo "X-PRIV";;
   churn:hdr) echo "HDR,X-PRIV";;
-  churn:armed-rwx) echo "HDR,RWX,X-PRIV";;
+  churn:armed-rwx) echo "ENT-X,HDR,RWX,X-PRIV";;   # ładunek tej fazy ma wysoką entropię (własny ENT-X, potwierdzone na x86_64)
   *) echo "?";;
 esac }
 check_phases() { # tryb, interwał s, czas s, wymagane fazy (rozdzielone spacją)

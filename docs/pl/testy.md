@@ -7,7 +7,7 @@ Trzy warstwy: testy jednostkowe (logika, bez żywych procesów), testy end-to-en
 ## Jak uruchomić
 
 ```sh
-scripts/dev.sh cargo test --workspace --features nanshe-cli/llm   # jednostkowe (Linux, kontener)
+scripts/dev.sh cargo test --workspace --features nanshe-cli/llm,nanshe-cli/vm   # jednostkowe (Linux, kontener)
 scripts/dev.sh sh scripts/e2e.sh                                  # e2e Linux
 powershell -ExecutionPolicy Bypass -File scripts\e2e.ps1 -Bin target\release -Out e2e-out   # e2e Windows, natywnie na stacji testowej
 ```
@@ -18,8 +18,8 @@ Kod wyjścia skryptów e2e: 0 gdy wszystko zgodne, 1 gdy cokolwiek odbiega.
 
 | Warstwa | Wynik |
 |---|---|
-| Testy jednostkowe | 142 przechodzi (analyze 26, core 3, dump 7, kb 7, live 20, llm 40, report 30, vm 9) |
-| macOS (arm64, natywnie) | 141 testów jednostkowych (w tym 4 backendu macOS, uruchamiane tylko tam) oraz `scripts/e2e-macos.sh`: 7 próbek i 4 grupy asercji dodatkowych; zob. [macos.md](macos.md) |
+| Testy jednostkowe | 144 przechodzi (analyze 26, core 3, dump 8, kb 7, live 21, llm 40, report 30, vm 9) |
+| macOS (arm64, natywnie) | 143 testów jednostkowych (w tym 4 backendu macOS, uruchamiane tylko tam) oraz `scripts/e2e-macos.sh`: 7 próbek i 4 grupy asercji dodatkowych; zob. [macos.md](macos.md) |
 | Odczyt z hiperwizora (`nanshe vm`) | jedno uruchomienie na żywo na gościu Windows Server 2025 pod KVM (zob. [hiperwizor.md](hiperwizor.md)); bez automatycznego testu end-to-end |
 | Pełne skany na żywo, Linux | `nanshe scan --all` na 20 hostach jednego labu (19 x86_64, 1 arm64), 2026-11-23, przed strojeniem detekcji i po nim; żadnego procesu nie weryfikowano ręcznie |
 | e2e Linux (aarch64, kontener) | 16 próbek statycznych, 2 dynamiczne i 8 grup asercji dodatkowych |
@@ -30,7 +30,7 @@ Kod wyjścia skryptów e2e: 0 gdy wszystko zgodne, 1 gdy cokolwiek odbiega.
 
 Przepływ CI jest zdefiniowany w `.github/workflows/ci.yml` (testy jednostkowe i end-to-end Linuksa w kontenerze, testy jednostkowe i build wydania na Windows); wyników jego przebiegów ten dokument nie odnotowuje. Testy jednostkowe pakietu `nanshe-vm` są częścią przebiegu całego workspace; binarium `nanshe` z cechą `vm` nie jest tam budowane.
 
-Nie ma: fuzzingu parsera `maps`, odnotowanego przebiegu end-to-end na Linuksie x86_64, zestawu oceny jakości modeli.
+Nie ma: zestawu oceny jakości modeli. Fuzzing jest opisany w sekcji „Fuzzing".
 
 ## Testy jednostkowe
 
@@ -171,6 +171,24 @@ Dodatkowo PDF z próbki został otwarty zewnętrznym narzędziem (`pypdf`: 5 str
 Sprawdzenie, czy proces QEMU znaleziony po nazwie gościa działa z pliku programu QEMU z katalogu systemowego (`/proc/<pid>/exe`), nie ma testu jednostkowego.
 
 Dodane razem ze strojeniem po skanach labu: `lab_tuning_lowers_only_the_measured_benign_classes` (analyze; każda obniżona klasa z kontrolami, w których pełna waga zostaje: `DEL-EXEC` poza katalogami pakietów i w procesie bez potwierdzonego pliku programu, `HDR` w regionie małym albo wykonywalnym i w narzędziu QEMU, które nie jest hiperwizorem (`qemu-img`), `MEMFD` pod inną nazwą albo bez systemowej `libffi`; nazwy plików z numerem wersji na liście dozwolonych JIT; reguła `HDR` dla trybu hiperwizora) oraz `identical_processes_share_one_row_and_chapter` (report; grupowanie z kontrolami dla różnych programów i różnych zestawów cech).
+
+## Fuzzing
+
+Parsery danych pochodzących z badanego systemu są testowane fuzzerem `cargo-fuzz` (libFuzzer). Cele są w `fuzz/fuzz_targets/`:
+
+| Cel | Co dostaje | Co musi być spełnione |
+|---|---|---|
+| `dump` | dowolne bajty jako plik core albo minidump: otwarcie, mapa regionów, wątki, odczyty na krawędziach regionów | bez paniki, zawieszenia i wyczerpania pamięci |
+| `pediff` | dowolny plik PE i zawartość pamięci: parsowanie relokacji, oczekiwany kod, porównanie | bez paniki; ograniczona praca |
+| `pagetables` | dowolna „pamięć fizyczna" gościa jako tablice stron oraz listy modułów z tych samych bajtów | przejście kończy się w limitach; zakresy i regiony są uporządkowane, nie nakładają się i leżą w przestrzeni użytkownika |
+| `maps` | dowolny tekst jako `/proc/<pid>/maps` i `smaps` | bez paniki; końce regionów nie przepełniają się |
+| `detectors` | dowolna zawartość regionu przy zmiennym systemie, źródle, ochronie i rodzaju regionu, przez wszystkie detektory | bez paniki; każde znalezisko leży w swoim regionie |
+
+Uruchamianie: `scripts/fuzz.sh [sekundy na cel] [cele...]` w kontenerze (kompilator nightly i `cargo-fuzz` są instalowane tam, nie na stacji). Ziarna pochodzą z budowniczych testów jednostkowych (`NANSHE_FUZZ_SEEDS`). CI uruchamia każdy cel na minutę przy każdym pushu.
+
+Dotychczasowe przebiegi (2026-11-24, kontener arm64, 5 minut na cel): 1,7 mln wykonań `dump`, 11,1 mln `pediff`, 11,9 mln `pagetables`, 2,7 mln `maps`, 0,4 mln `detectors`, bez awarii. Wcześniejszy, 30-sekundowy przebieg znalazł jeden błąd: adres modułu bliski końca zakresu liczb przepełniał zaokrąglanie granic modułu w `nanshe-vm` (naprawione, z testem regresji).
+
+Granice tego dowodu: minuty, nie dni; jedna architektura; cele sprawdzają awarie i podane niezmienniki, a nie poprawność wyników; parsery tablic systemowych Windows, parser odpowiedzi modelu i generator raportu nie są jeszcze objęte fuzzingiem.
 
 ## Testy end-to-end
 
@@ -339,7 +357,7 @@ To obserwacje, nie pomiar jakości: próby są małe, a zestawu oceny jakości m
 
 ## Atlas pamięci (inwentaryzacja metadanych)
 
-- `scripts/dev.sh cargo test --workspace --features nanshe-cli/llm`: parser maps
+- `scripts/dev.sh cargo test --workspace --features nanshe-cli/llm,nanshe-cli/vm`: parser maps
   z kolumnami oddzielonymi białymi znakami i ścieżkami ze spacjami; smaps z RSS/PSS,
   offsetem, device:inode, trybem współdzielenia i nieznanymi licznikami;
   bezpieczne osadzanie metadanych w HTML (próba zamknięcia `script`).

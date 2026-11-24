@@ -12,8 +12,8 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# The nanshe-vm crate is a workspace member, so its unit tests run below. The nanshe binary with the
-# optional "vm" feature is not built here, and "nanshe vm" is not exercised (it needs a KVM host with a guest).
+# The nanshe-vm crate is a workspace member; on Linux its unit tests run with the guest-reading code enabled.
+# "nanshe vm" itself is not exercised here (it needs a KVM host with a guest).
 jobs:
   linux:
     name: "Linux (container): unit and end-to-end tests"
@@ -23,7 +23,7 @@ jobs:
       - name: Unit tests
         run: |
           docker run --rm -v "$PWD":/src -v nanshe-target:/target -e CARGO_TARGET_DIR=/target -w /src \
-            docker.io/library/rust:1-slim-bookworm cargo test --workspace --features nanshe-cli/llm
+            docker.io/library/rust:1-slim-bookworm cargo test --workspace --features nanshe-cli/llm,nanshe-cli/vm
       - name: End-to-end tests (synthetic samples, live scan inside the container)
         run: |
           docker run --rm --cap-add SYS_PTRACE -v "$PWD":/src -v nanshe-target:/target -e CARGO_TARGET_DIR=/target -w /src \
@@ -41,3 +41,26 @@ jobs:
         run: cargo test --workspace --features nanshe-cli/llm
       - name: Release build
         run: cargo build --release -p nanshe-cli -p nanshe-samples --features nanshe-cli/llm
+
+  macos:
+    name: "macOS: unit tests"
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Unit tests
+        run: cargo test --workspace --features nanshe-cli/llm
+
+  fuzz:
+    name: "Fuzzing: short run of every target"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain
+        run: rustup toolchain install nightly --profile minimal && cargo install cargo-fuzz --locked
+      - name: One minute per target
+        run: |
+          for t in dump pediff pagetables maps detectors; do
+            echo "::group::$t"
+            cargo +nightly fuzz run "$t" -- -max_total_time=60 -max_len=65536 -timeout=20 -rss_limit_mb=2048 || { echo "::error title=fuzz::target $t failed"; exit 1; }
+            echo "::endgroup::"
+          done

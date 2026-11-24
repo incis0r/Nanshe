@@ -1,6 +1,6 @@
 #!/bin/sh
 # Build i testy w kontenerze Linux (na stacji bez Rusta). Użycie: scripts/dev.sh <polecenie w kontenerze>
-# Przykład: scripts/dev.sh cargo test --workspace --features nanshe-cli/llm
+# Przykład: scripts/dev.sh cargo test --workspace --features nanshe-cli/llm,nanshe-cli/vm
 set -eu
 cd "$(dirname "$0")/.."
 exec podman run --rm -i --cap-add SYS_PTRACE \

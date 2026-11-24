@@ -54,7 +54,7 @@ The model never changes scores or severity. Cloud providers receive metadata onl
 Linux (container, podman or docker):
 
 ```sh
-scripts/dev.sh cargo test --workspace --features nanshe-cli/llm   # unit tests
+scripts/dev.sh cargo test --workspace --features nanshe-cli/llm,nanshe-cli/vm   # unit tests
 scripts/dev.sh sh scripts/e2e.sh                                  # end-to-end: samples -> live scan
 scripts/dev.sh cargo build --release -p nanshe-cli --features llm
 scripts/dev.sh sh scripts/build-linux-static.sh                   # static musl binaries (x86_64, aarch64), default features

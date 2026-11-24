@@ -12,6 +12,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - Sample modes `patch`, `touch`, `hdr-wiped`, `pe-wiped` and end-to-end tests for dumps.
 - `nanshe vm <guest>`: scan of the processes of a running Windows guest from the KVM/QEMU host, without an agent in the guest (optional `vm` build feature, crate `nanshe-vm`). Kernel symbols are read from a local directory; the network is used only with `--fetch-symbols`. The QEMU process of a guest is accepted only when its program file, as reported by the kernel, is `qemu-system-*` or `qemu-kvm` in a system directory; the number of page tables and of page ranges read per guest process is limited. First version, measured on one Windows Server 2025 guest, see `docs/hypervisor.md`.
 - macOS: first version of live process scanning (region map and contents through Mach interfaces, recognition of the system library cache, `RWX`, `X-PRIV`, `ENT-X` and `HDR`), a macOS knowledge base with verification steps, samples and `scripts/e2e-macos.sh`. Access follows what macOS allows; see `docs/macos.md`.
+- Fuzzing of the parsers of untrusted data (`fuzz/`, `scripts/fuzz.sh`): process dumps, PE comparison, guest page tables, the Linux `maps` parser and the detectors; a short run of every target in CI.
 - Report: processes of the same program (same program file and name) with the same set of findings, priority and severity share one overview row ("+N" next to the PID) and one chapter ("and N similar"); repeated scanner notes are listed once.
 - `nanshe vm` validates the symbol file name and identifier reported by the guest before using them in a path, and selects a guest by name only among QEMU processes started by a system account.
 - Linux: a program file counts as verified only for a process in the same user namespace as the scanner (a process in its own user namespace can build a private file system view without privileges), and the `memfd:libffi` reduction applies only to regions shaped like libffi trampoline tables (at most 64 KiB, not writable, low entropy, read in full).
@@ -20,6 +21,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
+- `nanshe-vm`: the guest-reading code and the memflow libraries are behind the crate feature `guest` (enabled by the `vm` feature of the command-line tool); the page-table logic builds without them.
 - HTTP client `ureq` updated from 2 to 3; the interpretation layer keeps the same behaviour (time limits, no redirects for cloud providers, the start of an error response in the message).
 - Report: table-of-contents entries and finding rows of the address space map are links; command lines and verification commands are set off as code; priority and severity are colour-coded; verification steps explain how to read the result; model hypotheses show supporting and undermining arguments side by side; clearer confidence labels.
 - Knowledge base: verification steps are objects with `do`, `cmd` and `look`.
@@ -33,6 +35,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- `nanshe vm`: a module address near the end of the number range, read from guest memory, overflowed the rounding of module extents and produced wrong module borders (found by fuzzing).
 - Core files: a hostile file could make the scanner parse the same note block tens of thousands of times and grow its thread and file lists without bound (CPU and memory exhaustion from a 64 MiB file). Note blocks are now read once per file offset, all note blocks share one byte budget per file, and list limits are applied while the lists are built.
 - End-to-end tests on Linux no longer depend on the architecture they were tuned on: tags that even the clean sample has on a platform are measured first and added to the expectations.
 - Report: fields of a PE header located near the end of the 256-byte preview are now shown.

@@ -14,7 +14,7 @@ Thank you for considering a contribution. This file describes how to build, test
 Linux, in a container (podman by default):
 
 ```sh
-scripts/dev.sh cargo test --workspace --features nanshe-cli/llm
+scripts/dev.sh cargo test --workspace --features nanshe-cli/llm,nanshe-cli/vm
 scripts/dev.sh sh scripts/e2e.sh
 ```
 

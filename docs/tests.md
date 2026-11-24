@@ -7,7 +7,7 @@ Three layers: unit tests (logic, no live processes), end-to-end tests on live sa
 ## How to run
 
 ```sh
-scripts/dev.sh cargo test --workspace --features nanshe-cli/llm   # unit tests (Linux, container)
+scripts/dev.sh cargo test --workspace --features nanshe-cli/llm,nanshe-cli/vm   # unit tests (Linux, container)
 scripts/dev.sh sh scripts/e2e.sh                                  # e2e Linux
 powershell -ExecutionPolicy Bypass -File scripts\e2e.ps1 -Bin target\release -Out e2e-out   # e2e Windows, natively on the test host
 ```
@@ -18,8 +18,8 @@ Exit code of the e2e scripts: 0 when everything matches, 1 when anything deviate
 
 | Layer | Result |
 |---|---|
-| Unit tests | 142 pass (analyze 26, core 3, dump 7, kb 7, live 20, llm 40, report 30, vm 9) |
-| macOS (arm64, native) | 141 unit tests (4 of them for the macOS backend, which run only there) and `scripts/e2e-macos.sh`: 7 samples and 4 groups of additional assertions; see [macos.md](macos.md) |
+| Unit tests | 144 pass (analyze 26, core 3, dump 8, kb 7, live 21, llm 40, report 30, vm 9) |
+| macOS (arm64, native) | 143 unit tests (4 of them for the macOS backend, which run only there) and `scripts/e2e-macos.sh`: 7 samples and 4 groups of additional assertions; see [macos.md](macos.md) |
 | Hypervisor read (`nanshe vm`) | one live run against a Windows Server 2025 guest on KVM (see [hypervisor.md](hypervisor.md)); no automated end-to-end test |
 | Full live scans, Linux | `nanshe scan --all` on 20 hosts of one lab (19 x86_64, 1 arm64), 2026-11-23, before and after the detection tuning; no process was verified manually |
 | e2e Linux (aarch64, container) | 16 static samples, 2 dynamic and 8 groups of additional assertions |
@@ -30,7 +30,7 @@ Exit code of the e2e scripts: 0 when everything matches, 1 when anything deviate
 
 A CI workflow is defined in `.github/workflows/ci.yml` (Linux unit and end-to-end tests in a container, unit tests and a release build on Windows); results of its runs are not recorded in this document. The unit tests of the `nanshe-vm` crate are part of the workspace run; the `nanshe` binary with the `vm` feature is not built there.
 
-Not present: fuzzing of the `maps` parser, a recorded end-to-end run on Linux x86_64, a model quality evaluation set.
+Not present: a model quality evaluation set. Fuzzing is described in the section "Fuzzing".
 
 ## Unit tests
 
@@ -171,6 +171,24 @@ In addition, the PDF from a sample was opened with an external tool (`pypdf`: 5 
 The check that the QEMU process found by guest name runs a QEMU program file from a system directory (`/proc/<pid>/exe`) has no unit test.
 
 Added with the tuning from lab scans: `lab_tuning_lowers_only_the_measured_benign_classes` (analyze; every reduced class with controls that keep full weight: `DEL-EXEC` outside package directories and in a process without a verified program file, `HDR` in a small or executable region and in a QEMU tool that is not a hypervisor (`qemu-img`), `MEMFD` under another name or without the system `libffi`; versioned file names on the JIT allowlist; the hypervisor-mode `HDR` rule) and `identical_processes_share_one_row_and_chapter` (report; grouping with controls for different programs and different sets of findings).
+
+## Fuzzing
+
+Parsers of data that comes from the examined system are fuzzed with `cargo-fuzz` (libFuzzer). The targets are in `fuzz/fuzz_targets/`:
+
+| Target | What it feeds | What must hold |
+|---|---|---|
+| `dump` | arbitrary bytes as a core file or a minidump: opening, region map, threads, reads at region edges | no panic, hang or out-of-memory |
+| `pediff` | an arbitrary PE file and memory contents: relocation parsing, expected code, comparison | no panic; bounded work |
+| `pagetables` | arbitrary guest "physical memory" as page tables, and module lists from the same bytes | the walk ends within its limits; ranges and regions are ordered, do not overlap and stay in user space |
+| `maps` | arbitrary text as `/proc/<pid>/maps` and `smaps` | no panic; region ends do not overflow |
+| `detectors` | arbitrary region contents with varying system, source, protection and region type through all detectors | no panic; every finding lies inside its region |
+
+How to run: `scripts/fuzz.sh [seconds per target] [targets...]` runs them in a container (nightly compiler and `cargo-fuzz` are installed there, not on the workstation). Seeds come from the unit-test builders (`NANSHE_FUZZ_SEEDS`). CI runs every target for one minute on each push.
+
+Runs so far (2026-11-24, arm64 container, 5 minutes per target): 1.7 million executions of `dump`, 11.1 million of `pediff`, 11.9 million of `pagetables`, 2.7 million of `maps`, 0.4 million of `detectors`, with no failure. An earlier 30-second run found one defect: a module address near the end of the number range overflowed the rounding of module extents in `nanshe-vm` (fixed, with a regression test).
+
+Limits of this evidence: minutes, not days; one architecture; the targets check for crashes and the stated invariants, not for wrong results; the Windows system-table parsers, the LLM response parser and the report generator are not fuzzed yet.
 
 ## End-to-end tests
 
@@ -339,7 +357,7 @@ These are observations, not a quality measurement: the trials are small, and an 
 
 ## Memory atlas (metadata inventory)
 
-- `scripts/dev.sh cargo test --workspace --features nanshe-cli/llm`: the maps parser
+- `scripts/dev.sh cargo test --workspace --features nanshe-cli/llm,nanshe-cli/vm`: the maps parser
   with whitespace-separated columns and paths with spaces; smaps with RSS/PSS,
   offset, device:inode, sharing mode and unknown counters;
   safe embedding of metadata in HTML (an attempt to close `script`).
