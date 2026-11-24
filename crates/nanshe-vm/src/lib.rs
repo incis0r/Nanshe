@@ -280,6 +280,34 @@ pub fn regions_from_vads(ranges: &[PageRange], vads: &[(Vad, Option<String>)]) -
     out.into_iter().map(|x| x.0).collect()
 }
 
+/// Dowód, że proces gościa ma środowisko tworzące kod w locie, z danych jądra (nie z listy modułów procesu).
+/// `images`: ścieżki obrazów z drzewa VAD (bez litery dysku) z adresem obiektu urządzenia, na którym leży plik;
+/// `exe`: obraz programu głównego. Warunki, wszystkie naraz:
+/// - wolumin systemowy to ten, z którego zmapowana jest `ntdll.dll` (tej biblioteki proces nie wybiera);
+/// - program główny leży na tym woluminie w katalogu systemowym (reguła wspólna ze skanem na żywo);
+/// - biblioteka środowiska (`clr.dll`, `coreclr.dll`, `msedge.dll`) leży na tym woluminie w swoim katalogu instalacyjnym.
+/// Plik o takiej samej ścieżce na innym dysku nie spełnia warunku. Właściciela pliku skaner z hosta nie sprawdza.
+pub fn jit_evidence_windows(images: &[(String, u64)], exe: Option<&(String, u64)>) -> Option<String> {
+    let lower: Vec<(String, u64)> = images.iter().map(|(p, d)| (p.to_ascii_lowercase(), *d)).collect();
+    let mut ntdll = lower.iter().filter(|(p, _)| p == "\\windows\\system32\\ntdll.dll").map(|x| x.1);
+    let system = ntdll.next().filter(|d| *d != 0)?;
+    if ntdll.any(|d| d != system) { return None; }
+    let (exe_path, exe_dev) = exe?;
+    let roots = ["c:\\windows".to_string(), "c:\\program files".to_string(), "c:\\program files (x86)".to_string()];
+    if *exe_dev != system || !exe_path.starts_with('\\') || !nanshe_live::wintables::exe_in_system_dir(&format!("c:{exe_path}"), &roots) { return None; }
+    lower.iter().filter(|(_, d)| *d == system).find_map(|(p, _)| {
+        if p.contains("\\..\\") { return None; }
+        let under = |dirs: &[&str]| dirs.iter().any(|d| p.starts_with(d));
+        match p.rsplit('\\').next()? {
+            "clr.dll" if under(&["\\windows\\microsoft.net\\framework\\", "\\windows\\microsoft.net\\framework64\\"]) => Some("jit:dotnet".to_string()),
+            "coreclr.dll" if under(&["\\program files\\dotnet\\shared\\", "\\program files (x86)\\dotnet\\shared\\", "\\program files\\windowsapps\\"]) => Some("jit:dotnet".to_string()),
+            "msedge.dll" if under(&["\\program files\\microsoft\\edgewebview\\application\\", "\\program files (x86)\\microsoft\\edgewebview\\application\\",
+                "\\program files\\microsoft\\edge\\application\\", "\\program files (x86)\\microsoft\\edge\\application\\"]) => Some("jit:webview2".to_string()),
+            _ => None,
+        }
+    })
+}
+
 /// Ziarno alokacji pamięci wirtualnej Windows.
 const ALLOC: u64 = 0x1_0000;
 
@@ -532,6 +560,30 @@ mod tests {
     type RegionKindT = &'static str;
     fn kind(r: &nanshe_core::Region) -> RegionKindT {
         match r.kind { nanshe_core::RegionKind::Private => "private", nanshe_core::RegionKind::Image => "image", nanshe_core::RegionKind::Mapped => "mapped", nanshe_core::RegionKind::Unknown => "unknown", _ => "other" }
+    }
+
+    #[test]
+    fn jit_evidence_needs_system_volume_program_directory_and_runtime_directory() {
+        let img = |p: &str, d: u64| (p.to_string(), d);
+        let ntdll = img("\\Windows\\System32\\ntdll.dll", 7);
+        let clr = img("\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\clr.dll", 7);
+        let exe = img("\\Windows\\ADWS\\Microsoft.ActiveDirectory.WebServices.exe", 7);
+        assert_eq!(jit_evidence_windows(&[ntdll.clone(), clr.clone()], Some(&exe)).as_deref(), Some("jit:dotnet"));
+        let edge = img("\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\140.0\\msedge.dll", 7);
+        assert_eq!(jit_evidence_windows(&[ntdll.clone(), edge], Some(&img("\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\140.0\\msedgewebview2.exe", 7))).as_deref(), Some("jit:webview2"));
+        // każdy brakujący warunek odbiera dowód
+        let none = |images: &[(String, u64)], exe: Option<&(String, u64)>, why: &str| assert_eq!(jit_evidence_windows(images, exe), None, "{why}");
+        none(&[clr.clone()], Some(&exe), "brak ntdll: nie wiadomo, który wolumin jest systemowy");
+        none(&[ntdll.clone(), img("\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\clr.dll", 9)], Some(&exe), "clr.dll o tej samej ścieżce na innym dysku");
+        none(&[ntdll.clone(), clr.clone()], Some(&img("\\Windows\\ADWS\\x.exe", 9)), "program na innym dysku");
+        none(&[ntdll.clone(), clr.clone()], Some(&img("\\Users\\u\\x.exe", 7)), "program spoza katalogów systemowych");
+        none(&[ntdll.clone(), clr.clone()], Some(&img("\\Windows\\Temp\\x.exe", 7)), "program w podkatalogu zapisywalnym dla użytkownika");
+        none(&[ntdll.clone(), clr.clone()], None, "nieznany program główny");
+        none(&[ntdll.clone(), img("\\Users\\u\\clr.dll", 7)], Some(&exe), "clr.dll spoza katalogu instalacyjnego");
+        none(&[ntdll.clone(), img("\\Windows\\Microsoft.NET\\Framework64\\..\\..\\Temp\\clr.dll", 7)], Some(&exe), "ścieżka z cofnięciem");
+        none(&[ntdll.clone(), img("\\Windows\\System32\\ntdll.dll", 9), clr.clone()], Some(&exe), "dwie ntdll z różnych dysków");
+        none(&[img("\\Windows\\System32\\ntdll.dll", 0), img("\\Windows\\Microsoft.NET\\Framework64\\v4\\clr.dll", 0)], Some(&img("\\Windows\\ADWS\\x.exe", 0)), "nieznane urządzenie");
+        none(&[ntdll, clr], Some(&img("Windows\\ADWS\\x.exe", 7)), "ścieżka programu bez korzenia");
     }
 
     #[test]

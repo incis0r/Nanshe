@@ -17,6 +17,8 @@ trait Kernel {
 fn fail(what: &str, e: impl std::fmt::Display) -> Error { Error::Invalid(format!("{what}: {e}")) }
 
 type TableCache = std::collections::HashMap<u64, Option<Rc<[u64]>>>;
+/// Najwięcej tablic stron trzymanych naraz w pamięci podręcznej (po 4 KiB każda).
+const MAX_CACHED_TABLES: usize = 8192;
 
 /// Odczyt pamięci wirtualnej gościa przez tablice stron o podanym korzeniu, z własnym tłumaczeniem adresów
 /// (wpisy ważne i przejściowe). Strony, których nie ma w pamięci fizycznej, zostają wyzerowane.
@@ -30,6 +32,8 @@ fn read_virt<P: memflow::prelude::v1::PhysicalMemory>(phys: &mut P, tables: &mut
             let mut raw = [0u8; 4096];
             let t: Option<Rc<[u64]>> = phys.phys_read_into(PhysicalAddress::from(a), &mut raw).ok()
                 .map(|_| raw.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect());
+            // limit obowiązuje każdego wywołującego: tablice wskazuje gość, więc ich liczba nie może rosnąć bez końca
+            if tables.len() >= MAX_CACHED_TABLES { tables.clear(); }
             tables.insert(a, t.clone());
             t
         });
@@ -50,7 +54,7 @@ fn read_virt<P: memflow::prelude::v1::PhysicalMemory>(phys: &mut P, tables: &mut
 /// Nazwa pliku regionu mapowanego: węzeł VAD -> podsekcja -> obszar kontrolny -> obiekt pliku -> nazwa.
 /// Każdy wskaźnik pochodzi z pamięci gościa: musi wskazywać pamięć jądra, a długość nazwy jest ograniczona.
 /// Wynik dla danego obszaru kontrolnego jest zapamiętywany (wiele regionów wskazuje ten sam plik).
-fn file_name(read: &mut dyn FnMut(u64, &mut [u8]) -> bool, v: &VadPaths, node: u64, seen: &mut std::collections::HashMap<u64, Option<String>>) -> Option<String> {
+fn file_name(read: &mut dyn FnMut(u64, &mut [u8]) -> bool, v: &VadPaths, node: u64, seen: &mut std::collections::HashMap<u64, Option<(String, u64)>>) -> Option<(String, u64)> {
     fn kernel(a: u64) -> Option<u64> { (a >= 0xffff_8000_0000_0000).then_some(a) }
     fn u64at(read: &mut dyn FnMut(u64, &mut [u8]) -> bool, a: u64) -> Option<u64> { let mut b = [0u8; 8]; read(a, &mut b).then(|| u64::from_le_bytes(b)) }
     let subsection = kernel(u64at(read, node + v.subsection as u64)?)?;
@@ -60,7 +64,7 @@ fn file_name(read: &mut dyn FnMut(u64, &mut [u8]) -> bool, v: &VadPaths, node: u
     seen.insert(control_area, name.clone());
     return name;
 
-    fn named(read: &mut dyn FnMut(u64, &mut [u8]) -> bool, v: &VadPaths, control_area: u64) -> Option<String> {
+    fn named(read: &mut dyn FnMut(u64, &mut [u8]) -> bool, v: &VadPaths, control_area: u64) -> Option<(String, u64)> {
         // wskaźnik na obiekt pliku ma w młodszych 4 bitach licznik odwołań
         let file = kernel(u64at(read, control_area + v.file_pointer as u64)? & !0xf)?;
         let len = (u64at(read, file + v.file_name as u64)? & 0xffff) as usize;
@@ -69,7 +73,9 @@ fn file_name(read: &mut dyn FnMut(u64, &mut [u8]) -> bool, v: &VadPaths, node: u
         let mut raw = vec![0u8; len.min(MAX_FILE_NAME * 2)];
         if !read(buffer, &mut raw) { return None; }
         let wide: Vec<u16> = raw.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-        Some(String::from_utf16_lossy(&wide)).filter(|s| !s.is_empty())
+        // urządzenie (wolumin), na którym leży plik; zero, gdy nie da się go odczytać
+        let device = u64at(read, file + v.device_object as u64).and_then(kernel).unwrap_or(0);
+        Some(String::from_utf16_lossy(&wide)).filter(|s| !s.is_empty()).map(|n| (n, device))
     }
 }
 
@@ -92,11 +98,15 @@ pub(crate) struct Layout {
     complete: bool,
     /// Regiony pochodzą z drzewa VAD jądra (false: z listy modułów programu ładującego).
     from_vad: bool,
+    /// Dowód z danych jądra, że proces ma środowisko tworzące kod w locie.
+    jit: Option<String>,
 }
 
 /// Położenia pól potrzebnych do przejścia drzewa VAD i odczytania nazwy pliku, z pliku symboli jądra.
 #[derive(Clone, Copy, Debug)]
-struct VadPaths { vad_root: usize, tree: VadOffsets, subsection: usize, control_area: usize, file_pointer: usize, file_name: usize }
+struct VadPaths { vad_root: usize, tree: VadOffsets, subsection: usize, control_area: usize, file_pointer: usize, file_name: usize,
+    /// Wskaźnik na obiekt urządzenia (wolumin) w obiekcie pliku oraz adres obrazu programu głównego w opisie procesu.
+    device_object: usize, section_base: usize }
 
 /// Nazwa pliku w obiekcie pliku jądra: najwyżej tyle znaków.
 const MAX_FILE_NAME: usize = 520;
@@ -134,11 +144,19 @@ where T: memflow::prelude::v1::PhysicalMemory + Clone + 'static, V: memflow::pre
                 let mut kread = |addr: u64, buf: &mut [u8]| read_virt(phys, &mut ktables, kernel_root, addr, buf).1;
                 let (vads, tree_complete) = walk_vads(root, &v.tree, &mut kread);
                 if !vads.is_empty() {
-                    let mut names: std::collections::HashMap<u64, Option<String>> = std::collections::HashMap::new();
-                    let named: Vec<(Vad, Option<String>)> = vads.into_iter().map(|vad| {
+                    let mut names: std::collections::HashMap<u64, Option<(String, u64)>> = std::collections::HashMap::new();
+                    let with_device: Vec<(Vad, Option<(String, u64)>)> = vads.into_iter().map(|vad| {
                         let name = if vad.private { None } else { file_name(&mut kread, &v, vad.node, &mut names) };
                         (vad, name)
                     }).collect();
+                    // dowód na środowisko JIT: obrazy z woluminu systemowego i program główny (adres jego obrazu
+                    // zapisany jest w opisie procesu w jądrze, nie w pamięci procesu)
+                    let images: Vec<(String, u64)> = with_device.iter().filter(|(vad, _)| vad.image).filter_map(|(_, n)| n.clone()).collect();
+                    let mut b8 = [0u8; 8];
+                    let exe_base = kread(p.address.to_umem() + v.section_base as u64, &mut b8).then(|| u64::from_le_bytes(b8));
+                    let exe = exe_base.and_then(|a| with_device.iter().find(|(vad, _)| vad.image && a >= vad.start && a < vad.end)).and_then(|(_, n)| n.clone());
+                    let jit = crate::jit_evidence_windows(&images, exe.as_ref());
+                    let named: Vec<(Vad, Option<String>)> = with_device.into_iter().map(|(vad, n)| (vad, n.map(|x| x.0))).collect();
                     let regions = regions_from_vads(&ranges, &named);
                     if std::env::var_os("NANSHE_VM_DEBUG").is_some() {
                         let x: Vec<&Region> = regions.iter().filter(|r| r.is_x()).collect();
@@ -147,7 +165,7 @@ where T: memflow::prelude::v1::PhysicalMemory + Clone + 'static, V: memflow::pre
                             named.len(), ranges.len(), count(nanshe_core::RegionKind::Private), count(nanshe_core::RegionKind::Image), count(nanshe_core::RegionKind::Mapped), count(nanshe_core::RegionKind::Unknown));
                         for r in x.iter().filter(|r| r.kind != nanshe_core::RegionKind::Image).take(6) { eprintln!("DBG    {:x}+{:x} {:?} {:?} {:?}", r.base, r.size, r.kind, r.label, r.backing); }
                     }
-                    return Ok(Layout { regions, kinds_known: true, complete: complete && tree_complete, from_vad: true });
+                    return Ok(Layout { regions, kinds_known: true, complete: complete && tree_complete, from_vad: true, jit });
                 }
             }
         }
@@ -155,13 +173,13 @@ where T: memflow::prelude::v1::PhysicalMemory + Clone + 'static, V: memflow::pre
         // lista modułów bywa nieczytelna (strony wyrzucone z pamięci): wtedy regiony zostają bez nazw plików
         let modules: Vec<Module> = proc.module_list().unwrap_or_default().into_iter()
             .map(|m| Module { base: m.base.to_umem(), size: m.size, path: m.path.to_string() }).collect();
-        Ok(Layout { regions: build_regions(&ranges, &modules), kinds_known: !modules.is_empty(), complete, from_vad: false })
+        Ok(Layout { regions: build_regions(&ranges, &modules), kinds_known: !modules.is_empty(), complete, from_vad: false, jit: None })
     }
     fn read(&mut self, p: &ProcessInfo, addr: u64, buf: &mut [u8]) -> Result<usize> {
         // Własne tłumaczenie adresów zamiast bibliotecznego: te same tablice co przy budowie mapy (także tablice
         // trybu użytkownika) i strony przejściowe, których procesor nie uznaje za obecne, choć leżą w pamięci.
         let root = user_dtb_root(self.user_dtb_offset.and_then(|off| self.k.virt_mem.read::<u64>(p.address + off).ok())).unwrap_or(p.dtb1.to_umem());
-        if self.tables_for != (p.pid, root) || self.tables.len() > 8192 { self.tables.clear(); self.tables_for = (p.pid, root); }
+        if self.tables_for != (p.pid, root) { self.tables.clear(); self.tables_for = (p.pid, root); }
         let (any, _) = read_virt(self.k.virt_mem.phys_mem(), &mut self.tables, root, addr, buf);
         if any || buf.is_empty() { Ok(buf.len()) } else { Err(Error::Access(trf!("odczyt pamięci gościa pod adresem {addr:#x}: żadna strona nie leży w pamięci fizycznej", "guest memory read at {addr:#x}: no page is present in physical memory"))) }
     }
@@ -203,6 +221,7 @@ pub fn open(target: &str, symbols: Symbols) -> Result<Guest> {
             flags: field("_MMVAD_SHORT", "u")?.0, type_bit: field("_MMVAD_FLAGS", "VadType")?.1, private_bit: field("_MMVAD_FLAGS", "PrivateMemory")?.1 },
         subsection: field("_MMVAD", "Subsection")?.0, control_area: field("_SUBSECTION", "ControlArea")?.0,
         file_pointer: field("_CONTROL_AREA", "FilePointer")?.0, file_name: field("_FILE_OBJECT", "FileName")?.0,
+        device_object: field("_FILE_OBJECT", "DeviceObject")?.0, section_base: field("_EPROCESS", "SectionBaseAddress")?.0,
     }))();
     if std::env::var_os("NANSHE_VM_DEBUG").is_some() { eprintln!("DBG vad offsets: {vad:?} user_dtb: {user_dtb_offset:?}"); }
     let built = memflow_win32::offsets::offset_builder_with_kernel_info(&scanned).symbol_store(store).build().map(|offsets| {
@@ -302,13 +321,14 @@ impl Guest {
         let info = self.infos()?.into_iter().find(|p| p.pid == pid as Pid && matches!(p.state, ProcessState::Alive))
             .ok_or_else(|| Error::NotFound(trf!("proces gościa {pid}", "guest process {pid}")))?;
         let l = self.kernel.borrow_mut().layout(&info)?;
-        Ok(GuestProcess { kernel: self.kernel.clone(), regions: l.regions, modules_known: l.kinds_known, tables_complete: l.complete, from_vad: l.from_vad, info })
+        Ok(GuestProcess { kernel: self.kernel.clone(), regions: l.regions, modules_known: l.kinds_known, tables_complete: l.complete, from_vad: l.from_vad, jit: l.jit, info })
     }
 }
 
 pub struct GuestProcess { kernel: Rc<RefCell<Box<dyn Kernel>>>, info: ProcessInfo, regions: Vec<Region>, pub modules_known: bool, pub tables_complete: bool,
     /// Regiony pochodzą z drzewa VAD jądra, a nie z listy modułów procesu.
-    pub from_vad: bool }
+    pub from_vad: bool,
+    jit: Option<String> }
 
 impl GuestProcess {
     pub fn cmdline(&self) -> String { self.info.command_line.to_string() }
@@ -322,6 +342,7 @@ impl MemorySource for GuestProcess {
             source_type: "vm".into(), exe: (!path.is_empty()).then_some(path), exe_deleted: false, exe_verified: false }
     }
     fn regions(&self) -> Result<Vec<Region>> { Ok(self.regions.clone()) }
+    fn jit_evidence(&self) -> Option<String> { self.jit.clone() }
     fn read_at(&self, addr: u64, buf: &mut [u8]) -> Result<usize> { self.kernel.borrow_mut().read(&self.info, addr, buf) }
 }
 

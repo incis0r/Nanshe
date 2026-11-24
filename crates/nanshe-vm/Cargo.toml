@@ -7,6 +7,8 @@ description = "Odczyt pamięci procesów gościa Windows z hosta KVM/QEMU (bez a
 
 [dependencies]
 nanshe-core = { path = "../nanshe-core" }
+# reguła "plik programu w katalogu systemowym" jest wspólna ze skanem na żywo
+nanshe-live = { path = "../nanshe-live" }
 
 # Tylko host Linux z KVM/QEMU. Biblioteka memflow (MIT) znajduje jądro Windows w pamięci fizycznej gościa
 # i tłumaczy adresy; symbole jądra (plik PDB) bierze z katalogu lokalnego, a z sieci tylko na wyraźne życzenie.
