@@ -35,14 +35,14 @@
    },
    {
     "do": "Check the signature of the program the process belongs to",
-    "cmd": "codesign -dv --verbose=4 $(ps -o comm= -p {pid}) 2>&1 | grep -E \"Identifier|TeamIdentifier|flags|Authority\"",
+    "cmd": "codesign -dv --verbose=4 \"$(lsof -a -p {pid} -d txt -Fn | sed -n 's/^n//p' | head -1)\" 2>&1 | grep -E \"Identifier|TeamIdentifier|flags|Authority\"",
     "look": "A program from Apple or a known vendor has Authority lines with the publisher name and a TeamIdentifier. An adhoc signature or a missing TeamIdentifier on a program that claims to be a known product needs an explanation. flags containing runtime means a hardened runtime, where executable memory without a file is possible only with a permission recorded in the program's entitlements."
    }
   ],
   "RWX": [
    {
     "do": "Check whether the program has the system's permission to generate code at run time",
-    "cmd": "codesign -d --entitlements - $(ps -o comm= -p {pid}) 2>&1 | grep -E \"allow-jit|allow-unsigned-executable-memory|disable-executable-page-protection\"",
+    "cmd": "codesign -d --entitlements - \"$(lsof -a -p {pid} -d txt -Fn | sed -n 's/^n//p' | head -1)\" 2>&1 | grep -E \"allow-jit|allow-unsigned-executable-memory|disable-executable-page-protection\"",
     "look": "A line with allow-jit means a program with a JIT compiler (a browser, a JavaScript runtime, a virtual machine): a writable and executable region is normal for it. No result for a program with a hardened runtime means it should not have such a region. A program without a hardened runtime (adhoc signature, own build) can create a JIT region without this permission."
    }
   ],

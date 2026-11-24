@@ -35,14 +35,14 @@
    },
    {
     "do": "Sprawdź podpis programu, do którego należy proces",
-    "cmd": "codesign -dv --verbose=4 $(ps -o comm= -p {pid}) 2>&1 | grep -E \"Identifier|TeamIdentifier|flags|Authority\"",
+    "cmd": "codesign -dv --verbose=4 \"$(lsof -a -p {pid} -d txt -Fn | sed -n 's/^n//p' | head -1)\" 2>&1 | grep -E \"Identifier|TeamIdentifier|flags|Authority\"",
     "look": "Program firmy Apple albo znanego dostawcy ma wiersze Authority z nazwą wydawcy i TeamIdentifier. Podpis adhoc albo brak TeamIdentifier przy programie, który podaje się za znany produkt, wymaga wyjaśnienia. flags z wartością runtime oznacza utwardzone środowisko, w którym pamięć wykonywalna bez pliku jest możliwa tylko za zgodą zapisaną w uprawnieniach programu."
    }
   ],
   "RWX": [
    {
     "do": "Sprawdź, czy program ma zgodę systemu na tworzenie kodu w trakcie działania",
-    "cmd": "codesign -d --entitlements - $(ps -o comm= -p {pid}) 2>&1 | grep -E \"allow-jit|allow-unsigned-executable-memory|disable-executable-page-protection\"",
+    "cmd": "codesign -d --entitlements - \"$(lsof -a -p {pid} -d txt -Fn | sed -n 's/^n//p' | head -1)\" 2>&1 | grep -E \"allow-jit|allow-unsigned-executable-memory|disable-executable-page-protection\"",
     "look": "Wiersz z allow-jit oznacza program z kompilatorem JIT (przeglądarka, środowisko JavaScript, maszyna wirtualna): region zapisywalny i wykonywalny jest dla niego normalny. Brak wyniku przy programie z utwardzonym środowiskiem oznacza, że takiego regionu mieć nie powinien. Program bez utwardzonego środowiska (podpis adhoc, własna kompilacja) może utworzyć region JIT bez tej zgody."
    }
   ],

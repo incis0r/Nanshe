@@ -134,10 +134,10 @@ impl MacProcess {
             (t, true)
         };
         let exe = path_of(pid as i32);
-        use std::os::unix::fs::MetadataExt;
-        // ścieżkę podaje jądro; potwierdzenie: plik należy do roota i nie jest zapisywalny dla grupy ani innych
-        let id = exe.as_deref().and_then(|p| std::fs::metadata(p).ok()).map(|m| super::FileId { uid: m.uid(), mode: m.mode(), dev: m.dev(), ino: m.ino() });
-        Ok(MacProcess { pid, task, own_port, name: name_of(pid as i32), exe_verified: super::exe_is_trusted(id, id), exe })
+        // Ścieżkę podaje jądro, ale plik pod nią mógł zostać podmieniony po starcie procesu, a niezależnej
+        // tożsamości uruchomionego pliku skaner jeszcze nie pobiera. Dlatego plik programu nie jest na macOS
+        // uznawany za potwierdzony i żadna obniżka wagi od niego nie zależy.
+        Ok(MacProcess { pid, task, own_port, name: name_of(pid as i32), exe_verified: false, exe })
     }
 }
 
