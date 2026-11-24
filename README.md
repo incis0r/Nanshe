@@ -13,8 +13,9 @@ Polish version of this file: [README.pl.md](README.pl.md).
 - **Detects** memory regions that are unusual for ordinary software: writable and executable memory, executable memory not backed by a file, high-entropy code, program images loaded without the OS loader, threads running from unbacked memory, library code that differs from the file on disk, and more (11 detectors).
 - **Collects context** for flagged processes: command line, user, parent chain, network sockets, open files and handles, mapped files, SHA-256 hashes.
 - **Explains** each finding from a built-in knowledge base: what it means, benign and malicious explanations, how to verify it, related MITRE ATT&CK techniques.
-- **Prioritises** processes (P1 to P3) with a stated rationale and a first step, and opens the report with an executive summary.
+- **Prioritises** processes (P1 to P3) with a stated rationale and a first step, and opens the report with an executive summary. Processes of the same program with the same findings, priority and severity share one row and one chapter.
 - **Analyses process memory dumps** (Linux core files, Windows minidumps) with the same detectors: `nanshe scan <dump-file>`.
+- **Scans a running Windows guest from the KVM/QEMU host** without anything running in the guest, including protected processes such as LSASS (`nanshe vm <guest>`, optional `vm` build feature; first version, see [docs/hypervisor.md](docs/hypervisor.md)).
 - **Compares** two scans of the same host (`nanshe diff`): new regions in running processes, new and exited processes, changes in sockets and mapped files.
 - **Optionally interprets** findings with a language model (local Ollama by default; cloud only with explicit consent and reduced data).
 - Works in **Polish and English** (`--lang pl|en`).
@@ -29,6 +30,7 @@ nanshe scan --all --json result.json           # needs root (Linux) or an elevat
 nanshe report result.json                      # result.report.md + result.report.pdf
 nanshe --lang en scan --pid 1234 --json r.json # English descriptions and report
 nanshe diff earlier.json later.json            # differential report
+sudo nanshe vm dc01 --all --symbols ./symbols --json dc01.json   # Windows guest from the KVM host (build with the vm feature)
 ```
 
 Exit codes of `scan`: 0 no findings at or above the threshold, 1 findings, 2 error, 3 partial result without findings.
@@ -55,6 +57,8 @@ Linux (container, podman or docker):
 scripts/dev.sh cargo test --workspace --features nanshe-cli/llm   # unit tests
 scripts/dev.sh sh scripts/e2e.sh                                  # end-to-end: samples -> live scan
 scripts/dev.sh cargo build --release -p nanshe-cli --features llm
+scripts/dev.sh sh scripts/build-linux-static.sh                   # static musl binaries (x86_64, aarch64), default features
+scripts/build-linux-vm.sh                                         # x86_64 binary with the vm feature (nanshe vm)
 ```
 
 Windows (native MSVC toolchain, elevated PowerShell):
@@ -74,6 +78,7 @@ Start at [docs/README.md](docs/README.md). Main documents:
 
 - [docs/documentation-0.1.0.md](docs/documentation-0.1.0.md): full description of version 0.1.0 (capabilities, architecture, detectors, result file, report, security of the tool, what was tested, known limitations)
 - [docs/linux.md](docs/linux.md), [docs/windows.md](docs/windows.md), [docs/macos.md](docs/macos.md): build, privileges, detectors and limitations per system
+- [docs/hypervisor.md](docs/hypervisor.md): scanning a running Windows guest from the KVM/QEMU host (`nanshe vm`)
 - [docs/knowledge-base.md](docs/knowledge-base.md): the knowledge base (`kb/`) and how to extend it
 - [docs/tests.md](docs/tests.md): all tests, what they check and what they do not cover
 
@@ -81,9 +86,9 @@ Polish versions are in [docs/pl/](docs/pl/).
 
 ## Known limitations
 
-- Processes protected by the operating system (for example LSASS and anti-malware processes on Windows) and kernel memory are not examined.
+- A scan from inside the system does not examine processes protected by the operating system (for example LSASS and anti-malware processes on Windows). `nanshe vm` reads them from the KVM/QEMU host, with its own limitations (first version, measured on one Windows Server 2025 guest; see [docs/hypervisor.md](docs/hypervisor.md)). Kernel memory is not examined.
 - A scan is the state of memory at one moment; anything that happened before it is not visible.
-- All test samples are synthetic. False-positive rates were measured on a single Windows host and on Linux containers only.
+- All test samples are synthetic. Findings on real systems were measured only on a single Windows host, in full scans of 20 Linux hosts of one lab and on one Windows guest read from the hypervisor; none of these findings was verified manually one by one.
 - macOS and FreeBSD are not supported yet. Physical memory dumps are not analysed yet (dumps of single processes are).
 - Binaries and installers are not digitally signed.
 

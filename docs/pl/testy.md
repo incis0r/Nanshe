@@ -14,18 +14,22 @@ powershell -ExecutionPolicy Bypass -File scripts\e2e.ps1 -Bin target\release -Ou
 
 Kod wyjścia skryptów e2e: 0 gdy wszystko zgodne, 1 gdy cokolwiek odbiega.
 
-## Stan na 2026-11-23
+## Stan na 2026-11-24
 
 | Warstwa | Wynik |
 |---|---|
-| Testy jednostkowe | 129 przechodzi (analyze 25, core 3, dump 5, kb 7, live 20, llm 40, report 29) |
+| Testy jednostkowe | 137 przechodzi (analyze 26, core 3, dump 5, kb 7, live 20, llm 40, report 30, vm 6) |
+| Odczyt z hiperwizora (`nanshe vm`) | jedno uruchomienie na żywo na gościu Windows Server 2025 pod KVM (zob. [hiperwizor.md](hiperwizor.md)); bez automatycznego testu end-to-end |
+| Pełne skany na żywo, Linux | `nanshe scan --all` na 20 hostach jednego labu (19 x86_64, 1 arm64), 2026-11-23, przed strojeniem detekcji i po nim; żadnego procesu nie weryfikowano ręcznie |
 | e2e Linux (aarch64, kontener) | 16 próbek statycznych, 2 dynamiczne i 8 grup asercji dodatkowych |
 | e2e Windows (stacja testowa, x64) | 14 próbek, próbka kontekstu, 2 dynamiczne i 8 grup asercji dodatkowych |
 | Model lokalny na żywo | `gemma3:12b` na lokalnej Ollamie |
 | Chmura na żywo | Nous: `anthropic/claude-opus-5.5` (d0), `anthropic/claude-haiku-5.5` (d1) |
 | Chmura bez próby na żywo | `anthropic`, `google`, `openai` bezpośrednio: tylko testy kształtu zapytań (brak kluczy) |
 
-Nie ma: CI, fuzzingu parsera `maps`, testów na Linuksie x86_64, zestawu oceny jakości modeli.
+Przepływ CI jest zdefiniowany w `.github/workflows/ci.yml` (testy jednostkowe i end-to-end Linuksa w kontenerze, testy jednostkowe i build wydania na Windows); wyników jego przebiegów ten dokument nie odnotowuje. Testy jednostkowe pakietu `nanshe-vm` są częścią przebiegu całego workspace; binarium `nanshe` z cechą `vm` nie jest tam budowane.
+
+Nie ma: fuzzingu parsera `maps`, odnotowanego przebiegu end-to-end na Linuksie x86_64, zestawu oceny jakości modeli.
 
 ## Testy jednostkowe
 
@@ -60,7 +64,7 @@ Nie ma: CI, fuzzingu parsera `maps`, testów na Linuksie x86_64, zestawu oceny j
 
 - `maps::parses`: parser `/proc/<pid>/maps`, w tym nazwy ze spacjami i sufiks `(deleted)`.
 - Kontekst systemowy, Linux (`sysctx`): `stat_with_hostile_name` (nazwa procesu ze spacjami i nawiasami nie przesuwa pól `stat`), `status_and_cmdline`, `addresses_and_tables` (adresy IPv4/IPv6 i stany z `/proc/net/tcp`; wiersz bez i-węzła jest pomijany; gniazda uniksowe z nazwą ze spacją i bez nazwy), `descriptors_users_and_loader_env` (rodzaje deskryptorów, sufiks `(deleted)`; ze środowiska brane są tylko zmienne ładowania kodu, zmienna z sekretem nie jest zbierana).
-- Wątki i zmieniony kod, Linux (`sysctx::thread_pc_and_modified_pages`): adres instrukcji z pliku `syscall` wątku (wątek działający i błędne dane dają brak adresu) oraz strony anonimowe mapowań z `smaps` (pole bez nagłówka mapowania jest ignorowane).
+- Wątki i zmieniony kod, Linux (`sysctx::thread_pc_and_modified_pages`): adres instrukcji z pliku `syscall` wątku (wątek działający i błędne dane dają brak adresu) oraz strony anonimowe mapowań z `smaps` (pole bez nagłówka mapowania jest ignorowane). Ten sam test obejmuje rozpoznawanie wątków jądra po fladze `PF_KTHREAD`: proces, który tylko nazywa się jak wątek jądra, nazwa zawierająca nawiasy i obcięte dane nie są traktowane jak wątek jądra.
 - Skróty plików (`sysctx::hashing_opens_once_and_takes_only_regular_files`): skrót znanej zawartości; katalog, brak pliku, urządzenie znakowe i potok nazwany bez piszącego nie dają skrótu i nie zawieszają skanu.
 - Uprawnienia skanera: `sysctx::scanner_privileges_from_status` (root z `CAP_SYS_PTRACE` pełne; root bez niej i zwykły użytkownik niepełne) oraz `wintables::scanner_privileges_follow_integrity_and_debug_privilege` (poziom wysoki albo systemowy z `SeDebugPrivilege` pełne; poziom średni albo brak `SeDebugPrivilege` niepełne).
 - Ścieżki sieciowe (`wintables::network_paths_are_never_treated_as_local`): UNC, `\Device\Mup`, `LanmanRedirector`, WebDAV i urządzenia inne niż wolumen dyskowy nie są uznawane za lokalne.
@@ -147,9 +151,24 @@ Nowe w tej wersji (analiza i odczyt na żywo):
 
 Dodatkowo PDF z próbki został otwarty zewnętrznym narzędziem (`pypdf`: 5 stron, tekst z polskimi znakami do wyciągnięcia) i obejrzany po wyrenderowaniu.
 
+### `nanshe-vm` (odczyt gościa z hiperwizora)
+
+| Test | Co sprawdza |
+|---|---|
+| `page_walk_combines_permissions_like_the_processor` | czteropoziomowe tablice stron: zapis i dostęp użytkownika wymagają każdego poziomu, zakaz wykonania wystarczy na jednym; strony jądra i nieobecne są pomijane; strony 2 MiB; sąsiednie strony o tej samej ochronie są łączone; połowa jądra jest ignorowana |
+| `page_walk_survives_unreadable_and_looping_tables` | brak tablicy głównej, nieczytelna tablica niższego poziomu (wynik oznaczony jako niepełny), tablica wskazująca na siebie (ogranicza ją limit tablic `MAX_TABLES`), tablice z ochroną zmieniającą się co stronę (liczbę zakresów ogranicza `MAX_RANGES`, a wynik jest oznaczony jako niepełny) i tablica o złej długości |
+| `page_ranges_become_regions_split_at_module_borders` | zakresy są łączone i dzielone na granicach modułów; moduł obejmuje jedną stronę za obrazem, do granicy 64 KiB i nie dalej; bez listy modułów rodzaj regionu jest nieznany |
+| `empty_and_degenerate_input_gives_no_regions` | puste wejście, zakresy i moduły o rozmiarze zero, przycięcie na końcu przestrzeni użytkownika |
+| `guest_name_is_read_from_qemu_arguments_only` | nazwa gościa jest brana z `-name` tylko dla `qemu-system-*` i `qemu-kvm`; inne programy z takim argumentem są ignorowane |
+| `symbol_download_is_impossible_without_consent` | przy pustym katalogu symboli i bez zgody na pobieranie wczytanie symboli jądra kończy się błędem szybko (poniżej 2 sekund), bez próby połączenia, i nie zostawia w katalogu żadnego pliku |
+
+Sprawdzenie, czy proces QEMU znaleziony po nazwie gościa działa z pliku programu QEMU z katalogu systemowego (`/proc/<pid>/exe`), nie ma testu jednostkowego.
+
+Dodane razem ze strojeniem po skanach labu: `lab_tuning_lowers_only_the_measured_benign_classes` (analyze; każda obniżona klasa z kontrolami, w których pełna waga zostaje: `DEL-EXEC` poza katalogami pakietów i w procesie bez potwierdzonego pliku programu, `HDR` w regionie małym albo wykonywalnym i w narzędziu QEMU, które nie jest hiperwizorem (`qemu-img`), `MEMFD` pod inną nazwą albo bez systemowej `libffi`; nazwy plików z numerem wersji na liście dozwolonych JIT; reguła `HDR` dla trybu hiperwizora) oraz `identical_processes_share_one_row_and_chapter` (report; grupowanie z kontrolami dla różnych programów i różnych zestawów cech).
+
 ## Testy end-to-end
 
-Próbki to program `nanshe-sample` (`tests/samples`): tworzy układ pamięci, którego szukają detektory, wypisuje `ready <pid>` i śpi. **Niczego nie wykonuje z utworzonych regionów.** Dla każdej próbki skrypt sprawdza trzy rzeczy: kod wyjścia skanu, zbiór tagów i powtarzalność (dwa skany tego samego procesu). Osobną rodziną są próbki dynamiczne (`churn`, `sleepmask`), które zmieniają układ w czasie — patrz podsekcja na końcu tego rozdziału.
+Próbki to program `nanshe-sample` (`tests/samples`): tworzy układ pamięci, którego szukają detektory, wypisuje `ready <pid>` i śpi. **Niczego nie wykonuje z utworzonych regionów.** Dla każdej próbki skrypt sprawdza trzy rzeczy: kod wyjścia skanu, zbiór tagów i powtarzalność (dwa skany tego samego procesu). Osobną rodziną są próbki dynamiczne (`churn`, `sleepmask`), które zmieniają układ w czasie: patrz podsekcja na końcu tego rozdziału.
 
 Różnica między systemami: na Linuksie porównywany jest cały JSON bez znacznika czasu, a zbiór tagów obejmuje cały proces (stąd `ENT-X` z biblioteki libc w każdej próbce). Na Windows porównywane są znaleziska bez liczników regionów, a tagi tylko z regionów od wagi „podejrzane".
 
@@ -228,11 +247,11 @@ Para `pe` / `guard-hide` sprawdza też zasadę „tylko odczyt": gdyby skaner cz
 
 ### Próbki dynamiczne: `churn` i `sleepmask` (oba systemy)
 
-Dotychczasowe próbki są statyczne: budują układ pamięci i śpią. Próbki dynamiczne zmieniają go w czasie — to materiał pod przyszłą obserwację zmian (`--watch`) i zarazem test, że skan wykonany w dowolnym momencie życia procesu daje spójny obraz. Argumenty: `<interwał_s> <czas_całkowity_s>` (domyślnie 3 i 60); po czasie całkowitym kończą się same.
+Dotychczasowe próbki są statyczne: budują układ pamięci i śpią. Próbki dynamiczne zmieniają go w czasie: to materiał pod przyszłą obserwację zmian (`--watch`) i zarazem test, że skan wykonany w dowolnym momencie życia procesu daje spójny obraz. Argumenty: `<interwał_s> <czas_całkowity_s>` (domyślnie 3 i 60); po czasie całkowitym kończą się same.
 
 Każdą zmianę próbka zgłasza linią `<tryb> <kolejka> <faza>` na stdout **po** jej wykonaniu. Harness czyta wyjście na bieżąco, skanuje w stabilnym oknie między wpisami i porównuje zbiór tagów ze wzorcem fazy. Test oblewa, gdy któraś faza da inne tagi albo nie wystąpi w zadeklarowanym czasie.
 
-`churn` — cykl sześciu faz (alokuje, zmienia uprawnienia RW → R-X → RWX, dokłada i zwalnia regiony):
+`churn`: cykl sześciu faz (alokuje, zmienia uprawnienia RW → R-X → RWX, dokłada i zwalnia regiony):
 
 | Faza | Stan pamięci | Tagi Linux | Tagi Windows |
 |---|---|---|---|
@@ -245,7 +264,7 @@ Każdą zmianę próbka zgłasza linią `<tryb> <kolejka> <faza>` na stdout **po
 
 W fazie `armed-rwx` region z nagłówkiem wciąż istnieje (zwalniany jest dopiero w `cleanup`), więc `HDR` zostaje. To celowe: faza sprawdza zarazem dwa równoległe znaleziska.
 
-`sleepmask` — symulacja maskowania w czasie snu (MITRE T1027/T1140): jeden region na przemian `armed` (R-X z kodem: Linux `ENT-X`, `X-PRIV`; Windows `X-PRIV`) i `masked` (RW z szumem o wysokiej entropii: samo tło, czyli `ENT-X` na Linuksie i brak tagów na Windows). W fazie `masked` znalezisko znika; pojedynczy skan trafiony w to okno nie odróżnia procesu od czystego — to ilustruje granicę skanowania jednorazowego i motywuje obserwację w czasie.
+`sleepmask`: symulacja maskowania w czasie snu (MITRE T1027/T1140): jeden region na przemian `armed` (R-X z kodem: Linux `ENT-X`, `X-PRIV`; Windows `X-PRIV`) i `masked` (RW z szumem o wysokiej entropii: samo tło, czyli `ENT-X` na Linuksie i brak tagów na Windows). W fazie `masked` znalezisko znika; pojedynczy skan trafiony w to okno nie odróżnia procesu od czystego: to ilustruje granicę skanowania jednorazowego i motywuje obserwację w czasie.
 
 ### Instalator Windows (`scripts/test-installer.ps1`)
 
@@ -305,9 +324,9 @@ To obserwacje, nie pomiar jakości: próby są małe, a zestawu oceny jakości m
 - Kontekstu systemowego na prawdziwych programach: próbka `ctx` ma jedno gniazdo, jedno dziecko i kilka plików. Procesy z tysiącami deskryptorów, kontenery z własną przestrzenią sieci i ponowne użycie PID rodzica na Windows nie były ćwiczone.
 - Wyglądu diagramów dla dużych procesów: mapa przestrzeni adresowej była oglądana dla próbek (26 regionów na Linuksie); zwijanie długich map sprawdza tylko test jednostkowy.
 - Obserwacji ciągłej w czasie: próbki dynamiczne (`churn`, `sleepmask`) zgłaszają fazy, a skrypty skanują w oknach między nimi; trybu `--watch` śledzącego zmiany jednego procesu jeszcze nie ma.
-
+- `nanshe vm` w teście automatycznym: wymaga hosta KVM z działającym gościem Windows. Sprawdzone jednym ręcznym uruchomieniem; procesy 32-bitowe gościa, inne wersje Windows i strony wyrzucone do pliku wymiany nie były ćwiczone.
 - Prawdziwego złośliwego oprogramowania: wszystkie próbki są syntetyczne.
-- Fałszywych alarmów na prawdziwych programach poza jednym pomiarem `scan --all` na stacji testowej Windows (opis w [windows.md](windows.md)). Dla `X-TMP` nie ma żadnego pomiaru na prawdziwym hoście Linux.
+- Fałszywych alarmów na prawdziwych programach poza jednym pomiarem `scan --all` na stacji testowej Windows (opis w [windows.md](windows.md)). Na Linuksie są pełne skany 20 hostów labu (2026-11-23), z których wynikają obniżone wagi opisane w [linux.md](linux.md); skali fałszywych alarmów `X-TMP` w nich nie oceniano.
 - Szczelności filtru wstrzyknięć: próbki używają frazy, którą filtr zna; test dowodzi, że filtr jest podłączony do każdego kanału, a nie że nie da się go obejść.
 - Backendów `anthropic`, `google`, `openai` na żywo.
 - macOS i FreeBSD (brak backendu skanu).

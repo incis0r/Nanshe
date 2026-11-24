@@ -26,7 +26,7 @@ cargo build --release -p nanshe-cli -p nanshe-samples --features nanshe-cli/llm
 powershell -ExecutionPolicy Bypass -File scripts\e2e.ps1 -Bin target\release -Out e2e-out
 ```
 
-Continuous integration on GitHub runs the Linux unit and end-to-end tests in a container and the unit tests on Windows. It does not run the Windows end-to-end or installer tests; if your change touches Windows-specific code, say in the pull request how you tested it.
+Continuous integration on GitHub runs the Linux unit and end-to-end tests in a container and the unit tests on Windows. It does not run the Windows end-to-end or installer tests, and it does not build `nanshe-cli` with the `vm` feature or exercise `nanshe vm` (that needs a KVM host with a running Windows guest; the unit tests of the `nanshe-vm` crate do run with the workspace); if your change touches Windows-specific code, say in the pull request how you tested it.
 
 ## What a good change looks like
 
@@ -36,8 +36,9 @@ Continuous integration on GitHub runs the Linux unit and end-to-end tests in a c
 - **Calibrated wording.** Reports say what was established, what is an assessment and what is unconfirmed. A finding is never described as proof of compromise.
 - **Both languages.** Every text meant for a human goes through `tr!("po polsku", "in English")` or `trf!` from `nanshe-core`. A change in `kb/*.json` must be mirrored in `kb/en/*.json`; a test enforces the same structure. Do not use em dashes or en dashes in texts.
 - **Read-only scanner.** The scanner must not write to, inject into or otherwise modify examined processes, and must not open paths that could send credentials to a remote host.
-- **Unsafe code** is allowed only in the Windows backend of `nanshe-live`, each block with a `SAFETY` comment. Other crates use `#![forbid(unsafe_code)]`.
-- **No network code** outside `nanshe-llm`; the default build must stay free of it.
+- **Unsafe code** is allowed only in the Windows backend of `nanshe-live`, each block with a `SAFETY` comment. The other crates contain none; all of them except `nanshe-live` and `nanshe-vm` enforce this with `#![forbid(unsafe_code)]`.
+- **No network code** outside `nanshe-llm`, with one exception: the kernel symbol download in the optional `vm` feature, which runs only with `--fetch-symbols`. The default build must stay free of network code.
+- **Guest memory and dump files are untrusted input**, like the text of an examined process: every offset, count and table read from them is bounded and checked.
 - **Untrusted text** (process names, paths, strings from memory, model output) is escaped before it reaches a report and never interpreted.
 
 ## Project layout
@@ -47,6 +48,8 @@ Continuous integration on GitHub runs the Linux unit and end-to-end tests in a c
 | `crates/nanshe-core` | shared types, the `MemorySource` trait, language selection |
 | `crates/nanshe-analyze` | detectors and scoring |
 | `crates/nanshe-live` | live process backends (Linux `/proc`, Windows API) and system context |
+| `crates/nanshe-dump` | process memory dumps as a source (Linux core files, Windows minidumps) |
+| `crates/nanshe-vm` | memory of a Windows guest read from the KVM/QEMU host (optional `vm` feature of `nanshe-cli`, Linux only) |
 | `crates/nanshe-kb` | knowledge base loader; content in `kb/` and `kb/en/` |
 | `crates/nanshe-report` | report model, Markdown and PDF renderers, differential report |
 | `crates/nanshe-llm` | optional language-model layer |

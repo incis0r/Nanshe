@@ -62,7 +62,7 @@ Pakiet i program nie są podpisane cyfrowo: Windows pokaże ostrzeżenie o niezn
 - Uruchamiać jako administrator (podniesiony). Narzędzie włącza `SeDebugPrivilege`; bez niej widać tylko procesy własnego użytkownika, a narzędzie wypisuje ostrzeżenie.
 - Procesy chronione (PPL, np. LSASS z `RunAsPPL`, usługi antywirusa) są niedostępne także dla administratora: trafiają do wyniku jako niedostępne, a wynik jest częściowy.
 - Wynik i raport podają, z jakimi uprawnieniami działał skaner (konto, poziom integralności, `SeDebugPrivilege`). Skan bez podniesionych uprawnień albo bez `SeDebugPrivilege` jest w raporcie oznaczony ostrzeżeniem na pierwszej stronie.
-- Konto SYSTEM nie daje więcej niż administrator z podniesionymi uprawnieniami: w dwóch pomiarach na stacji testowej (2026-11-22) oba skany miały tyle samo procesów niedostępnych (18, potem 20) i te same procesy ze znaleziskami. Procesy chronione wymagają innej drogi (zrzut pamięci albo odczyt z hiperwizora).
+- Konto SYSTEM nie daje więcej niż administrator z podniesionymi uprawnieniami: w dwóch pomiarach na stacji testowej (2026-11-22) oba skany miały tyle samo procesów niedostępnych (18, potem 20) i te same procesy ze znaleziskami. Procesy chronione wymagają innej drogi: zrzutu pamięci (`nanshe scan <plik-zrzutu>`) albo, dla gościa działającego pod KVM/QEMU, odczytu z hiperwizora poleceniem `nanshe vm` (pierwsza wersja, patrz [hiperwizor.md](hiperwizor.md)).
 
 Skaner używa `OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ)`, `VirtualQueryEx` i `ReadProcessMemory`. Niczego nie zapisuje w celu i nie wstrzykuje kodu.
 
@@ -118,7 +118,7 @@ nanshe report wynik.json
 
 `MEMFD` i `DEL-EXEC` dotyczą tylko Linuksa.
 
-`THR-PRIV` i `IMG-MOD` nie podlegają obniżce dla środowisk JIT. Adres startu pochodzi z `NtQueryInformationThread`, a stan stron z `QueryWorkingSetEx` (oba tylko do odczytu). `IMG-MOD` ocenia wyłącznie strony obecne w zestawie roboczym procesu i nie pokazuje, co zmieniono.
+`THR-PRIV` i `IMG-MOD` nie podlegają obniżce dla środowisk JIT. Adres startu pochodzi z `NtQueryInformationThread`, a stan stron z `QueryWorkingSetEx` (oba tylko do odczytu). `IMG-MOD` ocenia wyłącznie strony obecne w zestawie roboczym procesu. Porównuje je z plikiem PE na dysku (z relokacjami dla faktycznego adresu załadowania) i podaje liczbę różniących się bajtów oraz adres pierwszego; gdy treść jest zgodna z plikiem, zostaje znalezisko informacyjne (10 punktów), bo tożsamości pliku nie da się potwierdzić; gdy treści nie dało się porównać, znalezisko to mówi.
 
 Pomiar na stacji testowej (2026-11-22, 240 procesów): `IMG-MOD` wystąpił w 28 regionach 19 procesów, w tym `user32.dll` w 10 procesach, `clr.dll` w 9, `ntdll.dll` w 3 (procesy WebView2) i biblioteki agenta monitoringu. Przyczyn nie badałem pojedynczo; znane łagodne źródła to relokacja bibliotek bez ASLR, podpięcia piaskownicy Chromium i samo środowisko .NET. Dlatego zwykła biblioteka dostaje 10 punktów („info", także razem z `ENT-X` w tym samym kodzie; przy 20 punktach dziesięć zwykłych procesów stawało się „podejrzane"), a pełną wagę mają tylko moduły zabezpieczeń skryptów (`amsi.dll`, `wldp.dll`), których zmiana w pamięci jest typowa dla obejść. `THR-PRIV` nie wystąpił w tym pomiarze ani razu.
 
@@ -155,7 +155,7 @@ Ograniczenia tej obniżki:
 Każdy punkt ma próbkę w `tests/samples` i oczekiwanie w `scripts/e2e.ps1`:
 
 - **Sekcja `SEC_IMAGE` z pliku spoza katalogów systemowych** (`ximage`): regiony `MEM_IMAGE` nie są punktowane, ładunek niewidoczny.
-- **Nagłówek PE z wymazaną sygnaturą** (`pe-corrupt`): `HDR` nie reaguje, zostaje `X-PRIV`. To typowe zachowanie dzisiejszych narzędzi C2; planowany detektor `HDR-STRIP`.
+- **Nagłówek PE z uszkodzoną sygnaturą i bez tablicy sekcji** (`pe-corrupt`): `HDR` nie reaguje, zostaje `X-PRIV`. Nagłówek z wymazanymi sygnaturami `MZ` i `PE`, po którym została tablica sekcji, jest wykrywany przez `HDR` w regionach wykonywalnych (`pe-wiped`).
 - **Nagłówek poza granicą strony w danych niewykonywalnych**: niewidoczny (świadomie, bo kopie nagłówków w zwykłych danych są codziennością). W regionach wykonywalnych nagłówek pod przesunięciem jest wykrywany (`pe-offset`).
 - Proces z ponad 1 048 576 regionami: skanowane są pierwsze regiony do limitu, znaleziska zostają, a wynik procesu jest oznaczony jako niekompletny.
 - **Ładunek za strażnikiem** (`guard-hide`): treść niewidoczna, ale region dostaje `GUARD-X` i `X-PRIV`.

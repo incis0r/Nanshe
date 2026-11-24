@@ -2,7 +2,9 @@
 
 Polish version: [pl/linux.md](pl/linux.md).
 
-Status: supported. Verified on aarch64 in a Debian 12 container (`rust:1-slim-bookworm`). Linux x86_64: not verified yet.
+Status: supported. The unit and end-to-end tests were verified on aarch64 in a Debian 12 container (`rust:1-slim-bookworm`). Full live scans (`nanshe scan --all` as root, static binary) were run on 20 hosts of one lab on 2026-11-23 (19 x86_64, 1 arm64); a run of the end-to-end test suite on x86_64 is not recorded in this documentation.
+
+A running Windows guest of a KVM/QEMU host can be scanned from that Linux host: see [hypervisor.md](hypervisor.md).
 
 ## Build
 
@@ -14,6 +16,13 @@ scripts/dev.sh cargo build --release -p nanshe-cli --features llm  # with the LL
 ```
 
 On a host with Rust (stable, edition 2021) use the same `cargo` commands without `scripts/dev.sh`. Binary: `target/release/nanshe`. There are no dependencies on system libraries other than libc; the font of the PDF report is embedded.
+
+Two more build scripts:
+
+```sh
+scripts/dev.sh sh scripts/build-linux-static.sh   # static musl binaries for x86_64 and aarch64 (default features), in dist/linux
+scripts/build-linux-vm.sh                         # x86_64 binary with the vm feature (glibc 2.31 or newer), see hypervisor.md
+```
 
 ## Privileges
 
@@ -41,23 +50,37 @@ nanshe explain wynik.json --url http://127.0.0.1:11434   # LLM interpretation + 
 
 Exit codes of `scan`: 0 no findings at or above the `--min` threshold, 1 there are findings, 2 error, 3 partial result without findings.
 
+Kernel threads are skipped in the process list of `scan --all`: they have no user memory. They are recognised by the `PF_KTHREAD` flag in `/proc/<pid>/stat`, not by name, so a process that merely names itself like a kernel thread is scanned normally.
+
 ## Detectors that work on Linux
 
 | Tag | Points | Condition |
 |---|---|---|
 | `RWX` | 30 | writable and executable region |
 | `X-PRIV` | 30 | executable anonymous memory (not backed by a file), outside kernel regions (`[vdso]` etc.) |
-| `MEMFD` | 40 | executable `memfd:` mapping |
-| `DEL-EXEC` | 30 | executable mapping of a file deleted from disk |
+| `MEMFD` | 40/10 | executable `memfd:` mapping; 10 for `memfd:libffi` in a process that maps the system `libffi` library (see "Reduced weights") |
+| `DEL-EXEC` | 30/10 | executable mapping of a file deleted from disk; 10 for a file deleted from a package directory (see "Reduced weights") |
 | `X-TMP` | 30 | executable mapping of an existing file from `/tmp/`, `/var/tmp/`, `/dev/shm/`, `/run/shm/`, `/run/user/`, `/var/lock/`, `/run/lock/` or `/dev/mqueue/` |
 | `ENT-X` | 20/30 | high entropy in an executable region; 10 when it is single pages in ordinary code from a file |
-| `HDR` | 40 | ELF/PE/Mach-O header in a region not backed by a file: at the start of a page in any region, and in executable regions also at any offset (ELF, PE) |
+| `HDR` | 40/10 | ELF/PE/Mach-O header in a region not backed by a file: at the start of a page in any region, and in executable regions also at any offset (ELF, PE); in executable regions also a header with a wiped signature, recognised by the ELF program header table or the PE section table; 10 in guest memory of a QEMU process (see "Reduced weights") |
 | `THR-PRIV` | 40 | a thread waiting in a system call whose call instruction lies in memory not backed by a file (outside kernel regions) |
-| `IMG-MOD` | 40 | an executable, non-writable file mapping has pages modified in memory (the `Anonymous` field in `smaps` greater than zero) |
+| `IMG-MOD` | 40 | an executable, non-writable file mapping has pages modified in memory (the `Anonymous` field in `smaps` greater than zero) whose contents differ from the file, or could not be compared with it |
 
 `X-MAP` and `GUARD-X` apply to Windows only.
 
-`THR-PRIV` and `IMG-MOD` are not subject to the reduction for JIT runtimes. `THR-PRIV` reads `/proc/<pid>/task/<tid>/syscall`: a thread that was computing something at the moment of the scan (not waiting in the kernel) is not evaluated. `IMG-MOD` says that the code was changed, but shows neither the differences nor the exact page.
+`THR-PRIV` and `IMG-MOD` are not subject to the reduction for JIT runtimes. `THR-PRIV` reads `/proc/<pid>/task/<tid>/syscall`: a thread that was computing something at the moment of the scan (not waiting in the kernel) is not evaluated. `IMG-MOD` compares the modified pages with the mapped file (opened through `/proc/<pid>/map_files`) and states the number of differing bytes and the address of the first one; a private copy with unchanged contents is not reported. When the contents could not be compared, the finding says so.
+
+### Reduced weights
+
+Introduced after full scans of 20 Linux hosts of one lab (2026-11-23). Each rule lowers one measured benign class to 10 points ("info"), keeps the finding visible with a description that names the reason, and has a unit test with controls that keep the full weight. A finding reduced this way does not by itself give the process priority P1.
+
+| Tag | Reduced to 10 when | Stays at full weight when |
+|---|---|---|
+| `DEL-EXEC` | the deleted file was in `/usr/`, `/lib/`, `/lib64/`, `/opt/`, `/bin/`, `/sbin/` or `/snap/`, and the program file of the process is verified (owned by root, not writable by group or others, the same file the scanner sees) and not deleted. Description: usually a library updated on disk, the process uses the old version until restarted | the file was elsewhere (for example `/tmp`, a home directory, `/var/lib`), the path contains `/../`, or the program file is not verified (for example a process in a container, which has its own `/usr`) or is itself deleted |
+| `HDR` | the header is in a non-executable region of at least 16 MiB in a process whose verified program file in a system directory is `qemu-system-*` or `qemu-kvm`. Description: most likely virtual machine memory. One entry per region | executable region, smaller region, other programs including other QEMU tools (`qemu-img`) |
+| `MEMFD` | the mapping is named `memfd:libffi` and the process has a verified program file in a system directory and maps `libffi.so*` from `/usr/lib/`, `/usr/lib64/`, `/lib/` or `/lib64/` | any other name, a process without the system `libffi`, an unverified program file |
+
+The mapping name and the paths are chosen by the process itself, which is why every rule additionally requires a verified program file. Known risk, as with the JIT allowlist: code injected into a process that meets the conditions inherits the reduction.
 
 ## SHA-256 hashes
 
@@ -90,7 +113,7 @@ Limitations: this is the state at the moment of the scan (closed connections and
 
 ## JIT allowlist
 
-It reduces (divides by 3) the severity of `RWX`, `X-PRIV` and `ENT-X` for known JIT runtimes. It applies only when the program file indicated by the kernel (`/proc/<pid>/exe`):
+It reduces (divides by 3) the severity of `RWX`, `X-PRIV` and `ENT-X` for known JIT runtimes: `node`, `java`, `dotnet`, `firefox`, `firefox-esr`, `chrome`, `chromium`, `msedge`, `brave`, `electron`, `code`, `pwsh`, `powershell`, `qemu-system-x86_64`, `luajit`, and since the scans of 20 Linux hosts also `apache2`, `httpd`, `php`, `php-fpm`, `gjs`, `gjs-console`, `gnome-shell`, `gnome-terminal-server`, `python`, `uwsgi`. The file name is compared exactly and also without a trailing version number (`python3.14`, `php-fpm8.2`). It applies only when the program file indicated by the kernel (`/proc/<pid>/exe`):
 
 - is not deleted,
 - is in `/usr/`, `/opt/`, `/bin/`, `/sbin/` or `/snap/`,
@@ -105,13 +128,13 @@ Each item below has a sample in `tests/samples` and an expectation in `scripts/e
 
 - **R-X from a file outside temporary directories**: `X-TMP` covers only a list of world-writable directories (the sample `rx-file` in `/tmp` is detected). The same payload from a home directory or `/run/user/` remains invisible.
 - **`X-TMP` false positives**: programs that unpack native libraries into `/tmp` (for example JNI in Java, PyInstaller, AppImage) will produce the severity "suspicious". The scale was not measured; the detector is not covered by the allowlist.
-- **ELF header with a corrupted field** (`hdr-corrupt`): `HDR` does not react, `X-PRIV` remains. Wiped signatures (stomping) are the planned `HDR-STRIP` detector.
+- **ELF header with a corrupted field and no program header table** (`hdr-corrupt`): `HDR` does not react, `X-PRIV` remains. A header whose signature was wiped while the program header table remained is detected by `HDR` in executable regions (`hdr-wiped`).
 - **Header off a page boundary in non-executable data** (for example a payload in an RW buffer on the heap before the permissions are changed): invisible. This is a deliberate limitation: the program loader keeps on the stack a copy of the header of every library it loads, so searching at any offset in data produced `HDR` in every process (verified on the `clean` sample). In executable regions a header at an offset is detected (`hdr-offset`).
 - **RWX with low entropy** (`rwx-lowent`): 60 points instead of 90, without `ENT-X`.
 - A process with more than 1 048 576 regions: the first regions up to the limit are scanned, the findings are kept, and the result for the process is marked as incomplete (partial result).
 - A region larger than `--max-region-mib` (64 by default) is read partially and marked as such.
-- Processes in a different mount namespace: the allowlist does not cover them (the program file is not the same file for the scanner).
-- No dump analysis (stage M2).
+- Processes in a different mount namespace (containers): the allowlist and the reduced weights do not cover them (the program file is not the same file for the scanner). The same holds for a process whose program file was replaced on disk by an update.
+- Dumps: single-process dumps (core files) are analysed with `nanshe scan <dump-file>`, see the [version documentation](documentation-0.1.0.md), chapter 4; physical memory dumps are not.
 
 ## LLM layer and report
 

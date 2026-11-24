@@ -12,6 +12,8 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# The nanshe-vm crate is a workspace member, so its unit tests run below. The nanshe binary with the
+# optional "vm" feature is not built here, and "nanshe vm" is not exercised (it needs a KVM host with a guest).
 jobs:
   linux:
     name: "Linux (container): unit and end-to-end tests"

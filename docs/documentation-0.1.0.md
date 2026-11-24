@@ -4,6 +4,8 @@ Polish version: [pl/dokumentacja-0.1.0.md](pl/dokumentacja-0.1.0.md).
 
 As of 2026-11-22. This document describes what this version does, how it is built, what has been verified and what it cannot do. Details for the individual systems are in [linux.md](linux.md), [windows.md](windows.md) and [macos.md](macos.md), the description of the tests in [tests.md](tests.md) and the knowledge base in [knowledge-base.md](knowledge-base.md).
 
+**Changes after this version.** This document describes version 0.1.0 and is not rewritten with every change. Later work is listed in [../CHANGELOG.md](../CHANGELOG.md) under "Unreleased": reading a running Windows guest from the KVM/QEMU host (`nanshe vm`, crate `nanshe-vm`, described in [hypervisor.md](hypervisor.md)), reduced weights for measured benign classes on Linux and the extended JIT list ([linux.md](linux.md)), grouping of identical processes in the report, skipping of kernel threads. Where a statement below is no longer current, a note says so.
+
 ## 1. What it is for
 
 Nanshe is a tool for memory triage of running processes. It points out memory regions that look unusual (code not backed by a file, writable code, code that looks encrypted, a program hidden in memory, a running thread in memory not backed by a file, modified library code), collects system context around them and assembles a report for an analyst from this.
@@ -12,7 +14,7 @@ What it is not:
 
 - It does not issue an "infected / clean" verdict. Every finding is a question to be checked.
 - It does not remove or block anything. It does not change the examined system (the exceptions are described in section 10).
-- It does not replace a full analysis of a memory dump: it does not read kernel memory or protected processes.
+- It does not replace a full analysis of a memory dump: it does not read kernel memory or protected processes (after 0.1.0: protected processes of a Windows guest can be read from the KVM/QEMU host, see [hypervisor.md](hypervisor.md)).
 
 ## 2. What this version can do
 
@@ -44,11 +46,13 @@ The project is written in Rust and divided into eight crates (about 8,100 lines 
 | `nanshe-cli` | the `nanshe` program | 519 |
 | `nanshe-samples` | the `nanshe-sample` program: harmless samples for tests | (not in the total) |
 
+Added after 0.1.0 and not included in the count of eight or in the line total: `nanshe-vm` (memory of a Windows guest read from the KVM/QEMU host; optional `vm` feature of `nanshe-cli`, Linux only).
+
 Design rules:
 
 - **Detectors see only an abstraction.** The analysis works on the "memory source" interface (regions, reading, threads, modified code), not on the system. Thanks to this, the same detectors will work on dumps once such a backend is added.
 - **Unsafe code in one place.** `unsafe` is present only in the Windows module of the `nanshe-live` crate (system API calls) and in the test samples; the other crates forbid it.
-- **Network code only in the model layer.** A build without the `llm` feature contains no network code at all.
+- **Network code only in the model layer.** A build without the `llm` feature contains no network code at all. (After 0.1.0: the optional `vm` feature adds the download of kernel symbols, used only with `--fetch-symbols`; the default build is unchanged.)
 - **Deterministic result.** Two scans of the same state produce the same file (apart from the timestamp). The language model changes nothing in the scan result.
 - **A partial result instead of none.** A region read error or an inaccessible process does not abort the scan; the result is marked as partial.
 
@@ -67,6 +71,7 @@ process -> nanshe scan -> wynik.json -> nanshe report  -> wynik.report.md, wynik
 | `nanshe scan --pid N` | scan of one process |
 | `nanshe scan --all` | scan of all accessible processes (except the scanner itself) |
 | `nanshe scan dump-file` | analysis of a process memory dump with the same detectors |
+| `nanshe vm <guest>` | after 0.1.0, builds with the `vm` feature: scan of the processes of a running Windows guest from the KVM/QEMU host; options and limitations in [hypervisor.md](hypervisor.md) |
 | `nanshe report wynik.json` | Markdown and PDF report |
 | `nanshe diff wczesniej.json pozniej.json` | differential report: what changed between two scans of the same host |
 | `nanshe explain wynik.json` | interpretation by a language model, then the report |
@@ -279,6 +284,8 @@ The text has two layers. The description of each tag is understandable without a
 | P2 | "high" severity with a recognised runtime or without a memory map; "suspicious" severity in a program from outside the system directories |
 | P3 | the rest |
 
+After 0.1.0: a finding whose weight a detector has reduced below 30 (see "Reduced weights" in [linux.md](linux.md)) does not count towards P1, and processes of the same program with the same set of tags, priority and severity share one overview row ("+N" next to the PID) and one chapter ("and N similar").
+
 The priority is not an assessment of maliciousness and does not change the scoring. High privileges of the process and connections to remote addresses are added to the rationale.
 
 All content that comes from the examined system or from the model is neutralised in the report (it cannot insert markup or break a table). The report refuses to attach an interpretation that concerns a different result file.
@@ -331,7 +338,7 @@ On a host without a scan backend (macOS) the commands that work on a result file
 
 | Layer | Status |
 |---|---|
-| Unit tests | 110, all pass; written in pairs (a case and a control that differs in one property) |
+| Unit tests | 110, all pass; written in pairs (a case and a control that differs in one property). Current counts are in [tests.md](tests.md) |
 | Tests on live samples, Linux | 17 static samples and 2 dynamic ones, plus assertions on the result, the report and the context |
 | Tests on live samples, Windows | 16 static samples and 2 dynamic ones, plus assertions on the result, the report, the context and the handles |
 | Windows installer | test of installation, refusals and uninstallation (result of the first run in [tests.md](tests.md)) |
@@ -347,6 +354,8 @@ Measurement on the Windows test host (240 processes, 2026-11-22):
 This is a measurement from one host. On servers, developer workstations and in containers the numbers will be different.
 
 ## 13. Known limitations
+
+Several items below were closed after this list was written: a header with wiped signatures is detected in executable regions when the section or segment table remained, `IMG-MOD` states the number of differing bytes and the address of the first one (section 5), protected processes of a Windows guest under KVM/QEMU can be read from the host ([hypervisor.md](hypervisor.md)), and a continuous integration workflow is defined in `.github/workflows/ci.yml`. The lists are kept as written for 0.1.0.
 
 **What the tool does not see:**
 
@@ -385,6 +394,8 @@ The order agreed in the course of the work:
 4. Findings from context: a process with high privileges started from a directory writable by ordinary users.
 5. Observation of a process over time.
 6. macOS and FreeBSD backends.
+
+State after 0.1.0: item 2 exists as a first version for Windows guests under KVM/QEMU (`nanshe vm`, measured on one Windows Server 2025 guest; its own roadmap is in [hypervisor.md](hypervisor.md)), and item 3 is done (section 5). The current list of changes is in [../CHANGELOG.md](../CHANGELOG.md).
 
 ## 15. License
 

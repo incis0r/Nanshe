@@ -11,6 +11,8 @@ scripts/dev.sh cargo test --workspace --features nanshe-cli/llm   # testy jednos
 scripts/dev.sh sh scripts/e2e.sh                                  # próbki -> skan na żywo
 scripts/dev.sh cargo build --release -p nanshe-cli                # binarium bez kodu sieciowego
 scripts/dev.sh cargo build --release -p nanshe-cli --features llm # z warstwą LLM (stacja analityka)
+scripts/dev.sh sh scripts/build-linux-static.sh                   # statyczne binaria musl (x86_64, aarch64), cechy domyślne
+scripts/build-linux-vm.sh                                         # binarium x86_64 z cechą vm (nanshe vm)
 ```
 
 ## Windows (natywnie, toolchain MSVC)
@@ -22,7 +24,7 @@ powershell -ExecutionPolicy Bypass -File scripts\e2e.ps1 -Bin target\release -Ou
 
 Testy end-to-end i testy instalatorów zmieniają stację, na której działają (uruchamiają próbki, instalują i usuwają program): tylko na dedykowanej stacji testowej.
 
-Skan wymaga administratora (SeDebugPrivilege); procesy chronione (PPL) są raportowane jako niedostępne.
+Skan wymaga administratora (SeDebugPrivilege); procesy chronione (PPL) są raportowane jako niedostępne. Gościa Windows działającego pod KVM/QEMU można przeskanować z hosta, razem z procesami chronionymi: patrz „Skan gościa Windows z hosta KVM" niżej.
 
 ## Graficzna mapa pamięci
 
@@ -81,6 +83,8 @@ Raport ma być samodzielnym dokumentem dla analityka. Poza znaleziskami zawiera 
 
 Zrzut pamięci procesu (plik core z Linuksa, minidump z Windows) analizuje się tym samym poleceniem: `nanshe scan plik-zrzutu --json wynik.json`; opis w [dokumentacji](docs/pl/dokumentacja-0.1.0.md), rozdział 4.
 
+Procesy tego samego programu (ten sam plik i nazwa) o tym samym zestawie cech, priorytecie i wadze mają w raporcie jeden wiersz przeglądu („+N" przy numerze procesu) i jeden rozdział („i N podobnych").
+
 Dwa skany tej samej stacji można porównać: `nanshe diff wczesniej.json pozniej.json` daje raport różnicowy (nowe regiony w działających procesach, nowe i zakończone procesy ze znaleziskami, zmiany w sieci i plikach).
 
 Raport i opisy w wyniku skanu są dostępne po polsku i po angielsku: `nanshe --lang en scan ...`, potem `nanshe report ...` (raport powstaje w języku skanu; opis w [dokumentacji](docs/pl/dokumentacja-0.1.0.md), rozdział 4).
@@ -106,12 +110,22 @@ Ollama po czystym HTTP poza loopback wymaga `--insecure-llm`; docelowo tunel SSH
 
 Wynik skanu zawiera fragmenty pamięci (do 256 B na znalezisko), więc może zawierać sekrety; `--no-bytes` je wyłącza.
 
+## Skan gościa Windows z hosta KVM
+
+```sh
+sudo nanshe vm dc01 --ps --symbols ./symbols                    # lista procesów gościa
+sudo nanshe vm dc01 --all --symbols ./symbols --json dc01.json  # skan wszystkich procesów gościa
+nanshe report dc01.json
+```
+
+`nanshe vm` czyta pamięć działającego gościa Windows z hosta Linux z KVM/QEMU, bez niczego uruchamianego w gościu, także procesy chronione (LSASS, antywirus). Wymaga builda z cechą `vm` (`scripts/build-linux-vm.sh`) i pliku symboli jądra gościa; z sieci korzysta wyłącznie po podaniu `--fetch-symbols`. To pierwsza wersja, zmierzona na jednym gościu Windows Server 2025; ograniczenia opisuje [docs/pl/hiperwizor.md](docs/pl/hiperwizor.md).
+
 ## Dokumentacja
 
 - [docs/pl/baza-wiedzy.md](docs/pl/baza-wiedzy.md): baza wiedzy (`kb/`), z której raport bierze objaśnienia prostym językiem; jak ją rozszerzać
 - [docs/examples/](docs/examples/): przykładowy raport z próbki syntetycznej, z interpretacją LLM i bez (`.md` i `.pdf`)
 - [docs/pl/dokumentacja-0.1.0.md](docs/pl/dokumentacja-0.1.0.md): pełny opis wersji 0.1.0: możliwości, budowa, detektory, plik wyniku, raport, bezpieczeństwo, co sprawdzono i czego narzędzie nie umie
-- [docs/pl/linux.md](docs/pl/linux.md), [docs/pl/windows.md](docs/pl/windows.md), [docs/pl/macos.md](docs/pl/macos.md): build, uprawnienia, detektory i ograniczenia per system
+- [docs/pl/linux.md](docs/pl/linux.md), [docs/pl/windows.md](docs/pl/windows.md), [docs/pl/macos.md](docs/pl/macos.md), [docs/pl/hiperwizor.md](docs/pl/hiperwizor.md) (skan gościa Windows z hosta KVM): build, uprawnienia, detektory i ograniczenia per system
 - [docs/pl/testy.md](docs/pl/testy.md): wszystkie testy, co sprawdzają i czego nie obejmują
 
 ## Licencja

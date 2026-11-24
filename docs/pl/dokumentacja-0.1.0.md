@@ -4,6 +4,8 @@ Wersja angielska: [../documentation-0.1.0.md](../documentation-0.1.0.md).
 
 Stan na 2026-11-22. Dokument opisuje, co ta wersja robi, jak jest zbudowana, co zostało sprawdzone i czego nie umie. Szczegóły dla poszczególnych systemów są w [linux.md](linux.md), [windows.md](windows.md) i [macos.md](macos.md), opis testów w [testy.md](testy.md) i baza wiedzy w [baza-wiedzy.md](baza-wiedzy.md).
 
+**Zmiany po tej wersji.** Dokument opisuje wersję 0.1.0 i nie jest przepisywany przy każdej zmianie. Późniejsze prace są wymienione w [../../CHANGELOG.md](../../CHANGELOG.md) w części „Unreleased": odczyt działającego gościa Windows z hosta KVM/QEMU (`nanshe vm`, pakiet `nanshe-vm`, opis w [hiperwizor.md](hiperwizor.md)), obniżone wagi dla zmierzonych łagodnych klas na Linuksie i rozszerzona lista JIT ([linux.md](linux.md)), grupowanie jednakowych procesów w raporcie, pomijanie wątków jądra. Tam, gdzie stwierdzenie poniżej nie jest już aktualne, mówi o tym dopisek.
+
 ## 1. Do czego służy
 
 Nanshe to narzędzie do triage pamięci działających procesów. Wskazuje regiony pamięci, które wyglądają nietypowo (kod bez pliku, kod zapisywalny, kod wyglądający na zaszyfrowany, program schowany w pamięci, działający wątek w pamięci bez pliku, zmieniony kod biblioteki), zbiera wokół nich kontekst systemowy i składa z tego raport dla analityka.
@@ -12,7 +14,7 @@ Czym nie jest:
 
 - Nie wydaje werdyktu „zainfekowany / czysty". Każde znalezisko to pytanie do sprawdzenia.
 - Nie usuwa ani nie blokuje niczego. Badanego systemu nie zmienia (wyjątki są opisane w punkcie 10).
-- Nie zastępuje pełnej analizy zrzutu pamięci: nie czyta pamięci jądra ani procesów chronionych.
+- Nie zastępuje pełnej analizy zrzutu pamięci: nie czyta pamięci jądra ani procesów chronionych (po 0.1.0: procesy chronione gościa Windows można czytać z hosta KVM/QEMU, patrz [hiperwizor.md](hiperwizor.md)).
 
 ## 2. Co potrafi ta wersja
 
@@ -44,11 +46,13 @@ Projekt jest w języku Rust, podzielony na osiem pakietów (około 8 100 wierszy
 | `nanshe-cli` | program `nanshe` | 519 |
 | `nanshe-samples` | program `nanshe-sample`: nieszkodliwe próbki do testów | (poza sumą) |
 
+Dodany po 0.1.0 i nieujęty w liczbie ośmiu pakietów ani w sumie wierszy: `nanshe-vm` (pamięć gościa Windows czytana z hosta KVM/QEMU; opcjonalna cecha `vm` pakietu `nanshe-cli`, tylko Linux).
+
 Zasady konstrukcyjne:
 
 - **Detektory widzą tylko abstrakcję.** Analiza pracuje na interfejsie „źródło pamięci" (regiony, odczyt, wątki, zmieniony kod), nie na systemie. Dzięki temu te same detektory zadziałają na zrzutach, gdy dojdzie taki backend.
 - **Kod niebezpieczny w jednym miejscu.** `unsafe` jest wyłącznie w module Windows pakietu `nanshe-live` (wywołania API systemu) i w próbkach testowych; pozostałe pakiety mają go zakazanego.
-- **Kod sieciowy tylko w warstwie modelu.** Build bez cechy `llm` nie zawiera żadnego kodu sieciowego.
+- **Kod sieciowy tylko w warstwie modelu.** Build bez cechy `llm` nie zawiera żadnego kodu sieciowego. (Po 0.1.0: opcjonalna cecha `vm` wnosi pobieranie symboli jądra, używane wyłącznie z opcją `--fetch-symbols`; domyślny build się nie zmienił.)
 - **Wynik deterministyczny.** Dwa skany tego samego stanu dają ten sam plik (poza znacznikiem czasu). Model językowy niczego w wyniku skanu nie zmienia.
 - **Częściowy wynik zamiast żadnego.** Błąd odczytu regionu albo niedostępny proces nie przerywa skanu; wynik jest oznaczany jako częściowy.
 
@@ -67,6 +71,7 @@ proces -> nanshe scan -> wynik.json -> nanshe report  -> wynik.report.md, wynik.
 | `nanshe scan --pid N` | skan jednego procesu |
 | `nanshe scan --all` | skan wszystkich dostępnych procesów (poza samym skanerem) |
 | `nanshe scan plik-zrzutu` | analiza zrzutu pamięci procesu tymi samymi detektorami |
+| `nanshe vm <gość>` | po 0.1.0, buildy z cechą `vm`: skan procesów działającego gościa Windows z hosta KVM/QEMU; opcje i ograniczenia w [hiperwizor.md](hiperwizor.md) |
 | `nanshe report wynik.json` | raport Markdown i PDF |
 | `nanshe diff wczesniej.json pozniej.json` | raport różnicowy: co zmieniło się między dwoma skanami tej samej stacji |
 | `nanshe explain wynik.json` | interpretacja modelem językowym, potem raport |
@@ -279,6 +284,8 @@ Tekst ma dwie warstwy. Opis każdej cechy jest zrozumiały bez przygotowania z a
 | P2 | waga „wysokie" z rozpoznanym środowiskiem albo bez mapy pamięci; waga „podejrzane" w programie spoza katalogów systemowych |
 | P3 | pozostałe |
 
+Po 0.1.0: znalezisko, którego wagę detektor obniżył poniżej 30 (patrz „Obniżone wagi" w [linux.md](linux.md)), nie liczy się do P1, a procesy tego samego programu o tym samym zestawie cech, priorytecie i wadze mają jeden wiersz przeglądu („+N" przy numerze procesu) i jeden rozdział („i N podobnych").
+
 Priorytet nie jest oceną szkodliwości i nie zmienia punktacji. Wysokie uprawnienia procesu i połączenia z adresami zdalnymi są dopisywane do uzasadnienia.
 
 Cała treść pochodząca z badanego systemu albo od modelu jest w raporcie neutralizowana (nie może wstawić znaczników ani rozbić tabeli). Raport odmawia dołączenia interpretacji, która dotyczy innego pliku wyniku.
@@ -331,7 +338,7 @@ Na stacji bez backendu skanu (macOS) działają polecenia pracujące na pliku wy
 
 | Warstwa | Stan |
 |---|---|
-| Testy jednostkowe | 110, wszystkie przechodzą; pisane parami (przypadek i kontrola różniąca się jedną cechą) |
+| Testy jednostkowe | 110, wszystkie przechodzą; pisane parami (przypadek i kontrola różniąca się jedną cechą). Aktualne liczby są w [testy.md](testy.md) |
 | Testy na żywych próbkach, Linux | 17 próbek statycznych i 2 dynamiczne, plus asercje wyniku, raportu i kontekstu |
 | Testy na żywych próbkach, Windows | 16 próbek statycznych i 2 dynamiczne, plus asercje wyniku, raportu, kontekstu i uchwytów |
 | Instalator Windows | test instalacji, odmów i odinstalowania (wynik pierwszego przebiegu w [testy.md](testy.md)) |
@@ -347,6 +354,8 @@ Pomiar na stacji testowej Windows (240 procesów, 2026-11-22):
 To pomiar z jednej stacji. Na serwerach, stacjach deweloperskich i w kontenerach liczby będą inne.
 
 ## 13. Znane ograniczenia
+
+Kilka poniższych pozycji zostało zamkniętych po spisaniu tej listy: nagłówek z wymazanymi sygnaturami jest wykrywany w regionach wykonywalnych, gdy została tablica sekcji albo segmentów, `IMG-MOD` podaje liczbę różniących się bajtów i adres pierwszego (rozdział 5), procesy chronione gościa Windows pod KVM/QEMU można czytać z hosta ([hiperwizor.md](hiperwizor.md)), a przepływ ciągłej integracji jest zdefiniowany w `.github/workflows/ci.yml`. Listy zostają w brzmieniu z wersji 0.1.0.
 
 **Czego narzędzie nie widzi:**
 
@@ -385,6 +394,8 @@ Kolejność uzgodniona w toku prac:
 4. Znaleziska z kontekstu: proces o wysokich uprawnieniach uruchomiony z katalogu zapisywalnego dla zwykłych użytkowników.
 5. Obserwacja procesu w czasie.
 6. Backendy macOS i FreeBSD.
+
+Stan po 0.1.0: punkt 2 istnieje jako pierwsza wersja dla gości Windows pod KVM/QEMU (`nanshe vm`, zmierzona na jednym gościu Windows Server 2025; własny plan tej funkcji jest w [hiperwizor.md](hiperwizor.md)), a punkt 3 jest zrobiony (rozdział 5). Aktualna lista zmian jest w [../../CHANGELOG.md](../../CHANGELOG.md).
 
 ## 15. Licencja
 

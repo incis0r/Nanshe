@@ -14,18 +14,22 @@ powershell -ExecutionPolicy Bypass -File scripts\e2e.ps1 -Bin target\release -Ou
 
 Exit code of the e2e scripts: 0 when everything matches, 1 when anything deviates.
 
-## Status as of 2026-11-23
+## Status as of 2026-11-24
 
 | Layer | Result |
 |---|---|
-| Unit tests | 129 pass (analyze 25, core 3, dump 5, kb 7, live 20, llm 40, report 29) |
+| Unit tests | 137 pass (analyze 26, core 3, dump 5, kb 7, live 20, llm 40, report 30, vm 6) |
+| Hypervisor read (`nanshe vm`) | one live run against a Windows Server 2025 guest on KVM (see [hypervisor.md](hypervisor.md)); no automated end-to-end test |
+| Full live scans, Linux | `nanshe scan --all` on 20 hosts of one lab (19 x86_64, 1 arm64), 2026-11-23, before and after the detection tuning; no process was verified manually |
 | e2e Linux (aarch64, container) | 16 static samples, 2 dynamic and 8 groups of additional assertions |
 | e2e Windows (test host, x64) | 14 samples, the context sample, 2 dynamic and 8 groups of additional assertions |
 | Local model, live | `gemma3:12b` on a local Ollama |
 | Cloud, live | Nous: `anthropic/claude-opus-5.5` (d0), `anthropic/claude-haiku-5.5` (d1) |
 | Cloud without a live run | `anthropic`, `google`, `openai` directly: request shape tests only (no keys) |
 
-Not present: CI, fuzzing of the `maps` parser, tests on Linux x86_64, a model quality evaluation set.
+A CI workflow is defined in `.github/workflows/ci.yml` (Linux unit and end-to-end tests in a container, unit tests and a release build on Windows); results of its runs are not recorded in this document. The unit tests of the `nanshe-vm` crate are part of the workspace run; the `nanshe` binary with the `vm` feature is not built there.
+
+Not present: fuzzing of the `maps` parser, a recorded end-to-end run on Linux x86_64, a model quality evaluation set.
 
 ## Unit tests
 
@@ -60,7 +64,7 @@ Not present: CI, fuzzing of the `maps` parser, tests on Linux x86_64, a model qu
 
 - `maps::parses`: the `/proc/<pid>/maps` parser, including names with spaces and the `(deleted)` suffix.
 - System context, Linux (`sysctx`): `stat_with_hostile_name` (a process name with spaces and parentheses does not shift the `stat` fields), `status_and_cmdline`, `addresses_and_tables` (IPv4/IPv6 addresses and states from `/proc/net/tcp`; a row without an inode is skipped; Unix sockets with a name containing a space and without a name), `descriptors_users_and_loader_env` (descriptor kinds, the `(deleted)` suffix; from the environment only code-loading variables are taken, a variable holding a secret is not collected).
-- Threads and modified code, Linux (`sysctx::thread_pc_and_modified_pages`): the instruction address from a thread's `syscall` file (a running thread and malformed data give no address) and the anonymous pages of mappings from `smaps` (a field without a mapping header is ignored).
+- Threads and modified code, Linux (`sysctx::thread_pc_and_modified_pages`): the instruction address from a thread's `syscall` file (a running thread and malformed data give no address) and the anonymous pages of mappings from `smaps` (a field without a mapping header is ignored). The same test covers the recognition of kernel threads by the `PF_KTHREAD` flag: a process that only names itself like a kernel thread, a name containing parentheses and truncated data are not treated as kernel threads.
 - File hashes (`sysctx::hashing_opens_once_and_takes_only_regular_files`): the hash of known content; a directory, a missing file, a character device and a named pipe without a writer give no hash and do not hang the scan.
 - Scanner privileges: `sysctx::scanner_privileges_from_status` (root with `CAP_SYS_PTRACE` full; root without it and an ordinary user limited) and `wintables::scanner_privileges_follow_integrity_and_debug_privilege` (high or system level with `SeDebugPrivilege` full; medium level or no `SeDebugPrivilege` limited).
 - Network paths (`wintables::network_paths_are_never_treated_as_local`): UNC, `\Device\Mup`, `LanmanRedirector`, WebDAV and devices other than a disk volume are not treated as local.
@@ -146,6 +150,21 @@ New in this version (analysis and live reading):
 | `headers_decoded_and_garbage_ignored` | ELF and PE header fields from the byte preview; controls: the `MZ` signature alone, a truncated ELF, random data, a PE header pointer outside the preview |
 
 In addition, the PDF from a sample was opened with an external tool (`pypdf`: 5 pages, text with Polish characters extractable) and viewed after rendering.
+
+### `nanshe-vm` (reading a guest from the hypervisor)
+
+| Test | What it checks |
+|---|---|
+| `page_walk_combines_permissions_like_the_processor` | four-level page tables: write and user access need every level, no-execute needs one; kernel-only and absent pages are skipped; 2 MiB pages; adjacent pages with equal protection are merged; the kernel half is ignored |
+| `page_walk_survives_unreadable_and_looping_tables` | a missing root table, an unreadable lower table (result marked incomplete), a table that points at itself (bounded by the table limit `MAX_TABLES`), tables whose protection changes on every page (the number of ranges is bounded by `MAX_RANGES` and the result is marked incomplete) and a table of the wrong length |
+| `page_ranges_become_regions_split_at_module_borders` | ranges are merged and split at module borders; a module includes one page after its image, up to the 64 KiB boundary and no further; without a module list the region type is unknown |
+| `empty_and_degenerate_input_gives_no_regions` | empty input, zero-sized ranges and modules, clipping at the end of user space |
+| `guest_name_is_read_from_qemu_arguments_only` | the guest name is taken from `-name` of `qemu-system-*` and `qemu-kvm` only; other programs with the same argument are ignored |
+| `symbol_download_is_impossible_without_consent` | with an empty symbol directory and downloading not allowed, loading kernel symbols fails quickly (under 2 seconds), without a connection attempt, and leaves no file in the directory |
+
+The check that the QEMU process found by guest name runs a QEMU program file from a system directory (`/proc/<pid>/exe`) has no unit test.
+
+Added with the tuning from lab scans: `lab_tuning_lowers_only_the_measured_benign_classes` (analyze; every reduced class with controls that keep full weight: `DEL-EXEC` outside package directories and in a process without a verified program file, `HDR` in a small or executable region and in a QEMU tool that is not a hypervisor (`qemu-img`), `MEMFD` under another name or without the system `libffi`; versioned file names on the JIT allowlist; the hypervisor-mode `HDR` rule) and `identical_processes_share_one_row_and_chapter` (report; grouping with controls for different programs and different sets of findings).
 
 ## End-to-end tests
 
@@ -305,9 +324,9 @@ These are observations, not a quality measurement: the trials are small, and an 
 - System context on real programs: the `ctx` sample has one socket, one child and a few files. Processes with thousands of descriptors, containers with their own network namespace and reuse of the parent PID on Windows were not exercised.
 - The appearance of the diagrams for large processes: the address space map was viewed for the samples (26 regions on Linux); the collapsing of long maps is checked only by a unit test.
 - Continuous observation over time: the dynamic samples (`churn`, `sleepmask`) report phases, and the scripts scan in the windows between them; the `--watch` mode that tracks changes of one process does not exist yet.
-
+- `nanshe vm` in an automated test: it needs a KVM host with a running Windows guest. Checked by one manual run; 32-bit guest processes, other Windows versions and swapped-out pages were not exercised.
 - Real malware: all samples are synthetic.
-- False positives on real programs, apart from one `scan --all` measurement on the Windows test host (described in [windows.md](windows.md)). For `X-TMP` there is no measurement at all on a real Linux host.
+- False positives on real programs, apart from one `scan --all` measurement on the Windows test host (described in [windows.md](windows.md)). On Linux there are the full scans of 20 lab hosts (2026-11-23), which led to the reduced weights described in [linux.md](linux.md); the scale of `X-TMP` false positives was not evaluated in them.
 - The tightness of the injection filter: the samples use a phrase that the filter knows; the test proves that the filter is connected to every channel, not that it cannot be bypassed.
 - The `anthropic`, `google`, `openai` backends live.
 - macOS and FreeBSD (no scan backend).

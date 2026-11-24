@@ -62,7 +62,7 @@ The package and the program are not digitally signed: Windows will show an unkno
 - Run as administrator (elevated). The tool enables `SeDebugPrivilege`; without it only the processes of the current user are visible, and the tool prints a warning.
 - Protected processes (PPL, for example LSASS with `RunAsPPL`, antivirus services) are inaccessible to an administrator as well: they are recorded in the result as inaccessible, and the result is partial.
 - The result and the report state the privileges the scanner ran with (account, integrity level, `SeDebugPrivilege`). A scan without elevation or without `SeDebugPrivilege` is marked in the report with a warning on the first page.
-- The SYSTEM account gives no more than an elevated administrator: in two measurements on the test host (2026-11-22) both scans had the same number of inaccessible processes (18, then 20) and the same processes with findings. Protected processes require a different route (a memory dump or reading from the hypervisor).
+- The SYSTEM account gives no more than an elevated administrator: in two measurements on the test host (2026-11-22) both scans had the same number of inaccessible processes (18, then 20) and the same processes with findings. Protected processes require a different route: a memory dump (`nanshe scan <dump-file>`) or, for a guest running under KVM/QEMU, reading from the hypervisor with `nanshe vm` (first version, see [hypervisor.md](hypervisor.md)).
 
 The scanner uses `OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ)`, `VirtualQueryEx` and `ReadProcessMemory`. It writes nothing to the target and injects no code.
 
@@ -118,7 +118,7 @@ nanshe report wynik.json
 
 `MEMFD` and `DEL-EXEC` apply to Linux only.
 
-`THR-PRIV` and `IMG-MOD` are not subject to the reduction for JIT runtimes. The start address comes from `NtQueryInformationThread`, and the page state from `QueryWorkingSetEx` (both read-only). `IMG-MOD` evaluates only the pages present in the working set of the process and does not show what was changed.
+`THR-PRIV` and `IMG-MOD` are not subject to the reduction for JIT runtimes. The start address comes from `NtQueryInformationThread`, and the page state from `QueryWorkingSetEx` (both read-only). `IMG-MOD` evaluates only the pages present in the working set of the process. It compares them with the PE file on disk (relocations applied for the actual load address) and states the number of differing bytes and the address of the first one; when the contents equal the file, an informational finding (10 points) remains, because the identity of the file cannot be confirmed; when the contents could not be compared, the finding says so.
 
 Measurement on the test host (2026-11-22, 240 processes): `IMG-MOD` occurred in 28 regions of 19 processes, including `user32.dll` in 10 processes, `clr.dll` in 9, `ntdll.dll` in 3 (WebView2 processes) and the libraries of the monitoring agent. I did not examine the causes one by one; known benign sources are relocation of libraries without ASLR, Chromium sandbox hooks and the .NET runtime itself. That is why an ordinary library gets 10 points ("info", also together with `ENT-X` in the same code; at 20 points ten ordinary processes became "suspicious"), and only the script security modules (`amsi.dll`, `wldp.dll`), whose modification in memory is typical of bypasses, carry the full severity. `THR-PRIV` did not occur even once in this measurement.
 
@@ -155,7 +155,7 @@ Limitations of this reduction:
 Each item has a sample in `tests/samples` and an expectation in `scripts/e2e.ps1`:
 
 - **`SEC_IMAGE` section from a file outside the system directories** (`ximage`): `MEM_IMAGE` regions are not scored, the payload is invisible.
-- **PE header with a wiped signature** (`pe-corrupt`): `HDR` does not react, `X-PRIV` remains. This is typical behaviour of today's C2 tools; a `HDR-STRIP` detector is planned.
+- **PE header with a corrupted signature and no section table** (`pe-corrupt`): `HDR` does not react, `X-PRIV` remains. A header whose `MZ` and `PE` signatures were wiped while the section table remained is detected by `HDR` in executable regions (`pe-wiped`).
 - **Header off a page boundary in non-executable data**: invisible (deliberately, because copies of headers in ordinary data are an everyday occurrence). In executable regions a header at an offset is detected (`pe-offset`).
 - A process with more than 1 048 576 regions: the first regions up to the limit are scanned, the findings are kept, and the result for the process is marked as incomplete.
 - **Payload behind a guard** (`guard-hide`): the content is invisible, but the region gets `GUARD-X` and `X-PRIV`.

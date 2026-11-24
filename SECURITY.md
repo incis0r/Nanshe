@@ -29,10 +29,11 @@ Please allow a fix to be released before publishing details. If 90 days pass wit
 
 ## In scope
 
-- Memory safety or logic errors in the scanner, parsers (`/proc`, PE and ELF headers, Windows system tables) and report generators.
-- Ways for an examined process to influence the scanner beyond its own findings: code execution, file writes, credential disclosure (for example by making the scanner open a network path), hangs, or hiding other findings.
+- Memory safety or logic errors in the scanner, parsers (`/proc`, PE and ELF headers, Windows system tables, core files and minidumps, guest page tables read by `nanshe vm`) and report generators.
+- Ways for an examined process, a dump file or a virtual machine guest to influence the scanner beyond its own findings: code execution, file writes, credential disclosure (for example by making the scanner open a network path), hangs, or hiding other findings.
 - Injection through untrusted text into the Markdown or PDF report, or into prompts sent to a language model.
 - Leaks of data to a language model beyond the documented data levels, or bypasses of the secret filter and pseudonymisation.
+- Any network connection made by `nanshe vm` without `--fetch-symbols`, or by a build without the `llm` and `vm` features.
 - Weaknesses in the Windows installers (permissions of installed files and directories, tampering with the package).
 
 ## Out of scope
