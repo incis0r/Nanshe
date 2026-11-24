@@ -694,6 +694,14 @@ mod tests {
         assert_eq!(weights(&ffi_shape(1 << 20, "r-x", false), "MEMFD"), [40], "duży region");
         assert_eq!(weights(&ffi_shape(4096, "rwx", false), "MEMFD"), [40], "zapisywalny");
         assert_eq!(weights(&ffi_shape(4096, "r-x", true), "MEMFD"), [40], "wysoka entropia");
+        // region nieprzeczytany (tylko wykonywalny) albo przeczytany częściowo: brak danych to nie "niska entropia"
+        let unread = |prot: &'static str, have: usize| {
+            let mut m = reg(0x30000, 8192, prot, RegionKind::Mapped, Some("memfd:libffi")); m.backing_deleted = true;
+            fake("/usr/bin/python3.11", true, vec![(m, vec![0x90u8; have]), (reg(0x5000000, 8192, "r-x", RegionKind::Mapped, Some("/usr/lib64/libffi.so.8.1.2")), code.clone())])
+        };
+        assert_eq!(weights(&unread("--x", 0), "MEMFD"), [40], "bez prawa odczytu");
+        assert_eq!(weights(&unread("r-x", 4096), "MEMFD"), [40], "odczyt częściowy");
+        assert_eq!(weights(&unread("r-x", 8192), "MEMFD"), [10], "kontrola: odczyt pełny");
         assert_eq!(weights(&ffi("/usr/bin/python3.11", true, None, "memfd:libffi"), "MEMFD"), [40], "proces bez libffi");
         assert_eq!(weights(&ffi("/usr/bin/python3.11", true, Some("/tmp/libffi.so.8"), "memfd:libffi"), "MEMFD"), [40], "libffi spoza katalogu systemowego");
         assert_eq!(weights(&ffi("/usr/bin/python3.11", false, Some("/usr/lib64/libffi.so.8.1.2"), "memfd:libffi"), "MEMFD"), [40], "niepotwierdzony plik programu");

@@ -93,7 +93,10 @@ impl Detector for Memfd {
             // Dodatkowo tylko dla tego, co libffi faktycznie tworzy: mała tablica skoków, niezapisywalna, o niskiej
             // entropii (pomiar: 16 z 16 takich regionów miało 4 KiB, r-x i entropię poniżej 5). Większy, zapisywalny
             // albo gęsty region pod tą nazwą dostaje pełną wagę.
-            let small_table = r.size <= LIBFFI_MAX && !r.is_w() && ctx.page_entropy.iter().all(|e| *e < 6.0);
+            // Ocena zawartości wymaga zawartości: region, którego nie udało się przeczytać w całości (np. tylko
+            // wykonywalny, bez prawa odczytu), nie spełnia warunku i dostaje pełną wagę.
+            let read_fully = ctx.data.len() as u64 == r.size && !ctx.page_entropy.is_empty();
+            let small_table = r.size <= LIBFFI_MAX && !r.is_w() && read_fully && ctx.page_entropy.iter().all(|e| *e < 6.0);
             if ctx.traits.libffi && small_table && r.backing.as_deref() == Some("memfd:libffi") {
                 return vec![ctx.finding(self.id(), "MEMFD", r, r.base, r.size, 10,
                     tr!("wykonywalne mapowanie memfd:libffi w procesie korzystającym z biblioteki libffi (wywołania zwrotne); nazwę mapowania nadaje sam proces",
