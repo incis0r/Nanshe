@@ -525,6 +525,9 @@ struct Shc;
 /// Znaczniki środowisk opartych na Chromium (z listy dozwolonych i z rozpoznania po bibliotekach).
 const CHROMIUM_TOKENS: [&str; 7] = ["jit:webview2", "jit:chrome", "jit:chromium", "jit:msedge", "jit:brave", "jit:electron", "jit:code"];
 
+/// Największy region uznawany za tablicę przejść piaskownicy Chromium.
+const SANDBOX_THUNKS_MAX: u64 = 0x1_0000;
+
 /// Klasa wzorca i adres pierwszego trafienia.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum ShcClass { Peb, ApiHash, SyscallStub, GetPc, StagerPrologue, Execve, Svc }
@@ -616,7 +619,10 @@ impl Detector for Shc {
         // Przeglądarki oparte na Chromium kopiują wejścia do jądra do własnej pamięci w ramach piaskownicy
         // (pomiar: każdy proces WebView2 i QtWebEngine na stacji testowej, 2026-11-24). W procesie rozpoznanym
         // jako taka przeglądarka sama kopia wejścia do jądra nie jest sygnałem; z inną klasą nadal jest.
-        let sandbox = hits.len() == 1 && hits[0].0 == ShcClass::SyscallStub && ctx.allow.map(|a| CHROMIUM_TOKENS.contains(&a)).unwrap_or(false);
+        // Dodatkowo region musi wyglądać jak tablica przejść piaskownicy: mały i niezapisywalny (zmierzone: zawsze
+        // 4 KiB, r-x). Większy albo zapisywalny region z takim kodem zachowuje pełną wagę także w przeglądarce.
+        let sandbox = hits.len() == 1 && hits[0].0 == ShcClass::SyscallStub && r.size <= SANDBOX_THUNKS_MAX && !r.is_w()
+            && ctx.allow.map(|a| CHROMIUM_TOKENS.contains(&a)).unwrap_or(false);
         if sandbox { weight = 10; }
         let first = hits.iter().map(|h| h.1).min().unwrap_or(0);
         let list = hits.iter().map(|h| format!("{} @ {:#x}", h.0.label(), r.base + h.1 as u64)).collect::<Vec<_>>().join("; ");

@@ -814,6 +814,13 @@ mod tests {
             scan_source(&f, &cfg).regions.iter().flat_map(|r| r.findings.iter().filter(|x| x.tag == "SHC").map(|x| x.weight)).collect()
         };
         assert_eq!(browser("/usr/bin/chromium", &stub), [10]);
+        // ten sam kod w regionie zapisywalnym albo dużym nie wygląda jak piaskownica: pełna waga także w przeglądarce
+        let shaped = |prot: &'static str, size: usize| -> Vec<u32> {
+            let mut d = vec![0x90u8; size]; d[64..64 + stub.len()].copy_from_slice(&stub);
+            let f = Fake { name: "p", exe: Some("/usr/bin/chromium"), exe_deleted: false, exe_verified: true, regs: vec![(reg(0x10000, size as u64, prot, RegionKind::Private, None), d)] };
+            scan_source(&f, &cfg).regions.iter().flat_map(|r| r.findings.iter().filter(|x| x.tag == "SHC").map(|x| x.weight)).collect()
+        };
+        assert_eq!((shaped("rwx", 4096), shaped("r-x", 1 << 20)), (vec![20], vec![20]));
         assert_eq!(browser("/usr/bin/chromium", &stub_and_peb), [40]);
         assert_eq!(browser("/usr/bin/sshd", &stub), [20]);
         assert_eq!(browser("/usr/bin/java", &stub), [20], "środowisko JIT, które nie jest przeglądarką");
