@@ -4,14 +4,18 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-24
+
+Second release. Adds process dumps, a differential report, English output, the MSI installer, a first version of reading Windows guests from the KVM host, a first version of macOS live scanning and fuzzing of the parsers of untrusted data. The features marked "first version" are described with their measured limits in `docs/hypervisor.md` and `docs/macos.md`.
+
 ### Added
 
 - Analysis of process memory dumps: Linux core files (64-bit ELF) and Windows minidumps (`nanshe scan <dump-file>`).
 - `IMG-MOD` compares modified code pages with the file on disk (PE relocations applied on Windows) and reports the number of differing bytes and the address of the first one; a private copy with unchanged contents is no longer reported.
 - `HDR` recognises image headers whose signatures were wiped, by the PE section table or the ELF program header table.
 - Sample modes `patch`, `touch`, `hdr-wiped`, `pe-wiped` and end-to-end tests for dumps.
-- `nanshe vm <guest>`: scan of the processes of a running Windows guest from the KVM/QEMU host, without an agent in the guest (optional `vm` build feature, crate `nanshe-vm`). Kernel symbols are read from a local directory; the network is used only with `--fetch-symbols`. The QEMU process of a guest is accepted only when its program file, as reported by the kernel, is `qemu-system-*` or `qemu-kvm` in a system directory; the number of page tables and of page ranges read per guest process is limited. First version, measured on one Windows Server 2025 guest, see `docs/hypervisor.md`.
-- macOS: first version of live process scanning (region map and contents through Mach interfaces, recognition of the system library cache, `RWX`, `X-PRIV`, `ENT-X` and `HDR`), a macOS knowledge base with verification steps, samples and `scripts/e2e-macos.sh`. Access follows what macOS allows; see `docs/macos.md`.
+- `nanshe vm <guest>`: scan of the processes of a running Windows guest from the KVM/QEMU host, without an agent in the guest (optional `vm` build feature, crate `nanshe-vm`). Kernel symbols are read from a local directory; the network is used only with `--fetch-symbols`. The QEMU process of a guest is accepted only when its program file, as reported by the kernel, is `qemu-system-*` or `qemu-kvm` in a system directory; the number of page tables and of page ranges read per guest process is limited. First version, measured on one Windows Server 2025 guest, see `docs/hypervisor.md`. Region borders, types and file names come from the kernel VAD tree; protection comes from page tables read by Nanshe itself, including the user-mode tables of processes under kernel page-table isolation and transition pages.
+- macOS: first version of live process scanning (region map and contents through Mach interfaces, recognition of the system library cache, `RWX`, `X-PRIV`, `ENT-X` and `HDR`), a macOS knowledge base with verification steps, samples and `scripts/e2e-macos.sh`. Access follows what macOS allows; see `docs/macos.md`. The memory map (`nanshe map`) works on macOS as well.
 - Fuzzing of the parsers of untrusted data (`fuzz/`, `scripts/fuzz.sh`): process dumps, PE comparison, guest page tables, the Linux `maps` parser and the detectors; a short run of every target in CI.
 - Report: processes of the same program (same program file and name) with the same set of findings, priority and severity share one overview row ("+N" next to the PID) and one chapter ("and N similar"); repeated scanner notes are listed once.
 - `nanshe vm` validates the symbol file name and identifier reported by the guest before using them in a path, and selects a guest by name only among QEMU processes started by a system account.

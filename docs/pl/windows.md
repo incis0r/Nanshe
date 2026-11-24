@@ -39,8 +39,8 @@ Drugą, zalecaną postacią jest pakiet Instalatora Windows: `nanshe-<wersja>-wi
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\package-msi.ps1 -Bin <katalog z nanshe.exe> -Wix <katalog z candle.exe> -Out dist
-msiexec /i nanshe-0.1.0-windows-x64.msi            # z oknami; cicho: /qn /norestart
-msiexec /x nanshe-0.1.0-windows-x64.msi /qn        # usunięcie (albo "Programy i funkcje")
+msiexec /i nanshe-0.2.0-windows-x64.msi            # z oknami; cicho: /qn /norestart
+msiexec /x nanshe-0.2.0-windows-x64.msi /qn        # usunięcie (albo "Programy i funkcje")
 ```
 
 Pakiet:

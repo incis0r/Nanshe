@@ -6,7 +6,8 @@ Nanshe runs with high privileges (root or an elevated administrator) and reads m
 
 | Version | Supported |
 |---|---|
-| 0.1.x | yes |
+| 0.2.x | yes |
+| 0.1.x | no |
 
 Until version 1.0, only the latest release receives fixes.
 
