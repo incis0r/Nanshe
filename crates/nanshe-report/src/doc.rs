@@ -251,14 +251,22 @@ pub fn build(scan: &ScanResult, llm: Option<&Value>, o: &Options) -> Doc {
     } else {
         let mut order = flagged.clone();
         order.sort_by(|a, c| priority(a, &kb, o.min).0.cmp(priority(c, &kb, o.min).0).then(c.max_severity.cmp(&a.max_severity)).then(top_score(c, o.min).cmp(&top_score(a, o.min))).then(a.info.pid.cmp(&c.info.pid)));
-        let rows = order.iter().map(|p| {
+        // procesy tego samego programu o identycznych cechach zajmują jeden wiersz i jeden rozdział
+        let groups = group_similar(&order, &kb, o.min);
+        let rows = groups.iter().map(|g| {
+            let p = g[0];
             let regs = shown_regions(p, o.min);
             let mut tags: Vec<&str> = regs.iter().flat_map(|r| r.findings.iter().map(|f| f.tag.as_str())).collect();
             tags.sort(); tags.dedup();
-            vec![priority(p, &kb, o.min).0.to_string(), pid_s(p), clean(p.info.name.as_deref().unwrap_or("?")), crate::sev_label(p.max_severity).to_string(),
+            let pid = if g.len() > 1 { format!("{} (+{})", pid_s(p), g.len() - 1) } else { pid_s(p) };
+            vec![priority(p, &kb, o.min).0.to_string(), pid, clean(p.info.name.as_deref().unwrap_or("?")), crate::sev_label(p.max_severity).to_string(),
                 regs.len().to_string(), top_score(p, o.min).to_string(), tags.join(", ")]
         }).collect();
         b.push(Block::Table { head: [tr!("Priorytet", "Priority"), "PID", tr!("Proces", "Process"), tr!("Waga", "Severity"), tr!("Regiony", "Regions"), tr!("Maks. pkt", "Max pts"), tr!("Tagi", "Tags")].map(String::from).to_vec(), rows, widths: vec![1.1, 0.9, 2.5, 1.3, 1.0, 1.1, 3.0] });
+        if groups.len() < order.len() {
+            b.push(Block::Para(trf!("Procesów do weryfikacji jest {}, w {} grupach: procesy tego samego programu z tym samym zestawem cech i priorytetem zajmują jeden wiersz („+N\" przy numerze PID) i mają jeden wspólny rozdział.",
+                "There are {} processes to verify, in {} groups: processes of the same program with the same set of characteristics and priority share one row (\"+N\" next to the PID) and one chapter.", order.len(), groups.len())));
+        }
         b.push(Block::Para(tr!("Priorytet to kolejność weryfikacji (P1 w pierwszej kolejności), wyznaczona z rodzaju znalezisk i kontekstu procesu. Nie jest oceną szkodliwości; uzasadnienie znajduje się w części „Ocena\" każdego procesu.", "Priority is the order of verification (P1 first), derived from the type of findings and the process context. It is not an assessment of maliciousness; the rationale is in the \"Assessment\" section of each process.").into()));
         // rozkład znalezisk wg tagu w pokazanych regionach
         let mut counts: Vec<(String, u32)> = Vec::new();
@@ -270,9 +278,10 @@ pub fn build(scan: &ScanResult, llm: Option<&Value>, o: &Options) -> Doc {
         b.push(Block::Bars(counts.clone()));
         // macierz: które cechy w których procesach (kolumny w kolejności od najczęstszej cechy)
         let cols: Vec<String> = counts.iter().map(|c| c.0.clone()).collect();
-        let rows: Vec<(String, Vec<(u32, Severity)>)> = order.iter().map(|p| {
+        let rows: Vec<(String, Vec<(u32, Severity)>)> = groups.iter().map(|g| {
+            let p = g[0];
             let regs = shown_regions(p, o.min);
-            (format!("{} {}", pid_s(p), clean(p.info.name.as_deref().unwrap_or("?"))), cols.iter().map(|t| {
+            (format!("{} {}{}", pid_s(p), clean(p.info.name.as_deref().unwrap_or("?")), if g.len() > 1 { format!(" (x{})", g.len()) } else { String::new() }), cols.iter().map(|t| {
                 let with: Vec<&&RegionReport> = regs.iter().filter(|r| r.findings.iter().any(|f| &f.tag == t)).collect();
                 (with.len() as u32, with.iter().map(|r| r.severity).max().unwrap_or(Severity::None))
             }).collect())
@@ -286,8 +295,16 @@ pub fn build(scan: &ScanResult, llm: Option<&Value>, o: &Options) -> Doc {
         }
 
         // --- szczegóły
-        for p in order {
-            b.push(Block::H1(trf!("Proces {}: {}", "Process {}: {}", pid_s(p), clean(p.info.name.as_deref().unwrap_or("?")))));
+        for g in &groups {
+            let p = g[0];
+            let similar = if g.len() > 1 { trf!(" (i {} podobnych)", " (and {} similar)", g.len() - 1) } else { String::new() };
+            b.push(Block::H1(trf!("Proces {}: {}{}", "Process {}: {}{}", pid_s(p), clean(p.info.name.as_deref().unwrap_or("?")), similar)));
+            if g.len() > 1 {
+                let mut pids: Vec<String> = g[1..].iter().take(40).map(|x| pid_s(x)).collect();
+                if g.len() - 1 > 40 { pids.push(trf!("... i {} kolejnych", "... and {} more", g.len() - 41)); }
+                b.push(Block::Note(trf!("Ten sam program z tym samym zestawem cech i priorytetem działa w {} innych procesach: PID {}. Poniżej opisany jest jeden z nich; adresy regionów w pozostałych mogą być inne, a ich pełne dane są w pliku wyniku.",
+                    "The same program with the same set of characteristics and priority runs in {} other processes: PID {}. One of them is described below; region addresses in the others may differ, and their full data is in the result file.", g.len() - 1, pids.join(", "))));
+            }
             let mut kv = vec![
                 ("System".to_string(), format!("{}/{}", clean(&p.info.os), clean(&p.info.arch))),
                 (tr!("Plik programu", "Program file").to_string(), match &p.info.exe { Some(e) => format!("{}{}", clean(e), if p.info.exe_deleted { tr!(" (usunięty z dysku)", " (deleted from disk)") } else { "" }), None => tr!("nieznany", "unknown").into() }),
@@ -368,7 +385,9 @@ pub fn build(scan: &ScanResult, llm: Option<&Value>, o: &Options) -> Doc {
     gaps.push(tr!("Podgląd bajtów w raporcie to pierwsze 128 bajtów znaleziska; pełne 256 bajtów jest w pliku wyniku (JSON). Pełnego zrzutu regionu narzędzie nie robi.", "The byte preview in the report is the first 128 bytes of a finding; the full 256 bytes are in the result file (JSON). The tool does not take a full dump of the region.").into());
     let ctx_missing = flagged.iter().filter(|p| p.context.is_none()).count();
     if ctx_missing > 0 { gaps.push(trf!("{ctx_missing} procesów ze znaleziskami nie ma kontekstu systemowego ani mapy pamięci (skan z --no-context, starsza wersja narzędzia albo waga poniżej „podejrzane\").", "{ctx_missing} processes with findings have no system context or memory map (scan with --no-context, an older tool version, or severity below \"suspicious\").")); }
-    for p in &flagged { for n in p.context.iter().flat_map(|c| &c.notes) { gaps.push(trf!("Proces {}: {}", "Process {}: {}", pid_s(p), clean(n))); } }
+    // uwagi skanera powtarzają się między procesami tego samego programu: każda treść raz
+    let mut seen_notes: Vec<String> = Vec::new();
+    for p in &flagged { for n in p.context.iter().flat_map(|c| &c.notes).filter(|n| { let new = !seen_notes.contains(n); if new { seen_notes.push((*n).clone()); } new }) { gaps.push(trf!("Proces {}: {}", "Process {}: {}", pid_s(p), clean(n))); } }
     gaps.push(tr!("Kontekst systemowy to stan z chwili skanu: połączenia zamknięte wcześniej, zakończone procesy potomne i usunięte pliki nie są widoczne. Historii (logów, dziennika audytu) raport nie obejmuje.", "System context is the state at scan time: connections closed earlier, child processes that have exited and deleted files are not visible. The report does not cover history (logs, audit trail).").into());
     gaps.push(tr!("Skan obejmuje pamięć procesów w chwili skanu; nie obejmuje jądra, treści plików na dysku ani zawartości ruchu sieciowego.", "The scan covers process memory at scan time; it does not cover the kernel, the contents of files on disk or the contents of network traffic.").into());
     if scan.files.is_empty() { gaps.push(tr!("Wynik nie zawiera skrótów SHA-256 plików (skan z --no-hashes albo starsza wersja narzędzia).", "The result contains no SHA-256 file hashes (scan with --no-hashes or an older tool version).").into()); }
@@ -947,6 +966,46 @@ mod tests {
     }
 
     #[test]
+    fn identical_processes_share_one_row_and_chapter() {
+        let mk = |pid: u32, name: &str, n: u64| {
+            let layout: Vec<Region> = (0..n).map(|i| region(0x10_0000 + i * 0x10_0000, 0x1000, "rwx", RegionKind::Private, None)).collect();
+            let bases: Vec<u64> = layout.iter().map(|r| r.base).collect();
+            let mut p = proc_with(layout, &bases);
+            p.info.pid = Some(pid); p.info.name = Some(name.into()); p.info.exe = Some(format!("/usr/sbin/{name}"));
+            p
+        };
+        // trzy procesy tego samego programu z tym samym zestawem cech (liczba regionów może się różnić) i jeden inny
+        let mut scan = scan_of(mk(10, "apache2", 1));
+        scan.processes.push(mk(11, "apache2", 1));
+        scan.processes.push(mk(12, "apache2", 2));
+        scan.processes.push(mk(20, "sshd", 1));
+        let d = build(&scan, None, &opts());
+        let chapters: Vec<&String> = d.blocks.iter().filter_map(|b| if let Block::H1(t) = b { Some(t) } else { None }).filter(|t| t.contains("Proces ")).collect();
+        assert_eq!(chapters.len(), 2, "{chapters:?}");
+        assert!(chapters.iter().any(|t| t.contains("apache2 (i 2 podobnych)")) && chapters.iter().any(|t| t.contains("sshd") && !t.contains("podobnych")), "{chapters:?}");
+        let text = doc_text(&d);
+        for want in ["(+2)", "w 2 grupach", "działa w 2 innych procesach: PID "] { assert!(text.contains(want), "brak: {want}\n{text}"); }
+        // wszystkie numery PID grupy są w raporcie: jeden w tytule rozdziału, pozostałe w uwadze
+        let group: Vec<&str> = ["10", "11", "12"].into_iter().filter(|p| chapters.iter().any(|t| t.contains(&format!("Proces {p}:"))) || text.contains(&format!("PID {p}")) || text.contains(&format!(", {p}"))).collect();
+        assert_eq!(group.len(), 3, "{text}");
+        // podsumowanie liczy procesy, nie grupy
+        assert!(text.contains("4 (P1"), "{text}");
+        // kontrola: różne programy nie są łączone i nie ma wzmianki o grupach
+        let mut two = scan_of(mk(10, "apache2", 1));
+        two.processes.push(mk(20, "sshd", 1));
+        let t2 = doc_text(&build(&two, None, &opts()));
+        assert!(!t2.contains("grupach") && !t2.contains("(+") && !t2.contains("podobnych)"), "{t2}");
+        // kontrola: ten sam program z innym zestawem cech to osobna grupa
+        let mut other = mk(13, "apache2", 1);
+        other.regions[0].findings[0].tag = "X-PRIV".into();
+        let mut mixed = scan_of(mk(10, "apache2", 1));
+        mixed.processes.push(other);
+        let dm = build(&mixed, None, &opts());
+        let hm: Vec<&String> = dm.blocks.iter().filter_map(|b| if let Block::H1(t) = b { Some(t) } else { None }).filter(|t| t.contains("Proces ")).collect();
+        assert!(hm.len() == 2 && hm.iter().all(|t| !t.contains("podobnych")), "{hm:?}");
+    }
+
+    #[test]
     fn overview_matrix_tree_scatter_and_hashes() {
         let mk = |pid: u32, name: &str, n: u64, parent: u32| {
             let layout: Vec<Region> = (0..n).map(|i| region(0x10_0000 + i * 0x10_0000, 0x1000 << i, "rwx", RegionKind::Private, None))
@@ -1280,6 +1339,23 @@ fn flow(b: &mut Vec<Block>, p: &ProcessReport, c: &ProcessContext, regs: &[&Regi
     b.push(Block::Flow { regions, process: format!("{} {}{}", pid_s(p), clean(p.info.name.as_deref().unwrap_or("?")), who), endpoints });
 }
 
+/// Grupy procesów, które w raporcie wyglądają tak samo: ten sam plik programu i nazwa, ten sam zestaw
+/// cech w pokazanych regionach i ten sam priorytet. Kolejność grup i procesów w grupie jak w `order`.
+/// Pierwszy proces grupy jest opisywany w całości, pozostałe są przy nim wymienione.
+pub fn group_similar<'a>(order: &[&'a ProcessReport], kb: &Kb, min: Severity) -> Vec<Vec<&'a ProcessReport>> {
+    let key = |p: &ProcessReport| {
+        let mut t: Vec<String> = shown_regions(p, min).iter().flat_map(|r| r.findings.iter().map(|f| f.tag.clone())).collect();
+        t.sort(); t.dedup();
+        (p.info.exe.clone().unwrap_or_default(), p.info.name.clone().unwrap_or_default(), t, priority(p, kb, min).0, p.max_severity)
+    };
+    let mut groups: Vec<(_, Vec<&ProcessReport>)> = Vec::new();
+    for p in order {
+        let k = key(p);
+        match groups.iter_mut().find(|g| g.0 == k) { Some(g) => g.1.push(p), None => groups.push((k, vec![p])) }
+    }
+    groups.into_iter().map(|g| g.1).collect()
+}
+
 /// Cechy, których nie tłumaczy samo środowisko kompilujące kod w locie.
 const STRONG_TAGS: [&str; 4] = ["THR-PRIV", "HDR", "MEMFD", "GUARD-X"];
 
@@ -1293,7 +1369,9 @@ const STRONG_TAGS: [&str; 4] = ["THR-PRIV", "HDR", "MEMFD", "GUARD-X"];
 /// - P3: pozostałe.
 pub fn priority(p: &ProcessReport, kb: &Kb, min: Severity) -> (&'static str, Vec<String>, String) {
     let regs = shown_regions(p, min);
-    let has = |t: &str| regs.iter().any(|r| r.findings.iter().any(|f| f.tag == t));
+    // cecha o wadze obniżonej przez detektor (np. memfd biblioteki libffi, nagłówek w pamięci maszyny wirtualnej)
+    // nie wymusza najwyższego priorytetu
+    let has = |t: &str| regs.iter().any(|r| r.findings.iter().any(|f| f.tag == t && f.weight >= 30));
     let strong: Vec<&str> = STRONG_TAGS.iter().copied().filter(|t| has(t)).collect();
     let patched_guard = regs.iter().any(|r| r.findings.iter().any(|f| f.tag == "IMG-MOD" && f.weight >= 40));
     let runtime = runtime_of(kb, p);
@@ -1369,11 +1447,13 @@ fn executive_summary(b: &mut Vec<Block>, scan: &ScanResult, kb: &Kb, o: &Options
     if !flagged.is_empty() {
         let mut top: Vec<&&ProcessReport> = flagged.iter().collect();
         top.sort_by(|a, c| priority(a, kb, o.min).0.cmp(priority(c, kb, o.min).0).then(top_score(c, o.min).cmp(&top_score(a, o.min))).then(a.info.pid.cmp(&c.info.pid)));
-        let rows: Vec<Vec<String>> = top.iter().take(5).map(|p| { let (prio, why, _) = priority(p, kb, o.min);
-            vec![prio.to_string(), format!("{} {}", pid_s(p), clean(p.info.name.as_deref().unwrap_or("?"))), why.first().cloned().unwrap_or_default()] }).collect();
+        let top_refs: Vec<&ProcessReport> = top.iter().map(|p| **p).collect();
+        let top_groups = group_similar(&top_refs, kb, o.min);
+        let rows: Vec<Vec<String>> = top_groups.iter().take(5).map(|g| { let p = g[0]; let (prio, why, _) = priority(p, kb, o.min);
+            vec![prio.to_string(), format!("{} {}{}", pid_s(p), clean(p.info.name.as_deref().unwrap_or("?")), if g.len() > 1 { format!(" (x{})", g.len()) } else { String::new() }), why.first().cloned().unwrap_or_default()] }).collect();
         b.push(Block::H3(tr!("Najważniejsze procesy", "Key processes").into()));
         b.push(Block::Table { head: [tr!("Priorytet", "Priority"), tr!("Proces", "Process"), tr!("Dlaczego", "Why")].map(String::from).to_vec(), rows, widths: vec![0.9, 2.2, 6.0] });
-        if flagged.len() > 5 { b.push(Block::Para(trf!("Pozostałe {} procesów jest w rozdziale „Przegląd procesów\".", "The remaining {} process(es) are in the chapter \"Process overview\".", flagged.len() - 5))); }
+        if top_groups.len() > 5 { b.push(Block::Para(trf!("Pozostałe grupy procesów ({}) są w rozdziale „Przegląd procesów\".", "The remaining process groups ({}) are in the chapter \"Process overview\".", top_groups.len() - 5))); }
     }
 
     let mut actions: Vec<String> = Vec::new();

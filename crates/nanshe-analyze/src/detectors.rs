@@ -83,11 +83,23 @@ impl Detector for Memfd {
     fn applies(&self, i: &nanshe_core::SourceInfo) -> bool { i.os == "linux" }
     fn scan(&self, r: &Region, _d: &[u8], ctx: &Ctx) -> Vec<Finding> {
         if r.is_x() && is_memfd(r) {
+            // Biblioteka libffi (wywołania zwrotne w Pythonie, GNOME i innych) tworzy wykonywalne mapowania memfd
+            // o nazwie "libffi". Pomiar na 20 hostach Linux (2026-11-23): wszystkie 19 mapowań memfd miały tę nazwę.
+            // Nazwę nadaje sam proces, więc obniżka dotyczy tylko procesu z potwierdzonym plikiem programu, który
+            // faktycznie ma zmapowaną libffi; kod wstrzyknięty do takiego procesu mógłby się pod nią podszyć.
+            if ctx.traits.libffi && r.backing.as_deref() == Some("memfd:libffi") {
+                return vec![ctx.finding(self.id(), "MEMFD", r, r.base, r.size, 10,
+                    tr!("wykonywalne mapowanie memfd:libffi w procesie korzystającym z biblioteki libffi (wywołania zwrotne); nazwę mapowania nadaje sam proces",
+                        "executable mapping memfd:libffi in a process that uses the libffi library (callbacks); the mapping name is chosen by the process itself").into())];
+            }
             vec![ctx.finding(self.id(), "MEMFD", r, r.base, r.size, 40,
                 trf!("wykonywalne mapowanie {}", "executable mapping {}", r.backing.as_deref().unwrap_or("memfd:")))]
         } else { vec![] }
     }
 }
+
+/// Katalogi, do których instalują pakiety systemu i oprogramowanie dodatkowe (zapis wymaga uprawnień root).
+const PACKAGE_DIRS: [&str; 7] = ["/usr/", "/lib/", "/lib64/", "/opt/", "/bin/", "/sbin/", "/snap/"];
 
 struct DelExec;
 impl Detector for DelExec {
@@ -95,8 +107,19 @@ impl Detector for DelExec {
     fn applies(&self, i: &nanshe_core::SourceInfo) -> bool { i.os == "linux" || i.os == "freebsd" }
     fn scan(&self, r: &Region, _d: &[u8], ctx: &Ctx) -> Vec<Finding> {
         if r.is_x() && r.backing_deleted && !is_memfd(r) {
+            let path = r.backing.as_deref().unwrap_or("?");
+            // Plik z katalogu, do którego instalują pakiety: aktualizacja usuwa starą wersję biblioteki, a proces
+            // używa jej do restartu. Pomiar na 20 hostach Linux (2026-11-23): 3660 z 3662 takich regionów.
+            // To informacja dla administratora (usługa wymaga restartu), a nie ślad ukrywania kodu.
+            // Sama ścieżka nie wystarcza: proces w kontenerze ma własne /usr, do którego może pisać. Obniżka
+            // dotyczy więc tylko procesu z potwierdzonym plikiem programu (ten sam plik, który widzi skaner).
+            if ctx.info.exe_verified && !ctx.info.exe_deleted && PACKAGE_DIRS.iter().any(|d| path.starts_with(d)) && !path.contains("/../") {
+                return vec![ctx.finding(self.id(), "DEL-EXEC", r, r.base, r.size, 10,
+                    trf!("wykonywalne mapowanie pliku {path} usuniętego z katalogu pakietów: zwykle biblioteka zaktualizowana na dysku, proces używa starej wersji do restartu",
+                         "executable mapping of file {path} deleted from a package directory: usually a library updated on disk, the process uses the old version until restarted"))];
+            }
             vec![ctx.finding(self.id(), "DEL-EXEC", r, r.base, r.size, 30,
-                trf!("wykonywalne mapowanie usuniętego pliku {}", "executable mapping of deleted file {}", r.backing.as_deref().unwrap_or("?")))]
+                trf!("wykonywalne mapowanie usuniętego pliku {path}", "executable mapping of deleted file {path}"))]
         } else { vec![] }
     }
 }
@@ -198,11 +221,19 @@ impl Detector for EntX {
 
 pub(crate) fn round2(v: f32) -> f32 { (v * 100.0).round() / 100.0 }
 
+/// Najmniejszy region danych procesu hiperwizora traktowany jako pamięć maszyny wirtualnej.
+const GUEST_RAM_MIN: u64 = 16 << 20;
+
 struct Hdr;
 impl Detector for Hdr {
     fn id(&self) -> &'static str { "hdr" }
     fn scan(&self, r: &Region, d: &[u8], ctx: &Ctx) -> Vec<Finding> {
         if r.backing.is_some() || is_kernel_special(r) { return vec![]; }
+        // Odczyt z hiperwizora zna tylko moduły z listy programu ładującego: plików zmapowanych jako dane
+        // (biblioteki zasobów, pliki językowe) nie odróżni od pamięci prywatnej, a każdy z nich zaczyna się
+        // nagłówkiem. Pomiar na kontrolerze domeny LAB (2026-11-23): 466 takich regionów w 96 procesach.
+        // Dlatego w tym trybie nagłówek liczy się tylko w regionie wykonywalnym.
+        if ctx.info.source_type == "vm" && !r.is_x() { return vec![]; }
         // Niewykonywalny stos pomijamy: program ładujący trzyma na nim kopię nagłówka każdej ładowanej
         // biblioteki, a przy losowym położeniu stosu kopia co jakiś czas wypada na początku strony
         // (zaobserwowane w e2e na próbce delexec, 2026-11-22).
@@ -222,6 +253,17 @@ impl Detector for Hdr {
             let found = if candidate { header_kind(&d[i..(i + PAGE).min(d.len())]).filter(|k| aligned || *k != "Mach-O") } else { None };
             if let Some(fmt) = found {
                 let addr = r.base + i as u64;
+                // Proces hiperwizora QEMU trzyma pamięć maszyn wirtualnych w dużych regionach danych: nagłówki
+                // programów działających w gościu są tam normalne (pomiar 2026-11-23: wszystkie HDR na pięciu
+                // hiperwizorach LAB). Region wykonywalny albo mały nadal dostaje pełną wagę.
+                if ctx.traits.vm_host && !r.is_x() && r.size >= GUEST_RAM_MIN {
+                    let mut f = ctx.finding(self.id(), "HDR", r, addr, PAGE as u64, 10,
+                        trf!("nagłówek {fmt} w dużym regionie danych procesu hiperwizora: najpewniej pamięć maszyny wirtualnej, a nie kod samego procesu",
+                             "{fmt} header in a large data region of a hypervisor process: most likely virtual machine memory, not code of the process itself"));
+                    f.id = format!("{}:{:x}:HDR", ctx.pid_str(), addr);
+                    out.push(f);
+                    break; // jeden wpis na region: pamięć gościa zawiera wiele nagłówków
+                }
                 let reason = if aligned { trf!("nagłówek {fmt} w regionie bez pliku źródłowego", "{fmt} header in a region not backed by a file") }
                     else { trf!("nagłówek {fmt} w regionie bez pliku źródłowego, {:#x} bajtów za początkiem strony", "{fmt} header in a region not backed by a file, {:#x} bytes past the start of a page", i % PAGE) };
                 let mut f = ctx.finding(self.id(), "HDR", r, addr, PAGE as u64, 40, reason);

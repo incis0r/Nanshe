@@ -38,8 +38,12 @@ impl Default for Config {
             ent_high: 7.2,
             ent_very_high: 7.8,
             ent_file_fraction: 0.25,
+            // Programy, które same tworzą kod w trakcie pracy. Druga grupa pochodzi z pomiaru na 20 hostach
+            // Linux (2026-11-23): serwer WWW i PHP (wyrażenia regularne PCRE kompilowane w locie), powłoka
+            // GNOME i gjs (silnik JavaScript), interpreter Pythona (libffi, a od 3.13 własny JIT).
             allow_jit: ["node", "java", "dotnet", "firefox", "firefox-esr", "chrome", "chromium",
-                "msedge", "brave", "electron", "code", "pwsh", "powershell", "qemu-system-x86_64", "luajit"]
+                "msedge", "brave", "electron", "code", "pwsh", "powershell", "qemu-system-x86_64", "luajit",
+                "apache2", "httpd", "php", "php-fpm", "gjs", "gjs-console", "gnome-shell", "gnome-terminal-server", "python", "uwsgi"]
                 .iter().map(|s| s.to_string()).collect(),
             allow_jit_dirs: ["/usr/", "/opt/", "/bin/", "/sbin/", "/snap/"].iter().map(|s| s.to_string()).collect(),
             keep_layout: false,
@@ -70,6 +74,7 @@ pub struct Ctx<'a> {
     pub threads: &'a [ThreadInfo],
     /// zmieniony kod z pliku w tym regionie: (bajty, adres pierwszej strony)
     pub modified: Option<CodeChange>,
+    pub traits: ProcTraits,
     data: &'a [u8],
 }
 impl<'a> Ctx<'a> {
@@ -147,8 +152,31 @@ fn jit_allow(cfg: &Config, info: &SourceInfo) -> Option<String> {
     let exe = info.exe.as_deref()?;
     if !info.exe_verified || info.exe_deleted || exe.contains("/../") || !cfg.allow_jit_dirs.iter().any(|d| exe.starts_with(d.as_str())) { return None; }
     let base = exe.rsplit('/').next()?.to_lowercase();
+    // Nazwa pliku bywa z numerem wersji (python3.14, php-fpm8.2): porównujemy też nazwę bez końcowych cyfr i kropek.
+    let stem = base.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
     // Do raportu (i dalej do modelu) trafia stały token z listy, nie ścieżka z badanego systemu.
-    cfg.allow_jit.iter().find(|a| a.as_str() == base).map(|a| format!("jit:{a}"))
+    cfg.allow_jit.iter().find(|a| a.as_str() == base || (!stem.is_empty() && a.as_str() == stem)).map(|a| format!("jit:{a}"))
+}
+
+/// Cechy procesu ustalone raz z pliku programu i mapy regionów; zmieniają opis i wagę niektórych znalezisk.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ProcTraits {
+    /// Proces hiperwizora QEMU: jego duże regiony danych to pamięć maszyn wirtualnych.
+    pub vm_host: bool,
+    /// Proces ma zmapowaną bibliotekę libffi z katalogu systemowego (tworzy wykonywalne mapowania memfd o nazwie "libffi").
+    pub libffi: bool,
+}
+
+/// Tylko Linux i tylko dla potwierdzonego pliku programu z katalogu systemowego (te same warunki co obniżka JIT).
+fn proc_traits(cfg: &Config, info: &SourceInfo, regions: &[Region]) -> ProcTraits {
+    let Some(exe) = info.exe.as_deref() else { return ProcTraits::default() };
+    if info.os != "linux" || !info.exe_verified || info.exe_deleted || exe.contains("/../") || !cfg.allow_jit_dirs.iter().any(|d| exe.starts_with(d.as_str())) { return ProcTraits::default(); }
+    let base = exe.rsplit('/').next().unwrap_or("");
+    let sys_lib = |p: &str| ["/usr/lib/", "/usr/lib64/", "/lib/", "/lib64/"].iter().any(|d| p.starts_with(d)) && !p.contains("/../");
+    ProcTraits {
+        vm_host: base.starts_with("qemu-system-") || base == "qemu-kvm",
+        libffi: regions.iter().any(|r| r.is_x() && r.backing.as_deref().map(|b| sys_lib(b) && b.rsplit('/').next().unwrap_or("").starts_with("libffi.so")).unwrap_or(false)),
+    }
 }
 
 pub fn scan_source(src: &dyn MemorySource, cfg: &Config) -> ProcessReport {
@@ -169,6 +197,7 @@ pub fn scan_source(src: &dyn MemorySource, cfg: &Config) -> ProcessReport {
     let dets: Vec<_> = detectors::all().into_iter().filter(|d| d.applies(&info)).collect();
     let threads = src.threads();
     let allow = if info.os == "windows" { jit_allow_windows(&info, &regions) } else { jit_allow(cfg, &info) };
+    let traits = proc_traits(cfg, &info, &regions);
     rep.regions_total = regions.len() as u64;
 
     for r in &regions {
@@ -184,7 +213,7 @@ pub fn scan_source(src: &dyn MemorySource, cfg: &Config) -> ProcessReport {
         let here: Vec<ThreadInfo> = threads.iter().filter(|t| t.addr >= r.base && t.addr < end).cloned().collect();
         // pytamy tylko o wykonywalny, niezapisywalny kod z pliku: tam zmiana w pamięci jest nietypowa
         let modified = if r.backing.is_some() && r.is_x() && !r.is_w() { src.modified_code(r).filter(|m| m.bytes > 0 || (m.compared && !m.verified)) } else { None };
-        let ctx = Ctx { info: &info, cfg, page_entropy: &stats.entropy, threads: &here, modified, data: &data };
+        let ctx = Ctx { info: &info, cfg, page_entropy: &stats.entropy, threads: &here, modified, traits, data: &data };
 
         let mut findings: Vec<Finding> = dets.iter().flat_map(|d| d.scan(r, &data, &ctx)).collect();
         if findings.is_empty() && !(cfg.heatmap && !data.is_empty()) { continue; }
@@ -630,4 +659,70 @@ mod tests {
         cfg.preview_bytes = 0;
         assert!(scan_source(&f, &cfg).regions[0].findings.iter().all(|f| f.bytes_hex.is_none()));
     }
+    /// Strojenie z pomiaru na 20 hostach Linux: każda reguła ma kontrole, w których pełna waga zostaje.
+    #[test]
+    fn lab_tuning_lowers_only_the_measured_benign_classes() {
+        let cfg = Config::default();
+        let weights = |f: &Fake, tag: &str| -> Vec<u32> { scan_source(f, &cfg).regions.iter().flat_map(|r| r.findings.iter().filter(|x| x.tag == tag).map(|x| x.weight)).collect() };
+        let fake = |exe: &'static str, verified: bool, regs: Vec<(Region, Vec<u8>)>| Fake { name: "p", exe: Some(exe), exe_deleted: false, exe_verified: verified, regs };
+        let code = vec![0x90u8; 8192];
+
+        // 1. usunięty plik z katalogu pakietów: informacja o potrzebie restartu, nie "podejrzane"
+        let del = |path: &'static str| { let mut r = reg(0x10000, 8192, "r-x", RegionKind::Mapped, Some(path)); r.backing_deleted = true; fake("/usr/sbin/sshd", true, vec![(r, code.clone())]) };
+        assert_eq!(weights(&del("/usr/lib64/libssl.so.3.2.2"), "DEL-EXEC"), [10]);
+        for other in ["/tmp/x.so", "/home/u/.cache/x.so", "/dev/shm/x", "/usr/../tmp/x.so", "/var/lib/app/x.so"] { assert_eq!(weights(&del(other), "DEL-EXEC"), [30], "{other}"); }
+        // proces bez potwierdzonego pliku programu (np. z kontenera z własnym /usr): pełna waga
+        let mut unverified = del("/usr/lib64/libssl.so.3.2.2"); unverified.exe_verified = false;
+        assert_eq!(weights(&unverified, "DEL-EXEC"), [30]);
+
+        // 2. memfd o nazwie libffi w procesie, który ma zmapowaną libffi: niska waga
+        let ffi = |exe: &'static str, verified: bool, lib: Option<&'static str>, memfd: &'static str| {
+            let mut m = reg(0x30000, 8192, "r-x", RegionKind::Mapped, Some(memfd)); m.backing_deleted = true;
+            let mut regs = vec![(m, code.clone())];
+            if let Some(l) = lib { regs.push((reg(0x50000, 8192, "r-x", RegionKind::Mapped, Some(l)), code.clone())); }
+            fake(exe, verified, regs)
+        };
+        assert_eq!(weights(&ffi("/usr/bin/python3.11", true, Some("/usr/lib64/libffi.so.8.1.2"), "memfd:libffi"), "MEMFD"), [10]);
+        assert_eq!(weights(&ffi("/usr/bin/python3.11", true, Some("/usr/lib64/libffi.so.8.1.2"), "memfd:payload"), "MEMFD"), [40], "inna nazwa mapowania");
+        assert_eq!(weights(&ffi("/usr/bin/python3.11", true, None, "memfd:libffi"), "MEMFD"), [40], "proces bez libffi");
+        assert_eq!(weights(&ffi("/usr/bin/python3.11", true, Some("/tmp/libffi.so.8"), "memfd:libffi"), "MEMFD"), [40], "libffi spoza katalogu systemowego");
+        assert_eq!(weights(&ffi("/usr/bin/python3.11", false, Some("/usr/lib64/libffi.so.8.1.2"), "memfd:libffi"), "MEMFD"), [40], "niepotwierdzony plik programu");
+        assert_eq!(weights(&ffi("/home/u/python3.11", true, Some("/usr/lib64/libffi.so.8.1.2"), "memfd:libffi"), "MEMFD"), [40], "program spoza katalogów systemowych");
+
+        // 3. nagłówek programu w dużym regionie danych procesu QEMU: pamięć maszyny wirtualnej
+        let guest = |exe: &'static str, size: usize, prot: &'static str| {
+            let mut d = vec![0u8; size];
+            for at in [0usize, 4096 * 3] { if at + 64 <= size { d[at..at + 4].copy_from_slice(b"\x7fELF"); d[at + 4] = 2; d[at + 5] = 1; d[at + 6] = 1; d[at + 16] = 3; } }
+            fake(exe, true, vec![(reg(0x7f00_0000_0000, size as u64, prot, RegionKind::Private, None), d)])
+        };
+        assert_eq!(weights(&guest("/usr/libexec/qemu-kvm", 16 << 20, "rw-"), "HDR"), [10], "jeden wpis na region o niskiej wadze");
+        assert_eq!(weights(&guest("/usr/bin/qemu-system-x86_64", 16 << 20, "rw-"), "HDR"), [10]);
+        assert_eq!(weights(&guest("/usr/sbin/sshd", 16 << 20, "rw-"), "HDR"), [40, 40], "zwykły proces");
+        assert_eq!(weights(&guest("/usr/bin/qemu-img", 16 << 20, "rw-"), "HDR"), [40, 40], "narzędzie QEMU, które nie jest hiperwizorem");
+        assert_eq!(weights(&guest("/usr/libexec/qemu-kvm", 16384, "rw-"), "HDR"), [40, 40], "mały region w procesie hiperwizora");
+        assert_eq!(weights(&guest("/usr/libexec/qemu-kvm", 16 << 20, "r-x"), "HDR"), [40, 40], "region wykonywalny w procesie hiperwizora");
+
+        // 3b. odczyt z hiperwizora: nagłówek liczy się tylko w regionie wykonywalnym
+        struct Vm(Fake);
+        impl MemorySource for Vm {
+            fn info(&self) -> SourceInfo { SourceInfo { os: "windows".into(), source_type: "vm".into(), ..self.0.info() } }
+            fn regions(&self) -> nanshe_core::Result<Vec<Region>> { self.0.regions() }
+            fn read_at(&self, a: u64, b: &mut [u8]) -> nanshe_core::Result<usize> { self.0.read_at(a, b) }
+        }
+        let vm_hdr = |prot: &'static str| -> usize { scan_source(&Vm(guest("/usr/sbin/sshd", 16384, prot)), &cfg).regions.iter().flat_map(|r| &r.findings).filter(|x| x.tag == "HDR").count() };
+        assert_eq!((vm_hdr("rw-"), vm_hdr("r-x")), (0, 2));
+
+        // 4. interpretery i programy z własną kompilacją w locie: obniżka także dla nazw z numerem wersji
+        let rwx = |exe: &'static str, verified: bool| scan_source(&fake(exe, verified, vec![(reg(0x10000, 8192, "rwx", RegionKind::Private, None), code.clone())]), &cfg);
+        for exe in ["/usr/bin/python3.14", "/usr/sbin/php-fpm8.2", "/usr/sbin/apache2", "/usr/bin/gnome-shell"] {
+            let p = rwx(exe, true);
+            assert!(p.regions[0].allowlisted.is_some() && p.regions[0].score == 20, "{exe}: {:?} {}", p.regions[0].allowlisted, p.regions[0].score);
+        }
+        assert_eq!(rwx("/usr/bin/python3.14", true).regions[0].allowlisted.as_deref(), Some("jit:python"));
+        for (exe, verified) in [("/usr/bin/python3.14", false), ("/usr/bin/pythonista", true), ("/home/u/python3.14", true), ("/usr/bin/3.14", true)] {
+            let p = rwx(exe, verified);
+            assert!(p.regions[0].allowlisted.is_none() && p.regions[0].score == 60, "{exe} {verified}");
+        }
+    }
+
 }
