@@ -32,9 +32,35 @@ check clean      0 ""                 # program bez niczego: biblioteki systemow
 check data-noise 0 ""                 # wysoka entropia w danych to nie znalezisko
 check rx-stage   1 "ENT-X,X-PRIV"     # ładunek zapisany, potem przełączony na wykonywalny
 check rx-lowent  1 "X-PRIV"           # to samo bez wysokiej entropii
+check shc        1 "SHC,X-PRIV"       # kod o niskiej entropii z bezpośrednim wywołaniem jądra
 check macho      1 "ENT-X,HDR,X-PRIV" # nagłówek Mach-O w pamięci bez pliku
 check jit        1 "RWX,X-PRIV"       # region kompilatora JIT: jedyna pamięć RWX na Apple Silicon
 check all        1 "ENT-X,HDR,X-PRIV"
+
+# Program z utwardzonym środowiskiem i uprawnieniem allow-jit (jak przeglądarka): system sam zezwala mu na region
+# JIT, więc waga jest obniżona i proces nie przekracza progu. Ta sama próbka bez takiego podpisu (wyżej) go przekracza.
+SJ="$OUT/nanshe-sample-jit"
+cp "$S" "$SJ" && codesign -f -s - --options runtime --entitlements packaging/macos/sample-jit.entitlements "$SJ" 2>/dev/null
+"$SJ" jit 30 > /dev/null 2>&1 & spid=$!; sleep 0.7
+"$N" scan --pid "$spid" --min info --json "$OUT/jit-allowed.json" > /dev/null 2> "$OUT/jit-allowed.txt"
+"$N" scan --pid "$spid" --json /dev/null > /dev/null 2>&1; rc=$?
+{ kill "$spid"; wait "$spid"; } 2>/dev/null
+res=OK
+[ "$rc" = 0 ] || { res=FAIL; echo "  kod=$rc (oczek. 0)"; }
+grep -q '"allowlisted": "jit:macos-allow-jit"' "$OUT/jit-allowed.json" || { res=FAIL; echo "  brak dowodu allow-jit w wyniku"; tail -2 "$OUT/jit-allowed.txt" | cut -c1-200; }
+grep -q '"tag": "RWX"' "$OUT/jit-allowed.json" || { res=FAIL; echo "  region RWX nie został odnotowany"; }
+[ $res = OK ] || fail=1
+echo "region JIT z uprawnieniem systemu (obnizona waga): $res"
+# kontekst procesu: rodzic, wiersz poleceń, podpis kodu
+res=OK
+"$S" rx-stage 30 > /dev/null 2>&1 & spid=$!; sleep 0.7
+"$N" scan --pid "$spid" --json "$OUT/ctx.json" > /dev/null 2>&1
+{ kill "$spid"; wait "$spid"; } 2>/dev/null
+for want in '"ppid"' '"cmdline": ".*nanshe-sample rx-stage 30"' '"started"' '"threads"' 'podpis kodu' 'bez utwardzonego' '"ancestors"' '"host_info"' '"os": "macOS '; do
+  grep -q -- "$want" "$OUT/ctx.json" || { res=FAIL; echo "  brak w kontekście: $want"; }
+done
+[ $res = OK ] || fail=1
+echo "kontekst procesu i podpis kodu: $res"
 
 # proces chroniony przez system: odmowa dostępu z czytelnym komunikatem, kod 2
 "$N" scan --pid 1 --json "$OUT/launchd.json" > /dev/null 2> "$OUT/launchd.txt"; rc=$?

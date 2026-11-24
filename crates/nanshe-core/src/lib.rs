@@ -190,6 +190,9 @@ pub trait MemorySource {
     /// Ile bajtów kodu z pliku zostało w tym regionie zmienionych w pamięci (strony, które przestały
     /// być współdzielone z plikiem) i adres pierwszej takiej strony, jeśli znany. None: źródło tego nie wie.
     fn modified_code(&self, _r: &Region) -> Option<CodeChange> { None }
+    /// Dowód z systemu operacyjnego, że proces ma prawo tworzyć kod w trakcie działania (stały token do
+    /// raportu). None: backend takiego dowodu nie ma i decyduje lista dozwolonych programów.
+    fn jit_evidence(&self) -> Option<String> { None }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]

@@ -30,6 +30,11 @@ extern "C" {
     fn proc_name(pid: i32, buffer: *mut c_void, size: u32) -> i32;
     fn proc_pidinfo(pid: i32, flavor: i32, arg: u64, buffer: *mut c_void, size: i32) -> i32;
     fn gethostname(name: *mut u8, len: usize) -> i32;
+    fn sysctl(name: *const i32, namelen: u32, oldp: *mut c_void, oldlenp: *mut usize, newp: *const c_void, newlen: usize) -> i32;
+    fn sysctlbyname(name: *const std::ffi::c_char, oldp: *mut c_void, oldlenp: *mut usize, newp: *const c_void, newlen: usize) -> i32;
+    fn csops(pid: i32, ops: u32, useraddr: *mut c_void, usersize: usize) -> i32;
+    fn getpwuid(uid: u32) -> *const *const std::ffi::c_char;
+    fn getuid() -> u32;
     fn _dyld_get_shared_cache_range(length: *mut usize) -> *const c_void;
     fn dyld_shared_cache_file_path() -> *const std::ffi::c_char;
 }
@@ -199,6 +204,10 @@ impl MemorySource for MacProcess {
         Ok(out)
     }
 
+    fn jit_evidence(&self) -> Option<String> {
+        signing(self.pid).filter(jit_allowed).map(|_| "jit:macos-allow-jit".to_string())
+    }
+
     fn read_at(&self, addr: u64, buf: &mut [u8]) -> Result<usize> {
         let mut got = 0u64;
         // SAFETY: cel to bufor wywołującego o podanej długości; jądro kopiuje najwyżej tyle bajtów.
@@ -215,6 +224,189 @@ impl MemorySource for MacProcess {
             done += n as usize;
         }
         if done == 0 { Err(Error::Access(trf!("odczyt pamięci pod adresem {addr:#x} nie powiódł się", "reading memory at {addr:#x} failed"))) } else { Ok(done) }
+    }
+}
+
+// ---- kontekst systemowy -------------------------------------------------------------------------
+
+const PROC_PIDTBSDINFO: i32 = 3;
+const PROC_PIDTASKINFO: i32 = 4;
+const PROC_PIDT_SHORTBSDINFO: i32 = 13;
+const CS_OPS_STATUS: u32 = 0;
+const CS_OPS_ENTITLEMENTS_BLOB: u32 = 7;
+const CS_VALID: u32 = 0x1;
+const CS_ADHOC: u32 = 0x2;
+const CS_GET_TASK_ALLOW: u32 = 0x4;
+const CS_HARD: u32 = 0x100;
+const CS_KILL: u32 = 0x200;
+const CS_RUNTIME: u32 = 0x1_0000;
+const CS_PLATFORM_BINARY: u32 = 0x400_0000;
+/// Uprawnienia programu, które zmieniają ocenę pamięci wykonywalnej albo dostęp do procesu.
+const NOTABLE_ENTITLEMENTS: [&str; 6] = ["com.apple.security.cs.allow-jit", "com.apple.security.cs.allow-unsigned-executable-memory",
+    "com.apple.security.cs.disable-executable-page-protection", "com.apple.security.cs.disable-library-validation",
+    "com.apple.security.get-task-allow", "com.apple.security.cs.debugger"];
+const MAX_ARGS: usize = 1 << 20;
+
+fn u32at(b: &[u8], at: usize) -> Option<u32> { b.get(at..at + 4).map(|x| u32::from_le_bytes(x.try_into().unwrap())) }
+fn cstr_at(b: &[u8], at: usize, max: usize) -> String {
+    let part = &b[at.min(b.len())..(at + max).min(b.len())];
+    String::from_utf8_lossy(&part[..part.iter().position(|c| *c == 0).unwrap_or(part.len())]).into_owned()
+}
+
+fn pidinfo(pid: u32, flavor: i32, size: usize) -> Option<Vec<u8>> {
+    let mut b = vec![0u8; size];
+    // SAFETY: bufor ma podany rozmiar; jądro zapisuje najwyżej tyle bajtów i zwraca ich liczbę.
+    let n = unsafe { proc_pidinfo(pid as i32, flavor, 0, b.as_mut_ptr() as *mut c_void, size as i32) };
+    (n as usize >= size).then_some(b)
+}
+
+/// (ppid, uid, nazwa) z krótkiego opisu procesu, dostępnego także dla procesów innych użytkowników.
+fn short_info(pid: u32) -> Option<(u32, u32, String)> {
+    let b = pidinfo(pid, PROC_PIDT_SHORTBSDINFO, 64)?;
+    Some((u32at(&b, 4)?, u32at(&b, 36)?, cstr_at(&b, 16, 16)))
+}
+
+/// Wiersz poleceń z `KERN_PROCARGS2`: liczba argumentów, ścieżka programu, wypełnienie zerami, argumenty.
+/// Treść pochodzi z pamięci badanego procesu (może ją zmienić), więc jest tylko wskazówką.
+pub(crate) fn parse_procargs(b: &[u8]) -> Option<String> {
+    let argc = u32at(b, 0)? as usize;
+    let rest = b.get(4..)?;
+    let path_end = rest.iter().position(|c| *c == 0)?;
+    let mut at = path_end;
+    while at < rest.len() && rest[at] == 0 { at += 1; }
+    let args: Vec<String> = rest[at..].split(|c| *c == 0).take(argc.min(4096)).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
+    (!args.is_empty() && argc > 0).then(|| args.join(" "))
+}
+
+fn cmdline(pid: u32) -> Option<String> {
+    let mib = [1i32, 49, pid as i32]; // CTL_KERN, KERN_PROCARGS2
+    let mut len = 0usize;
+    // SAFETY: pierwsze wywołanie pyta o rozmiar; drugie dostaje bufor tej wielkości.
+    if unsafe { sysctl(mib.as_ptr(), 3, std::ptr::null_mut(), &mut len, std::ptr::null(), 0) } != 0 || len == 0 || len > MAX_ARGS { return None; }
+    let mut b = vec![0u8; len];
+    if unsafe { sysctl(mib.as_ptr(), 3, b.as_mut_ptr() as *mut c_void, &mut len, std::ptr::null(), 0) } != 0 { return None; }
+    parse_procargs(&b[..len.min(b.len())])
+}
+
+fn sysctl_text(name: &std::ffi::CStr) -> Option<String> {
+    let mut b = [0u8; 256];
+    let mut len = b.len();
+    // SAFETY: bufor ma podany rozmiar, nazwa jest zakończona zerem.
+    if unsafe { sysctlbyname(name.as_ptr(), b.as_mut_ptr() as *mut c_void, &mut len, std::ptr::null(), 0) } != 0 { return None; }
+    Some(cstr_at(&b, 0, len)).filter(|s| !s.is_empty())
+}
+
+fn user_name(uid: u32) -> String {
+    // SAFETY: getpwuid zwraca wskaźnik na strukturę biblioteki (pierwsze pole to nazwa) albo null; skaner jest jednowątkowy.
+    let name = unsafe { let p = getpwuid(uid); if p.is_null() || (*p).is_null() { None } else { Some(std::ffi::CStr::from_ptr(*p).to_string_lossy().into_owned()) } };
+    match name { Some(n) => format!("{n} (uid {uid})"), None => format!("uid {uid}") }
+}
+
+/// Stan podpisu kodu procesu według jądra i lista jego istotnych uprawnień (entitlements).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Signing { flags: u32, entitlements: Vec<String> }
+
+fn signing(pid: u32) -> Option<Signing> {
+    let mut flags = 0u32;
+    // SAFETY: jądro zapisuje cztery bajty znaczników pod wskazany adres.
+    if unsafe { csops(pid as i32, CS_OPS_STATUS, &mut flags as *mut u32 as *mut c_void, 4) } != 0 { return None; }
+    let mut blob = vec![0u8; 64 << 10];
+    // SAFETY: bufor ma podany rozmiar. Przy zbyt małym buforze albo braku uprawnień wywołanie zwraca błąd i lista jest pusta.
+    let ok = unsafe { csops(pid as i32, CS_OPS_ENTITLEMENTS_BLOB, blob.as_mut_ptr() as *mut c_void, blob.len()) } == 0;
+    Some(Signing { flags, entitlements: if ok { entitlements_in(&blob) } else { Vec::new() } })
+}
+
+/// Uprawnienia ustawione na "prawda" w dokumencie XML uprawnień. Dokument jest częścią podpisu sprawdzanego przez jądro.
+pub(crate) fn entitlements_in(blob: &[u8]) -> Vec<String> {
+    let text = String::from_utf8_lossy(blob);
+    NOTABLE_ENTITLEMENTS.iter().filter(|e| {
+        let key = format!("<key>{e}</key>");
+        text.find(&key).map(|at| text[at + key.len()..].trim_start().starts_with("<true/>")).unwrap_or(false)
+    }).map(|e| e.to_string()).collect()
+}
+
+/// Opis podpisu dla człowieka.
+pub(crate) fn signing_text(s: &Signing) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    parts.push(if s.flags & CS_VALID != 0 { tr!("ważny", "valid") } else { tr!("NIEWAŻNY albo brak", "INVALID or missing") });
+    if s.flags & CS_PLATFORM_BINARY != 0 { parts.push(tr!("program systemowy Apple", "Apple platform binary")); }
+    if s.flags & CS_ADHOC != 0 { parts.push(tr!("lokalny (adhoc), bez tożsamości wydawcy", "local (adhoc), no publisher identity")); }
+    if s.flags & CS_RUNTIME != 0 { parts.push(tr!("utwardzone środowisko", "hardened runtime")); } else { parts.push(tr!("bez utwardzonego środowiska", "no hardened runtime")); }
+    if s.flags & (CS_HARD | CS_KILL) != 0 { parts.push(tr!("wymuszanie podpisu stron", "page signature enforcement")); }
+    if s.flags & CS_GET_TASK_ALLOW != 0 { parts.push(tr!("pozwala się debugować", "allows debugging")); }
+    parts.join(", ")
+}
+
+/// Dowód, że region JIT jest w tym procesie dozwolony przez system: ważny podpis z utwardzonym środowiskiem
+/// i uprawnienie allow-jit. Obie rzeczy sprawdza jądro, proces nie może ich sobie nadać po uruchomieniu.
+pub(crate) fn jit_allowed(s: &Signing) -> bool {
+    s.flags & CS_VALID != 0 && s.flags & CS_RUNTIME != 0 && s.entitlements.iter().any(|e| e == "com.apple.security.cs.allow-jit")
+}
+
+/// Obraz hosta zebrany raz na skan: lista procesów z rodzicami.
+pub struct Snapshot { procs: std::collections::HashMap<u32, (u32, u32, String)> }
+
+impl Snapshot {
+    pub fn take() -> Self {
+        let procs = list().unwrap_or_default().into_iter().filter_map(|p| short_info(p.pid).map(|i| (p.pid, i))).collect();
+        Snapshot { procs }
+    }
+
+    pub fn host(&self) -> nanshe_core::HostContext {
+        // SAFETY: wywołanie bez argumentów.
+        let uid = unsafe { getuid() };
+        let me = signing(std::process::id());
+        let debugger = me.as_ref().map(|s| s.entitlements.iter().any(|e| e == "com.apple.security.cs.debugger")).unwrap_or(false);
+        let privileges = match (uid == 0, debugger) {
+            (true, _) => tr!("root; procesy chronione przez system (SIP, utwardzone środowisko) pozostają niedostępne", "root; processes protected by the system (SIP, hardened runtime) remain inaccessible").to_string(),
+            (false, true) => tr!("zwykły użytkownik z uprawnieniem debugera: tylko niechronione procesy tego samego użytkownika", "ordinary user with the debugger entitlement: only unprotected processes of the same user").to_string(),
+            (false, false) => tr!("zwykły użytkownik bez uprawnienia debugera: pamięć innych procesów jest niedostępna", "ordinary user without the debugger entitlement: the memory of other processes is inaccessible").to_string(),
+        };
+        nanshe_core::HostContext {
+            os: sysctl_text(c"kern.osproductversion").map(|v| format!("macOS {v}")),
+            kernel: sysctl_text(c"kern.osrelease").map(|v| format!("Darwin {v}")),
+            scanner_user: Some(user_name(uid)), scanner_privileges: Some(privileges), scanner_limited: uid != 0,
+            ..Default::default()
+        }
+    }
+
+    fn proc_ref(&self, pid: u32) -> nanshe_core::ProcRef {
+        let name = self.procs.get(&pid).map(|p| p.2.clone()).filter(|n| !n.is_empty()).or_else(|| name_of(pid as i32)).unwrap_or_default();
+        nanshe_core::ProcRef { pid, name, exe: path_of(pid as i32), cmdline: None }
+    }
+
+    pub fn context(&self, pid: u32) -> nanshe_core::ProcessContext {
+        let mut c = nanshe_core::ProcessContext::default();
+        if let Some((ppid, uid, _)) = self.procs.get(&pid).cloned().or_else(|| short_info(pid)) {
+            c.ppid = Some(ppid);
+            c.user = Some(user_name(uid));
+        }
+        if let Some(b) = pidinfo(pid, PROC_PIDTBSDINFO, 136) {
+            let secs = b.get(120..128).map(|x| u64::from_le_bytes(x.try_into().unwrap())).unwrap_or(0);
+            if secs > 0 { c.started = Some(nanshe_core::rfc3339(secs as i64)); }
+        }
+        c.threads = pidinfo(pid, PROC_PIDTASKINFO, 96).and_then(|b| u32at(&b, 84)).filter(|n| *n > 0);
+        c.cmdline = cmdline(pid);
+        // przodkowie: od rodzica w górę, z limitem (lista procesów pochodzi z jednej chwili, pętla jest niemożliwa
+        // tylko w teorii)
+        let mut at = c.ppid;
+        while let Some(p) = at.filter(|p| *p > 0) {
+            if c.ancestors.len() >= 32 || c.ancestors.iter().any(|a| a.pid == p) { break; }
+            c.ancestors.push(self.proc_ref(p));
+            at = self.procs.get(&p).map(|x| x.0);
+        }
+        let mut children: Vec<u32> = self.procs.iter().filter(|(_, v)| v.0 == pid).map(|(k, _)| *k).collect();
+        children.sort_unstable();
+        c.children = children.into_iter().take(64).map(|p| self.proc_ref(p)).collect();
+        match signing(pid) {
+            Some(s) => {
+                c.flags.push((tr!("podpis kodu", "code signature").into(), signing_text(&s)));
+                if !s.entitlements.is_empty() { c.flags.push((tr!("uprawnienia programu", "program entitlements").into(), s.entitlements.iter().map(|e| e.rsplit('.').next().unwrap_or(e)).collect::<Vec<_>>().join(", "))); }
+            }
+            None => c.notes.push(tr!("stan podpisu kodu procesu jest niedostępny", "the code signature state of the process is unavailable").into()),
+        }
+        c.notes.push(tr!("na macOS skaner nie zbiera jeszcze połączeń sieciowych ani otwartych plików procesu", "on macOS the scanner does not collect network connections or open files of the process yet").into());
+        c
     }
 }
 
@@ -256,6 +448,49 @@ mod tests {
         info[VIP_PATH_OFFSET] = b'x';
         assert_eq!(file_of(&info, 0x1000), None);
         assert_eq!(file_of(&info[..200], 0x1000), None);
+    }
+
+    #[test]
+    fn command_line_is_parsed_from_the_kernel_argument_block() {
+        let mut b = Vec::new();
+        b.extend(3u32.to_le_bytes()); b.extend(b"/usr/local/bin/tool\0\0\0\0"); b.extend(b"tool\0--mode\0x y\0ENV=1\0");
+        assert_eq!(parse_procargs(&b).as_deref(), Some("tool --mode x y"), "zmienne środowiska za argumentami nie należą do wiersza poleceń");
+        // dane uszkodzone: brak końca ścieżki, zero argumentów, liczba argumentów większa niż dane, pusty bufor
+        assert_eq!(parse_procargs(&[2, 0, 0, 0, b'a', b'b']), None);
+        assert_eq!(parse_procargs(&[0, 0, 0, 0, b'a', 0, b'x', 0]), None);
+        assert_eq!(parse_procargs(&[255, 255, 255, 255, b'a', 0, b'x', 0]).as_deref(), Some("x "));
+        assert_eq!(parse_procargs(&[]), None);
+    }
+
+    #[test]
+    fn jit_is_allowed_only_by_a_valid_hardened_signature_with_the_entitlement() {
+        let xml = b"<plist><dict><key>com.apple.security.cs.allow-jit</key><true/><key>com.apple.security.get-task-allow</key><false/><key>com.apple.security.cs.debugger</key>\n\t<true/></dict></plist>";
+        let ent = entitlements_in(xml);
+        assert_eq!(ent, ["com.apple.security.cs.allow-jit", "com.apple.security.cs.debugger"]);
+        let ok = Signing { flags: CS_VALID | CS_RUNTIME, entitlements: ent.clone() };
+        assert!(jit_allowed(&ok));
+        // każdy brakujący element odbiera obniżkę: nieważny podpis, brak utwardzonego środowiska, brak uprawnienia
+        assert!(!jit_allowed(&Signing { flags: CS_RUNTIME, ..ok.clone() }));
+        assert!(!jit_allowed(&Signing { flags: CS_VALID | CS_ADHOC, ..ok.clone() }));
+        assert!(!jit_allowed(&Signing { entitlements: vec!["com.apple.security.cs.debugger".into()], ..ok.clone() }));
+        // nazwa uprawnienia w innym miejscu dokumentu (wartość, komentarz) nie wystarcza
+        assert!(entitlements_in(b"<string>com.apple.security.cs.allow-jit</string><key>x</key><true/>").is_empty());
+        assert!(signing_text(&ok).contains("ważny") && signing_text(&Signing::default()).contains("NIEWAŻNY"));
+    }
+
+    #[test]
+    fn own_process_has_context_from_the_system() {
+        let me = std::process::id();
+        let snap = Snapshot::take();
+        let c = snap.context(me);
+        assert!(c.ppid.unwrap_or(0) > 0 && c.threads.unwrap_or(0) >= 1 && c.started.is_some(), "{c:?}");
+        assert!(c.cmdline.as_deref().map(|l| !l.is_empty()).unwrap_or(false) && c.user.as_deref().map(|u| u.contains("uid")).unwrap_or(false), "{c:?}");
+        assert!(!c.ancestors.is_empty() && c.ancestors[0].pid == c.ppid.unwrap());
+        assert!(c.flags.iter().any(|f| f.0 == "podpis kodu"), "{:?}", c.flags);
+        let h = snap.host();
+        assert!(h.os.as_deref().map(|o| o.starts_with("macOS ")).unwrap_or(false) && h.kernel.is_some() && h.scanner_user.is_some());
+        // proces testu nie ma utwardzonego środowiska, więc nie ma dowodu na dozwolony JIT
+        assert_eq!(MacProcess::open(me).unwrap().jit_evidence(), None);
     }
 
     #[test]

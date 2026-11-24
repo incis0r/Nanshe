@@ -285,9 +285,11 @@ pub fn process_memory(p: ProcEntry) -> ProcessMemory {
 pub use sysctx::Snapshot;
 #[cfg(windows)]
 pub use windows::Snapshot;
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(target_os = "macos")]
+pub use macos::Snapshot;
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub struct Snapshot;
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 impl Snapshot {
     pub fn take() -> Self { Snapshot }
     pub fn host(&self) -> HostContext { HostContext::default() }
