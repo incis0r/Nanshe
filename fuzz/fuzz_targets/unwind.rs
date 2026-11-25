@@ -3,7 +3,7 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 use nanshe_analyze::unwind::Unwinder;
-use nanshe_core::{Prot, Region, RegionKind, ThreadRegs};
+use nanshe_core::{Allocation, Prot, Region, RegionKind, ThreadRegs};
 
 const IMG: u64 = 0x7ff0_0000_0000;
 const STACK: u64 = 0x10_0000;
@@ -27,6 +27,8 @@ fuzz_target!(|data: &[u8]| {
     gpr[4] = STACK + (w(2) & !7);
     gpr[5] = STACK + w(4);
     let _ = head;
-    let mut un = Unwinder::new(&mem, &regions);
-    let _ = un.foreign_return(&ThreadRegs { tid: 1, rip: IMG + w(0), gpr });
+    // rezerwacja obejmująca obraz w całości albo żadna; rejestry wszystkie znane albo tylko rsp
+    let allocs = if w(6) & 0x4000 != 0 { vec![Allocation { base: IMG, size: image.len() as u64 + 0x1000 }] } else { Vec::new() };
+    let mut un = Unwinder::new(&mem, &regions, &allocs);
+    let _ = un.unwind(&ThreadRegs { tid: 1, rip: IMG + w(0), gpr, known: if w(6) & 0x8000 != 0 { 0x10 } else { 0xffff } });
 });

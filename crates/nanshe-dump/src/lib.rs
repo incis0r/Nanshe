@@ -33,6 +33,7 @@ pub(crate) struct Parsed {
     pub regions: Vec<Region>,
     pub segs: Vec<Seg>,
     pub threads: Vec<ThreadInfo>,
+    pub regs: ThreadSet,
     pub notes: Vec<String>,
 }
 
@@ -65,6 +66,7 @@ pub struct Dump {
     regions: Vec<Region>,
     segs: Vec<Seg>,
     threads: Vec<ThreadInfo>,
+    regs: ThreadSet,
     file: RefCell<File>,
     /// Wiersz poleceń procesu, jeśli zrzut go zawiera (plik core: pierwsze 80 znaków).
     pub cmdline: Option<String>,
@@ -90,7 +92,7 @@ pub fn open(path: &Path) -> Result<Dump> {
     p.regions.sort_by_key(|r| r.base);
     if p.regions.len() > MAX_REGIONS { p.regions.truncate(MAX_REGIONS); }
     let info = SourceInfo { os: p.os.into(), arch: p.arch, pid: p.pid, name: p.name, source_type: "dump".into(), exe: p.exe, exe_deleted: false, exe_verified: false };
-    Ok(Dump { info, regions: p.regions, segs: p.segs, threads: p.threads, file: RefCell::new(src.f), cmdline: p.cmdline, ppid: p.ppid, notes: p.notes })
+    Ok(Dump { info, regions: p.regions, segs: p.segs, threads: p.threads, regs: p.regs, file: RefCell::new(src.f), cmdline: p.cmdline, ppid: p.ppid, notes: p.notes })
 }
 
 /// Czy w zrzucie jest treść pod danym adresem. `segs` muszą być posortowane po adresie:
@@ -110,6 +112,7 @@ impl MemorySource for Dump {
     fn info(&self) -> SourceInfo { self.info.clone() }
     fn regions(&self) -> Result<Vec<Region>> { Ok(self.regions.clone()) }
     fn threads(&self) -> Vec<ThreadInfo> { self.threads.clone() }
+    fn thread_regs(&self) -> ThreadSet { self.regs.clone() }
 
     /// Czyta tyle, ile zrzut zawiera od podanego adresu, także przez sąsiadujące fragmenty; kończy na pierwszej luce.
     fn read_at(&self, addr: u64, buf: &mut [u8]) -> Result<usize> {

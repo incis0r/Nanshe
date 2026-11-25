@@ -207,7 +207,7 @@ fn scan(dump: Option<PathBuf>, pid: Option<u32>, all: bool, json: Option<PathBuf
                 partial = true;
                 processes.push(ProcessReport {
                     info: SourceInfo { os: std::env::consts::OS.into(), arch: std::env::consts::ARCH.into(), pid: Some(p), name: None, source_type: "live".into(), exe: None, exe_deleted: false, exe_verified: false },
-                    regions_total: 0, regions_unreadable: 0, bytes_scanned: 0, max_severity: Severity::None, error: Some(e.to_string()), regions: vec![], layout: None, context: None,
+                    regions_total: 0, regions_unreadable: 0, bytes_scanned: 0, max_severity: Severity::None, error: Some(e.to_string()), regions: vec![], layout: None, stacks: None, context: None,
                 });
             }
         }
@@ -273,7 +273,7 @@ fn vm(target: String, pid: Option<u32>, all: bool, ps: bool, symbols: Option<Pat
                 let name = procs.iter().find(|x| x.pid == p).map(|x| x.name.clone());
                 processes.push(ProcessReport {
                     info: SourceInfo { os: "windows".into(), arch: "x86_64".into(), pid: Some(p), name, source_type: "vm".into(), exe: None, exe_deleted: false, exe_verified: false },
-                    regions_total: 0, regions_unreadable: 0, bytes_scanned: 0, max_severity: Severity::None, error: Some(e.to_string()), regions: vec![], layout: None, context: None,
+                    regions_total: 0, regions_unreadable: 0, bytes_scanned: 0, max_severity: Severity::None, error: Some(e.to_string()), regions: vec![], layout: None, stacks: None, context: None,
                 });
             }
         }

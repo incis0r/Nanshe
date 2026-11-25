@@ -187,25 +187,47 @@ fn proc_traits(cfg: &Config, info: &SourceInfo, regions: &[Region]) -> ProcTrait
     }
 }
 
-/// Wątki, których stos wywołań wraca do pamięci poza obrazami modułów (Windows x64). Rejestry są
-/// czytane bez wstrzymywania procesu, więc liczą się tylko wątki stojące za instrukcją `syscall`,
-/// których adres instrukcji i wskaźnik stosu nie zmieniły się w czasie odwijania. Adres powrotu
-/// w regionie własnego stosu wątku to ślad nieudanego odwinięcia i jest pomijany.
-fn stack_returns(src: &dyn MemorySource, info: &SourceInfo, regions: &[Region]) -> Vec<ThreadInfo> {
-    if info.os != "windows" || info.arch != "x86_64" { return Vec::new(); }
-    let first = src.thread_regs();
-    if first.is_empty() { return Vec::new(); }
-    let mem = |a: u64, b: &mut [u8]| matches!(src.read_at(a, b), Ok(n) if n == b.len());
-    let mut un = unwind::Unwinder::new(&mem, regions);
+/// Wątki, których stos wywołań wraca do pamięci poza obrazami modułów (Windows x64), oraz pokrycie:
+/// ile stosów odwinięto do dna, a ile porzucono i dlaczego. Rejestry są czytane bez wstrzymywania
+/// procesu, więc liczą się tylko wątki stojące za instrukcją `syscall`, których adres instrukcji
+/// i wskaźnik stosu nie zmieniły się w czasie odwijania. Adres powrotu poza mapą regionów albo
+/// w regionie własnego stosu wątku to ślad nieudanego odwinięcia i jest liczony jako porzucony.
+fn stack_returns(src: &dyn MemorySource, info: &SourceInfo, regions: &[Region], allocs: &[Allocation]) -> (Vec<ThreadInfo>, Option<StackStats>) {
+    use unwind::Outcome;
+    if info.os != "windows" || info.arch != "x86_64" { return (Vec::new(), None); }
+    let set = src.thread_regs();
+    if set.regs.is_empty() && set.unread == 0 { return (Vec::new(), None); }
+    let first = set.regs;
+    let mem = |a: u64, b: &mut [u8]| src.read_exact_at(a, b);
+    let mut un = unwind::Unwinder::new(&mem, regions, allocs);
     let region_of = |a: u64| regions.iter().position(|r| a >= r.base && a < r.base.saturating_add(r.size));
-    let found: Vec<(&nanshe_core::ThreadRegs, u64)> = first.iter().take(MAX_UNWIND_THREADS)
-        .filter_map(|t| un.foreign_return(t).map(|f| (t, f.addr)))
-        .filter(|(t, a)| matches!((region_of(*a), region_of(t.gpr[4])), (Some(x), Some(y)) if x != y))
-        .collect();
-    if found.is_empty() { return Vec::new(); }
-    let again = src.thread_regs();
-    found.into_iter().filter(|(t, _)| again.iter().any(|n| n.tid == t.tid && n.rip == t.rip && n.gpr[4] == t.gpr[4]))
-        .map(|(t, addr)| ThreadInfo { tid: t.tid, addr }).collect()
+    let mut st = StackStats { threads: first.len() as u32, unread: set.unread, ..Default::default() };
+    let drop = |st: &mut StackStats, why: &str, n: u32| { if n > 0 { st.abandoned += n; *st.reasons.entry(why.to_string()).or_insert(0) += n; } };
+    drop(&mut st, "thread-limit", first.len().saturating_sub(MAX_UNWIND_THREADS) as u32);
+    // wynik odwijania: None dla stosu odwiniętego do dna, adres dla powrotu poza obrazy
+    let mut done: Vec<(&nanshe_core::ThreadRegs, Option<u64>)> = Vec::new();
+    for t in first.iter().take(MAX_UNWIND_THREADS) {
+        match un.unwind(t) {
+            Outcome::NotWaiting => continue,
+            Outcome::Complete { .. } => done.push((t, None)),
+            Outcome::Foreign(f) => match (region_of(f.addr), region_of(t.gpr[4])) {
+                (Some(x), Some(y)) if x != y => done.push((t, Some(f.addr))),
+                (Some(_), _) => drop(&mut st, "own-stack", 1),
+                (None, _) => drop(&mut st, "outside-map", 1),
+            },
+            Outcome::Abandoned(r) => drop(&mut st, r.token(), 1),
+        }
+        st.waiting += 1;
+    }
+    let mut found = Vec::new();
+    if !done.is_empty() {
+        let again = src.thread_regs().regs;
+        for (t, addr) in done {
+            if !again.iter().any(|n| n.tid == t.tid && n.rip == t.rip && n.gpr[4] == t.gpr[4]) { drop(&mut st, "moved", 1); continue; }
+            match addr { Some(addr) => { st.foreign += 1; found.push(ThreadInfo { tid: t.tid, addr }); } None => st.complete += 1 }
+        }
+    }
+    (found, Some(st))
 }
 /// Najwięcej wątków jednego procesu, których stosy są odwijane.
 const MAX_UNWIND_THREADS: usize = 4096;
@@ -214,7 +236,7 @@ pub fn scan_source(src: &dyn MemorySource, cfg: &Config) -> ProcessReport {
     let info = src.info();
     let mut rep = ProcessReport {
         info: info.clone(), regions_total: 0, regions_unreadable: 0, bytes_scanned: 0,
-        max_severity: Severity::None, error: None, regions: vec![], layout: None, context: None,
+        max_severity: Severity::None, error: None, regions: vec![], layout: None, stacks: None, context: None,
     };
     let mut regions = match src.regions() {
         Ok(r) => r,
@@ -227,7 +249,9 @@ pub fn scan_source(src: &dyn MemorySource, cfg: &Config) -> ProcessReport {
     }
     let dets: Vec<_> = detectors::all().into_iter().filter(|d| d.applies(&info)).collect();
     let threads = src.threads();
-    let returns = stack_returns(src, &info, &regions);
+    let allocs = src.allocations();
+    let (returns, stacks) = stack_returns(src, &info, &regions, &allocs);
+    rep.stacks = stacks;
     let allow = if info.os == "windows" { jit_allow_windows(&info, &regions) } else { jit_allow(cfg, &info) };
     // dowód z systemu (np. podpis z uprawnieniem do JIT na macOS) ma pierwszeństwo przed listą nazw programów
     let allow = src.jit_evidence().or(allow);
@@ -263,6 +287,14 @@ pub fn scan_source(src: &dyn MemorySource, cfg: &Config) -> ProcessReport {
             }
         }
         let has_findings = !findings.is_empty();
+        // rezerwacja, do której należy region ze znaleziskiem: jej rozmiar i liczba regionów mapy w jej zakresie
+        let allocation = if has_findings {
+            let i = allocs.partition_point(|a| a.base.saturating_add(a.size) <= r.base);
+            allocs.get(i).filter(|a| a.base <= r.base).map(|a| {
+                let aend = a.base.saturating_add(a.size);
+                AllocInfo { base: a.base, size: a.size, regions: regions.iter().filter(|x| x.base >= a.base && x.base < aend).count() as u32 }
+            })
+        } else { None };
         let score: u32 = findings.iter().map(|f| f.weight).sum();
         let sev = severity(score);
         rep.max_severity = rep.max_severity.max(sev);
@@ -275,7 +307,7 @@ pub fn scan_source(src: &dyn MemorySource, cfg: &Config) -> ProcessReport {
             region: r.clone(), bytes_read: data.len() as u64,
             truncated: (data.len() as u64) < r.size && !skip,
             entropy_max: emax, entropy_mean: emean, zero_pages: stats.zero_pages,
-            score, severity: sev, allowlisted, findings,
+            score, severity: sev, allowlisted, allocation, findings,
             heat: if cfg.heatmap { Some(entropy::heat_cells(&stats.entropy, cfg.heat_cell)) } else { None },
             profile: if has_findings && !stats.entropy.is_empty() { Some(entropy::profile(&stats.entropy, 64)) } else { None },
             strings: if has_findings && cfg.preview_bytes > 0 { entropy::text_strings(&data, 40) } else { Vec::new() },
@@ -498,12 +530,12 @@ mod tests {
 
     /// Proces Windows z jednym obrazem modułu (nagłówek PE, kod, tablica funkcji), stosem wątku
     /// i regionem bez pliku, do którego wraca stos: ntdll (liść za syscall) <- A <- B <- region.
-    struct Stacked { target_prot: &'static str, jit: bool, syscall: bool, version: u8, ret: u64, moved: bool, mapped: bool, calls: std::cell::Cell<u32> }
+    struct Stacked { target_prot: &'static str, jit: bool, syscall: bool, version: u8, ret: u64, moved: bool, mapped: bool, known: u16, unread: u32, headless: bool, nameless: bool, holes: Option<bool>, allocs: Vec<nanshe_core::Allocation>, calls: std::cell::Cell<u32> }
     impl Stacked {
         const IMG: u64 = 0x7ff0_0000_0000;
         const STACK: u64 = 0x10_0000;
         const TARGET: u64 = 0x20_0000;
-        fn new(target_prot: &'static str) -> Self { Stacked { target_prot, jit: false, syscall: true, version: 1, ret: Self::TARGET + 0x10, moved: false, mapped: false, calls: std::cell::Cell::new(0) } }
+        fn new(target_prot: &'static str) -> Self { Stacked { target_prot, jit: false, syscall: true, version: 1, ret: Self::TARGET + 0x10, moved: false, mapped: false, known: 0xffff, unread: 0, headless: false, nameless: false, holes: None, allocs: Vec::new(), calls: std::cell::Cell::new(0) } }
         fn image(&self) -> Vec<u8> {
             let mut m = vec![0u8; 0x3000];
             let put32 = |m: &mut Vec<u8>, o: usize, v: u32| m[o..o + 4].copy_from_slice(&v.to_le_bytes());
@@ -537,23 +569,31 @@ mod tests {
         fn info(&self) -> SourceInfo { SourceInfo { os: "windows".into(), arch: "x86_64".into(), pid: Some(7), name: Some("app.exe".into()), source_type: "live".into(),
             exe: Some("C:\\Program Files\\App\\app.exe".into()), exe_deleted: false, exe_verified: true } }
         fn regions(&self) -> Result<Vec<Region>> {
-            let dll = Some("C:\\Windows\\System32\\ntdll.dll");
+            let dll = if self.nameless { None } else { Some("C:\\Windows\\System32\\ntdll.dll") };
             Ok(vec![reg(Self::STACK, 0x2000, "rw-", RegionKind::Private, None), if self.mapped { reg(Self::TARGET, 0x1000, self.target_prot, RegionKind::Mapped, Some("C:\\Dane\\plik.bin")) } else { reg(Self::TARGET, 0x1000, self.target_prot, RegionKind::Private, None) },
-                reg(Self::IMG, 0x1000, "r--", RegionKind::Image, dll), reg(Self::IMG + 0x1000, 0x1000, "r-x", RegionKind::Image, dll), reg(Self::IMG + 0x2000, 0x1000, "r--", RegionKind::Image, dll)])
+                reg(if self.headless { 0x30_0000 } else { Self::IMG }, 0x1000, "r--", RegionKind::Image, if self.headless { Some("C:\\Windows\\System32\\inny.dll") } else { dll }), reg(Self::IMG + 0x1000, 0x1000, "r-x", RegionKind::Image, dll), reg(Self::IMG + 0x2000, 0x1000, "r--", RegionKind::Image, dll)])
         }
         fn read_at(&self, a: u64, b: &mut [u8]) -> Result<usize> {
-            let (base, m) = if a >= Self::IMG { (Self::IMG, self.image()) } else if a >= Self::TARGET { (Self::TARGET, vec![0x90u8; 0x1000]) } else { (Self::STACK, self.stack()) };
+            // źródło z dziurami: strona z tablicą funkcji nie leży w pamięci i czyta się jako zera
+            let mut image = self.image();
+            if self.holes.is_some() { image[0x2000..].fill(0); }
+            let (base, m) = if a >= Self::IMG { (Self::IMG, image) } else if a >= Self::TARGET { (Self::TARGET, vec![0x90u8; 0x1000]) } else { (Self::STACK, self.stack()) };
             let o = a.checked_sub(base).map(|o| o as usize).filter(|o| *o < m.len()).ok_or_else(|| nanshe_core::Error::NotFound("poza zakresem".into()))?;
             let n = b.len().min(m.len() - o);
             b[..n].copy_from_slice(&m[o..o + n]);
             Ok(n)
         }
-        fn thread_regs(&self) -> Vec<nanshe_core::ThreadRegs> {
+        fn allocations(&self) -> Vec<nanshe_core::Allocation> { self.allocs.clone() }
+        fn read_exact_at(&self, a: u64, b: &mut [u8]) -> bool {
+            if self.holes == Some(true) && a >= Self::IMG + 0x2000 { return false; }
+            matches!(self.read_at(a, b), Ok(n) if n == b.len())
+        }
+        fn thread_regs(&self) -> nanshe_core::ThreadSet {
             self.calls.set(self.calls.get() + 1);
             let mut gpr = [0u64; 16];
             gpr[4] = 0x10_1000 + if self.moved && self.calls.get() > 1 { 8 } else { 0 };
             gpr[5] = 0x10_1060;
-            vec![nanshe_core::ThreadRegs { tid: 21, rip: Self::IMG + 0x1012, gpr }]
+            nanshe_core::ThreadSet { regs: vec![nanshe_core::ThreadRegs { tid: 21, rip: Self::IMG + 0x1012, gpr, known: self.known }], unread: self.unread }
         }
         fn jit_evidence(&self) -> Option<String> { self.jit.then(|| "jit:test".to_string()) }
     }
@@ -594,15 +634,60 @@ mod tests {
         assert!(thr(&Stacked { ret: Stacked::STACK + 0x1800, ..Stacked::new("r-x") }).is_empty(), "adres w regionie własnego stosu");
         assert!(thr(&Stacked { ret: 0x30_0000, ..Stacked::new("r-x") }).is_empty(), "adres poza mapą regionów");
         assert!(thr(&Stacked { mapped: true, ..Stacked::new("rw-") }).is_empty(), "region z plikiem to nie pamięć bez pliku");
+        // pokrycie: każdy wynik odwijania trafia do właściwego licznika, porzucone mają powód
+        let stats = |s: &dyn MemorySource| { let t = scan_source(s, &cfg).stacks.unwrap(); (t.threads, t.waiting, t.complete, t.foreign, t.abandoned, t.reasons.into_iter().collect::<Vec<_>>()) };
+        let why = |k: &str| vec![(k.to_string(), 1u32)];
+        assert_eq!(stats(&Stacked::new("r-x")), (1, 1, 0, 1, 0, vec![]));
+        assert_eq!(stats(&Stacked { ret: 0, ..Stacked::new("r-x") }), (1, 1, 1, 0, 0, vec![]), "zerowy adres powrotu to dno stosu");
+        assert_eq!(stats(&Stacked { syscall: false, ..Stacked::new("r-x") }), (1, 0, 0, 0, 0, vec![]));
+        assert_eq!(stats(&Stacked { moved: true, ..Stacked::new("r-x") }), (1, 1, 0, 0, 1, why("moved")));
+        assert_eq!(stats(&Stacked { moved: true, ret: 0, ..Stacked::new("r-x") }), (1, 1, 0, 0, 1, why("moved")), "stos czysty też musi być stabilny");
+        assert_eq!(stats(&Stacked { version: 5, ..Stacked::new("r-x") }), (1, 1, 0, 0, 1, why("unwind-info")));
+        assert_eq!(stats(&Stacked { ret: Stacked::IMG + 0x1180, ..Stacked::new("r-x") }), (1, 1, 1, 0, 0, vec![]), "stos wraca tylko do obrazów i kończy się zerem");
+        assert_eq!(stats(&Stacked { ret: Stacked::STACK + 0x1800, ..Stacked::new("r-x") }), (1, 1, 0, 0, 1, why("own-stack")));
+        assert_eq!(stats(&Stacked { ret: 0x30_0000, ..Stacked::new("r-x") }), (1, 1, 0, 0, 1, why("outside-map")));
+        // funkcja B odtwarza wskaźnik stosu z rbp: bez znanej wartości rbp nie wolno zgadywać
+        assert_eq!(stats(&Stacked { known: 1 << 4, ..Stacked::new("r-x") }), (1, 1, 0, 0, 1, why("register-unknown")));
+        assert_eq!(stats(&Stacked { known: 1 << 4 | 1 << 5, ..Stacked::new("r-x") }), (1, 1, 0, 1, 0, vec![]));
+        // wątki, których rejestrów źródło nie odczytało, są w liczniku osobno
+        assert_eq!(scan_source(&Stacked { unread: 7, ..Stacked::new("r-x") }, &cfg).stacks.unwrap().unread, 7);
+        // mapa bez strony nagłówka obrazu (odczyt z hiperwizora: strona poza tablicami stron procesu):
+        // bez rezerwacji obraz zaczyna się za nagłówkiem i tablicy funkcji nie ma, z rezerwacją odwijanie działa
+        let headless = || Stacked { headless: true, ..Stacked::new("r-x") };
+        assert_eq!(stats(&headless()), (1, 1, 0, 0, 1, why("no-table")));
+        let whole = vec![nanshe_core::Allocation { base: Stacked::IMG, size: 0x3000 }];
+        assert_eq!(stats(&Stacked { allocs: whole.clone(), ..headless() }), (1, 1, 0, 1, 0, vec![]));
+        // rezerwacja jest dobierana po adresie obrazu, nie po kolejności: wcześniejsza rezerwacja innego modułu nie przeszkadza
+        let two = vec![nanshe_core::Allocation { base: 0x30_0000, size: 0x1000 }, nanshe_core::Allocation { base: Stacked::IMG, size: 0x3000 }];
+        assert_eq!(stats(&Stacked { allocs: two, ..headless() }), (1, 1, 0, 1, 0, vec![]));
+        // kontrola: rezerwacja, która nie obejmuje obrazu, niczego nie zmienia
+        assert_eq!(stats(&Stacked { allocs: vec![nanshe_core::Allocation { base: Stacked::IMG - 0x10000, size: 0x10000 }], ..headless() }), (1, 1, 0, 0, 1, why("no-table")));
+        // obraz, którego nazwy pliku źródło nie ustaliło, nadal jest obrazem: odwijanie przez niego działa
+        assert_eq!(stats(&Stacked { nameless: true, ..Stacked::new("r-x") }), (1, 1, 0, 1, 0, vec![]));
+        // źródło, które strony nieobecne w pamięci wypełnia zerami, musi to zgłosić przy odczycie ścisłym:
+        // inaczej pusta tablica funkcji daje fałszywie "czysty" stos (pierwszy wiersz pokazuje ten błąd)
+        assert_eq!(stats(&Stacked { holes: Some(false), ..Stacked::new("r-x") }), (1, 1, 1, 0, 0, vec![]));
+        assert_eq!(stats(&Stacked { holes: Some(true), ..Stacked::new("r-x") }), (1, 1, 0, 0, 1, why("table-read")));
+        // region ze znaleziskiem niesie opis swojej rezerwacji: rozmiar i liczbę regionów mapy w jej zakresie
+        let alloc_of = |s: &dyn MemorySource| scan_source(s, &cfg).regions.iter().find(|r| r.region.base == Stacked::TARGET).unwrap().allocation;
+        assert_eq!(alloc_of(&Stacked::new("r-x")), None);
+        let wide = vec![nanshe_core::Allocation { base: Stacked::STACK, size: 0x10_1000 }];
+        assert_eq!(alloc_of(&Stacked { allocs: wide, ..Stacked::new("r-x") }), Some(AllocInfo { base: Stacked::STACK, size: 0x10_1000, regions: 2 }));
+        let island = vec![nanshe_core::Allocation { base: Stacked::STACK, size: 0x2000 }, nanshe_core::Allocation { base: Stacked::TARGET, size: 0x1000 }];
+        assert_eq!(alloc_of(&Stacked { allocs: island, ..Stacked::new("r-x") }), Some(AllocInfo { base: Stacked::TARGET, size: 0x1000, regions: 1 }));
+        // rezerwacja kończąca się przed regionem albo zaczynająca za nim go nie dotyczy
+        let other = vec![nanshe_core::Allocation { base: Stacked::STACK, size: 0x2000 }, nanshe_core::Allocation { base: Stacked::TARGET + 0x1000, size: 0x1000 }];
+        assert_eq!(alloc_of(&Stacked { allocs: other, ..Stacked::new("r-x") }), None);
         // tylko Windows x64
         struct Lin(Stacked);
         impl MemorySource for Lin {
             fn info(&self) -> SourceInfo { SourceInfo { os: "linux".into(), ..self.0.info() } }
             fn regions(&self) -> Result<Vec<Region>> { self.0.regions() }
             fn read_at(&self, a: u64, b: &mut [u8]) -> Result<usize> { self.0.read_at(a, b) }
-            fn thread_regs(&self) -> Vec<nanshe_core::ThreadRegs> { self.0.thread_regs() }
+            fn thread_regs(&self) -> nanshe_core::ThreadSet { self.0.thread_regs() }
         }
         assert!(thr(&Lin(Stacked::new("r-x"))).is_empty());
+        assert_eq!(scan_source(&Lin(Stacked::new("r-x")), &cfg).stacks, None);
     }
 
     #[test]

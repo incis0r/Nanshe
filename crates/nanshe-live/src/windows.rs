@@ -162,11 +162,35 @@ impl MemorySource for WinProcess {
         out
     }
 
+    /// Rezerwacje: kolejne regiony o wspólnym AllocationBase (także zarezerwowane, bez przydzielonej pamięci).
+    fn allocations(&self) -> Vec<nanshe_core::Allocation> {
+        let mut out: Vec<nanshe_core::Allocation> = Vec::new();
+        let mut addr: usize = 0;
+        for _ in 0..MAX_REGIONS * 2 {
+            // SAFETY: MEMORY_BASIC_INFORMATION to zwykła struktura danych; zero jest poprawną wartością.
+            let mut mbi: MEMORY_BASIC_INFORMATION = unsafe { zeroed() };
+            // SAFETY: wskaźnik na lokalną strukturę o podanym rozmiarze; `addr` to klucz zapytania.
+            let n = unsafe { VirtualQueryEx(self.h.0, addr as *const c_void, &mut mbi, size_of::<MEMORY_BASIC_INFORMATION>()) };
+            if n == 0 { break; }
+            let (base, alloc) = (mbi.BaseAddress as usize, mbi.AllocationBase as u64);
+            let Some(next) = base.checked_add(mbi.RegionSize).filter(|n| *n > addr) else { break };
+            // wolna przestrzeń ma zerowy AllocationBase
+            if alloc != 0 && alloc <= base as u64 {
+                match out.last_mut() {
+                    Some(a) if a.base == alloc => a.size = next as u64 - alloc,
+                    _ => out.push(nanshe_core::Allocation { base: alloc, size: next as u64 - alloc }),
+                }
+            }
+            addr = next;
+        }
+        out
+    }
+
     /// Rejestry wątków (GetThreadContext) bez wstrzymywania: proces nie jest zatrzymywany ani zmieniany.
     /// Dla wątku czekającego w jądrze wartości są stałe; dla działającego mogą być niespójne, co
     /// odbiorca sprawdza sam (drugi odczyt po analizie). Tylko x86_64.
     #[cfg(target_arch = "x86_64")]
-    fn thread_regs(&self) -> Vec<nanshe_core::ThreadRegs> {
+    fn thread_regs(&self) -> nanshe_core::ThreadSet {
         const THREAD_GET_CONTEXT: u32 = 0x0008;
         const THREAD_QUERY_INFORMATION: u32 = 0x0040;
         // CONTEXT_AMD64 | CONTEXT_CONTROL | CONTEXT_INTEGER
@@ -175,6 +199,7 @@ impl MemorySource for WinProcess {
         #[repr(C, align(16))]
         struct Context([u8; 1232]);
         let mut out = Vec::new();
+        let mut unread = 0u32;
         let mut prev: Option<Handle> = None;
         for _ in 0..100_000 {
             let mut next: HANDLE = null_mut();
@@ -192,12 +217,12 @@ impl MemorySource for WinProcess {
                 let q = |o: usize| u64::from_le_bytes(c.0[o..o + 8].try_into().unwrap_or([0; 8]));
                 let mut gpr = [0u64; 16];
                 for (i, g) in gpr.iter_mut().enumerate() { *g = q(0x78 + i * 8); }
-                out.push(nanshe_core::ThreadRegs { tid, rip: q(0xf8), gpr });
-            }
+                out.push(nanshe_core::ThreadRegs { tid, rip: q(0xf8), gpr, known: 0xffff });
+            } else { unread += 1; }
             prev = Some(h);
         }
         out.sort_by_key(|t| t.tid);
-        out
+        nanshe_core::ThreadSet { regs: out, unread }
     }
 
     /// Strony kodu obrazu, które nie są już współdzielone z plikiem (kopia przy zapisie), wg zestawu

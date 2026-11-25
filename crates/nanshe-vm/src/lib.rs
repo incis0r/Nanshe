@@ -88,20 +88,78 @@ pub fn transition_protection(entry: u64) -> Option<(bool, bool)> {
     match (entry >> 5) & 7 { 0 => None, c => Some((c == 4 || c == 6, matches!(c, 2 | 3 | 6 | 7))) }
 }
 
-/// Wpis końcowy (strony) dla adresu wirtualnego i rozmiar strony; None, gdy adres nie jest zmapowany w pamięci
-/// fizycznej. Obsługuje wpisy ważne i przejściowe na każdym poziomie.
-pub fn leaf_entry<T: AsRef<[u64]>>(dtb: u64, va: u64, mut table: impl FnMut(u64) -> Option<T>) -> Option<(u64, u64)> {
+/// Co tablice stron mówią o jednym adresie wirtualnym.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Leaf {
+    /// Strona leży w pamięci fizycznej: wpis (ważny albo przejściowy) i rozmiar strony.
+    Page(u64, u64),
+    /// Wpis strony istnieje, ale nie wskazuje pamięci fizycznej (surowa wartość; zero = nigdy nieużyta w tym procesie).
+    Soft(u64),
+    /// Brak tablicy stron dla tego adresu.
+    Missing,
+}
+
+/// Stan adresu wirtualnego w tablicach stron. Obsługuje wpisy ważne i przejściowe na każdym poziomie.
+pub fn leaf<T: AsRef<[u64]>>(dtb: u64, va: u64, mut table: impl FnMut(u64) -> Option<T>) -> Leaf {
     let mut read = |entry: u64| frame_candidates(entry).into_iter().find_map(|a| table(a).filter(|t| t.as_ref().len() == 512));
     let usable = |e: u64| e & 1 != 0 || is_transition(e);
-    let mut t = read(dtb | 1)?;
+    let Some(mut t) = read(dtb | 1) else { return Leaf::Missing };
     for (shift, large) in [(39u32, 0u64), (30, 1 << 30), (21, 1 << 21)] {
         let e = t.as_ref()[((va >> shift) & 511) as usize];
-        if !usable(e) { return None; }
-        if large != 0 && e & 1 != 0 && e & 0x80 != 0 { return Some((e, large)); }
-        t = read(e)?;
+        if !usable(e) { return Leaf::Missing; }
+        if large != 0 && e & 1 != 0 && e & 0x80 != 0 { return Leaf::Page(e, large); }
+        match read(e) { Some(n) => t = n, None => return Leaf::Missing }
     }
     let e = t.as_ref()[((va >> 12) & 511) as usize];
-    usable(e).then_some((e, 4096))
+    if usable(e) { Leaf::Page(e, 4096) } else { Leaf::Soft(e) }
+}
+
+/// Wpis końcowy (strony) dla adresu wirtualnego i rozmiar strony; None, gdy adres nie jest zmapowany w pamięci
+/// fizycznej.
+pub fn leaf_entry<T: AsRef<[u64]>>(dtb: u64, va: u64, table: impl FnMut(u64) -> Option<T>) -> Option<(u64, u64)> {
+    match leaf(dtb, va, table) { Leaf::Page(e, size) => Some((e, size)), _ => None }
+}
+
+/// Czy zakres [addr, addr + len) mieści się w pamięci fizycznej gościa o najwyższym adresie `max`.
+/// Wpisy stron nieważnych dla procesora niosą w adresie dodatkowe wysokie bity (zob. `frame_candidates`),
+/// a biblioteka czytająca pamięć QEMU dla adresu poza pamięcią gościa potrafi zwrócić sukces i same zera:
+/// bez tej kontroli błędna kandydatura "czytała się" jako pusta strona.
+pub fn within_physical(addr: u64, len: usize, max: u64) -> bool {
+    len > 0 && matches!(addr.checked_add(len as u64 - 1), Some(last) if last <= max)
+}
+
+/// Region współdzielony (plik albo sekcja) i jego prototypowe wpisy stron w jądrze: pierwszy i ostatni
+/// z ciągłej tablicy (pola FirstPrototypePte i LastContiguousPte opisu regionu).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ProtoVad { pub start: u64, pub end: u64, pub first: u64, pub last: u64 }
+
+/// Wartość pola adresu we wpisie strony, która każe szukać wpisu prototypowego przez opis regionu (VAD).
+const PROTO_VIA_VAD: u64 = 0xffff_ffff_0000;
+
+/// Adres prototypowego wpisu strony dla adresu wirtualnego, którego proces nie ma w swoich tablicach stron.
+/// Strona pliku albo sekcji współdzielonej, której proces jeszcze nie dotknął (albo którą oddał), może nadal
+/// leżeć w pamięci fizycznej: wskazuje ją wpis prototypowy w jądrze. Jego adres jest we wpisie strony procesu
+/// (bit 10, adres w bitach 16-63) albo wynika z opisu regionu, gdy wpis jest pusty lub odsyła do opisu regionu.
+/// `raw`: surowy wpis strony albo None, gdy brak tablicy stron. `vads` posortowane po adresie.
+pub fn proto_pte_addr(raw: Option<u64>, va: u64, vads: &[ProtoVad]) -> Option<u64> {
+    let via_vad = match raw {
+        None | Some(0) => true,
+        // wpis ważny albo przejściowy nie potrzebuje prototypu; bez bitu 10 to plik wymiany albo strona zerowa
+        Some(e) if e & 1 != 0 || e & (1 << 10) == 0 => return None,
+        Some(e) if e >> 16 == PROTO_VIA_VAD => true,
+        Some(e) => return Some(((e as i64) >> 16) as u64).filter(|a| *a >= KERNEL_MIN && a & 7 == 0),
+    };
+    if !via_vad { return None; }
+    let i = vads.partition_point(|v| v.end <= va);
+    let v = vads.get(i).filter(|v| v.start <= va)?;
+    let addr = v.first.checked_add(((va - v.start) >> 12).checked_mul(8)?)?;
+    (v.first >= KERNEL_MIN && v.first & 7 == 0 && addr <= v.last).then_some(addr)
+}
+
+/// Adresy fizyczne strony wskazanej przez wpis prototypowy; pusto, gdy strona nie leży w pamięci (wpis
+/// odsyła do pliku albo jest pusty).
+pub fn proto_frames(proto: u64) -> Vec<u64> {
+    if proto & 1 != 0 || is_transition(proto) { frame_candidates(proto) } else { Vec::new() }
 }
 
 pub fn walk_page_tables(dtb: u64, mut table: impl FnMut(u64) -> Option<Vec<u64>>) -> (Vec<PageRange>, bool) {
@@ -232,6 +290,73 @@ pub fn walk_vads(root: u64, o: &VadOffsets, mut read: impl FnMut(u64, &mut [u8])
     out.retain(|v| { let keep = v.start >= last_end; if keep { last_end = v.end; } keep });
     let no_overlap = out.len() == before;
     (out, complete && no_overlap)
+}
+
+/// Położenie pól potrzebnych do odczytania rejestrów wątków z jądra; pochodzi z pliku symboli.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ThreadOffsets {
+    /// Głowa listy wątków w opisie procesu (_EPROCESS.ThreadListHead) i ogniwo tej listy w opisie wątku (_ETHREAD.ThreadListEntry).
+    pub list_head: usize, pub list_entry: usize,
+    /// Identyfikatory procesu i wątku (_ETHREAD.Cid), stan wątku i wskaźnik ramki pułapki (_KTHREAD.State, _KTHREAD.TrapFrame).
+    pub cid: usize, pub state: usize, pub trap_frame: usize,
+    /// Rejestry trybu użytkownika w ramce pułapki (_KTRAP_FRAME.Rip, Rsp, Rbp).
+    pub rip: usize, pub rsp: usize, pub rbp: usize,
+}
+
+/// Limit wątków jednego procesu (lista pochodzi z pamięci gościa).
+pub const MAX_THREADS: usize = 1 << 16;
+/// Wartość pola stanu wątku, który czeka (KTHREAD_STATE: Waiting).
+const THREAD_WAITING: u8 = 5;
+
+/// Rejestry trybu użytkownika wątków, które czekają w jądrze. Wejście do jądra zapisuje je w ramce pułapki
+/// na stosie jądrowym wątku; dopóki wątek czeka, ramka się nie zmienia. Wywołanie systemowe zapisuje tam
+/// na pewno adres powrotu, wskaźnik stosu i rbp; pozostałe rejestry nieulotne trafiają na stos jądra
+/// w innych miejscach, więc są zgłaszane jako nieznane. Wątek działający albo gotowy ma w polu ramki
+/// wartość z poprzedniego wejścia do jądra, dlatego liczy się tylko stan "czeka".
+/// `read` czyta pamięć jądra gościa i zwraca false, gdy się nie da (np. stos jądrowy wyrzucony z pamięci).
+pub fn walk_threads(eprocess: u64, o: &ThreadOffsets, mut read: impl FnMut(u64, &mut [u8]) -> bool) -> (Vec<nanshe_core::ThreadRegs>, ThreadCounts) {
+    let mut u64at = |a: u64| -> Option<u64> { let mut b = [0u8; 8]; read(a, &mut b).then(|| u64::from_le_bytes(b)) };
+    let kernel = |a: u64| a >= KERNEL_MIN && a & 7 == 0;
+    let (mut out, mut n) = (Vec::new(), ThreadCounts::default());
+    let Some(head) = eprocess.checked_add(o.list_head as u64).filter(|a| kernel(*a)) else { return (out, n) };
+    let mut seen = std::collections::HashSet::new();
+    let mut link = u64at(head);
+    while let Some(entry) = link {
+        // lista jest cykliczna: koniec to powrót do głowy; ogniwo spoza pamięci jądra albo powtórzone przerywa przejście
+        if entry == head || !kernel(entry) || seen.len() >= MAX_THREADS || !seen.insert(entry) { break; }
+        link = u64at(entry);
+        n.total += 1;
+        let Some(thread) = entry.checked_sub(o.list_entry as u64).filter(|a| kernel(*a)) else { n.unreadable += 1; continue };
+        let Some(state) = u64at(thread + o.state as u64).map(|v| v as u8) else { n.unreadable += 1; continue };
+        if state != THREAD_WAITING { n.not_waiting += 1; continue; }
+        let Some(tid) = u64at(thread + o.cid as u64 + 8).and_then(|v| u32::try_from(v).ok()).filter(|t| *t != 0) else { n.unreadable += 1; continue };
+        let Some(frame) = u64at(thread + o.trap_frame as u64) else { n.unreadable += 1; continue };
+        if !kernel(frame) { n.no_frame += 1; continue; }
+        let (Some(rip), Some(rsp), Some(rbp)) = (u64at(frame + o.rip as u64), u64at(frame + o.rsp as u64), u64at(frame + o.rbp as u64)) else { n.frame_unreadable += 1; continue };
+        // ramka wejścia z trybu użytkownika: adres instrukcji i stos w przestrzeni użytkownika
+        if rip == 0 || rip > USER_MAX || rsp == 0 || rsp > USER_MAX { n.not_user += 1; continue; }
+        let mut gpr = [0u64; 16];
+        gpr[4] = rsp; gpr[5] = rbp;
+        out.push(nanshe_core::ThreadRegs { tid, rip, gpr, known: 1 << 4 | 1 << 5 });
+    }
+    out.sort_by_key(|t| t.tid);
+    (out, n)
+}
+
+/// Ile wątków procesu było na liście jądra i dlaczego części z nich nie dało się użyć.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ThreadCounts {
+    pub total: u32,
+    /// Wątek działa albo jest gotowy do działania: jego ramka pułapki jest nieaktualna.
+    pub not_waiting: u32,
+    /// Opis wątku nieczytelny.
+    pub unreadable: u32,
+    /// Wątek bez ramki pułapki (wątek jądra albo wątek, który jeszcze nie wszedł do jądra z trybu użytkownika).
+    pub no_frame: u32,
+    /// Ramka pułapki poza pamięcią fizyczną (stos jądrowy wątku czekającego długo bywa z niej usuwany).
+    pub frame_unreadable: u32,
+    /// Ramka nie pochodzi z trybu użytkownika.
+    pub not_user: u32,
 }
 
 /// Regiony z zakresów stron i drzewa VAD: ochrona pochodzi z tablic stron (stan faktyczny), a rodzaj regionu
@@ -529,6 +654,113 @@ mod tests {
         assert_eq!((v.iter().map(|x| x.start).collect::<Vec<_>>(), complete), (vec![0x20_000], false));
         // położenia pól poza rozsądnym rozmiarem węzła
         assert_eq!(walk_vads(K, &VadOffsets { flags: 1 << 20, ..VO }, |_, _| true), (vec![], false));
+    }
+
+    const TO: ThreadOffsets = ThreadOffsets { list_head: 0x5e0, list_entry: 0x4e8, cid: 0x478, state: 0x184, trap_frame: 0x90, rip: 0x168, rsp: 0x180, rbp: 0x158 };
+    /// Pamięć jądra z procesem i wątkami: (numer, stan, rip, rsp, rbp); wątek i ma opis pod K + 0x10000 * (i + 1).
+    fn thread_mem(threads: &[(u32, u8, u64, u64, u64)]) -> std::collections::HashMap<u64, u64> {
+        let mut m = std::collections::HashMap::new();
+        let head = K + TO.list_head as u64;
+        let entry = |i: usize| K + 0x10000 * (i as u64 + 1) + TO.list_entry as u64;
+        m.insert(head, if threads.is_empty() { head } else { entry(0) });
+        for (i, &(tid, state, rip, rsp, rbp)) in threads.iter().enumerate() {
+            let (t, frame) = (K + 0x10000 * (i as u64 + 1), K + 0x10000 * (i as u64 + 1) + 0x8000);
+            m.insert(entry(i), if i + 1 < threads.len() { entry(i + 1) } else { head });
+            m.insert(t + TO.state as u64, state as u64 | 0xaa00); // sąsiednie bajty pola stanu nie mają znaczenia
+            m.insert(t + TO.cid as u64 + 8, tid as u64);
+            m.insert(t + TO.trap_frame as u64, frame);
+            m.insert(frame + TO.rip as u64, rip); m.insert(frame + TO.rsp as u64, rsp); m.insert(frame + TO.rbp as u64, rbp);
+        }
+        m
+    }
+    fn kread(m: &std::collections::HashMap<u64, u64>) -> impl FnMut(u64, &mut [u8]) -> bool + '_ {
+        move |a, b| match m.get(&a) { Some(v) => { b.copy_from_slice(&v.to_le_bytes()[..b.len()]); true } None => false }
+    }
+
+    #[test]
+    fn prototype_entry_is_found_in_the_page_entry_or_through_the_region() {
+        let vads = [ProtoVad { start: 0x7ff0_0000_0000, end: 0x7ff0_0001_0000, first: K + 0x1000, last: K + 0x1000 + 15 * 8 },
+            ProtoVad { start: 0x7ff0_0002_0000, end: 0x7ff0_0003_0000, first: K + 0x2000, last: K + 0x2000 + 3 * 8 }];
+        let va = 0x7ff0_0000_3123u64;
+        // adres wprost we wpisie strony (bit 10, adres w bitach 16-63 z rozszerzeniem znaku)
+        let direct = ((K + 0x5008) << 16) | 1 << 10;
+        assert_eq!(proto_pte_addr(Some(direct), va, &vads), Some(K + 0x5008));
+        // wpis pusty, brak tablicy stron i wpis odsyłający do opisu regionu: adres z regionu, czwarta strona
+        for raw in [Some(0), None, Some(PROTO_VIA_VAD << 16 | 1 << 10)] { assert_eq!(proto_pte_addr(raw, va, &vads), Some(K + 0x1000 + 3 * 8), "{raw:x?}"); }
+        // kontrole: wpis ważny, przejściowy, plik wymiany (bez bitu 10), adres spoza jądra albo niewyrównany
+        // (wpis pliku wymiany może mieć w starszych bitach wartość wyglądającą jak adres jądra: bez bitu 10 to nie prototyp)
+        for raw in [0x1234_5067u64, 0x1234_5000 | 1 << 11, 0x1234_0000_0080, ((K + 0x5008) << 16) | 0x80, (0x7000_0000u64 << 16) | 1 << 10, ((K + 0x5003) << 16) | 1 << 10] {
+            assert_eq!(proto_pte_addr(Some(raw), va, &vads), None, "{raw:x}");
+        }
+        // adres poza regionami, w luce między nimi i strona za końcem ciągłej tablicy wpisów
+        for a in [0x1000u64, 0x7ff0_0001_8000, 0x7ff0_0002_4000] { assert_eq!(proto_pte_addr(Some(0), a, &vads), None, "{a:x}"); }
+        assert_eq!(proto_pte_addr(Some(0), 0x7ff0_0002_3000, &vads), Some(K + 0x2000 + 3 * 8));
+        // region z tablicą wpisów spoza pamięci jądra nie jest używany
+        assert_eq!(proto_pte_addr(Some(0), 0x5000, &[ProtoVad { start: 0, end: 0x10000, first: 0x4000, last: u64::MAX }]), None);
+        // wpis prototypowy: ważny i przejściowy dają adres strony, odsyłający do pliku i pusty nie
+        assert_eq!(proto_frames(0x8000_0000_1234_5025)[0], 0x1234_5000);
+        assert_eq!(proto_frames(0x1234_5000 | 1 << 11)[0], 0x1234_5000);
+        assert!(proto_frames(0xffff_9000_0000_0000 | 1 << 10).is_empty() && proto_frames(0).is_empty());
+    }
+
+    #[test]
+    fn physical_reads_stay_inside_guest_memory() {
+        let max = 0x1_7fff_ffff;
+        assert!(within_physical(0x1_7606_0000, 4096, max) && within_physical(max, 1, max) && within_physical(0, 4096, max));
+        // adres z dodatkowym wysokim bitem, zakres wychodzący za koniec, przepełnienie i pusty odczyt
+        for (a, n) in [(0x2001_7606_0000u64, 4096usize), (max, 2), (max - 4094, 4096), (u64::MAX, 8), (0x1000, 0)] { assert!(!within_physical(a, n, max), "{a:x} {n}"); }
+    }
+
+    #[test]
+    fn page_state_distinguishes_present_soft_and_missing() {
+        let mut t = tables(&[(0x1000, 0, 0x2007), (0x2000, 0, 0x3007), (0x3000, 0, 0x4007), (0x4000, 0, 0x5025), (0x4000, 1, 0xabc0_0400), (0x4000, 2, 0)]);
+        assert_eq!(leaf(0x1000, 0, &mut t), Leaf::Page(0x5025, 4096));
+        assert_eq!(leaf(0x1000, 0x1000, &mut t), Leaf::Soft(0xabc0_0400));
+        assert_eq!(leaf(0x1000, 0x2000, &mut t), Leaf::Soft(0));
+        assert_eq!(leaf(0x1000, 1 << 30, &mut t), Leaf::Missing);
+        assert_eq!((leaf_entry(0x1000, 0, &mut t), leaf_entry(0x1000, 0x1000, &mut t)), (Some((0x5025, 4096)), None));
+    }
+
+    #[test]
+    fn waiting_threads_give_user_registers_from_their_trap_frames() {
+        let m = thread_mem(&[(40, 5, 0x7ffd_0000_1012, 0x20_f000, 0x20_f100), (12, 2, 0x7ffd_0000_2012, 0x30_f000, 1), (28, 5, 0x7ffd_0000_3012, 0x40_f000, 2)]);
+        let (t, n) = walk_threads(K, &TO, kread(&m));
+        assert_eq!(n, ThreadCounts { total: 3, not_waiting: 1, ..Default::default() });
+        // tylko wątki czekające, posortowane; znane są wyłącznie rsp i rbp
+        assert_eq!(t.iter().map(|t| (t.tid, t.rip, t.gpr[4], t.gpr[5], t.known)).collect::<Vec<_>>(),
+            [(28, 0x7ffd_0000_3012, 0x40_f000, 2, 0x30), (40, 0x7ffd_0000_1012, 0x20_f000, 0x20_f100, 0x30)]);
+        assert!(t.iter().all(|t| t.gpr.iter().enumerate().all(|(i, v)| i == 4 || i == 5 || *v == 0)));
+        assert!(walk_threads(K, &TO, kread(&thread_mem(&[]))).0.is_empty());
+    }
+
+    #[test]
+    fn thread_walk_survives_hostile_lists_and_frames() {
+        let good = (40u32, 5u8, 0x7ffd_0000_1012u64, 0x20_f000u64, 0u64);
+        let tids = |m: &std::collections::HashMap<u64, u64>| walk_threads(K, &TO, kread(m)).0.iter().map(|t| t.tid).collect::<Vec<_>>();
+        // ramka z adresem jądra albo zerem w rip lub rsp to nie wejście z trybu użytkownika
+        for bad in [(1, 5, K, 0x20_f000, 0), (1, 5, 0, 0x20_f000, 0), (1, 5, 0x7ffd_0000_1012, K, 0), (1, 5, 0x7ffd_0000_1012, 0, 0), (0, 5, 0x7ffd_0000_1012, 0x20_f000, 0)] {
+            assert_eq!(tids(&thread_mem(&[bad, good])), [40], "{bad:x?}");
+        }
+        // wskaźnik ramki poza pamięcią jądra, nieczytelna ramka (stos jądrowy poza pamięcią), nieczytelny opis wątku
+        let frame_ptr = K + 0x10000 + TO.trap_frame as u64;
+        let mut m = thread_mem(&[good, (41, 5, 0x7ffd_0000_1012, 0x20_f000, 0)]); m.insert(frame_ptr, 0x1000);
+        assert_eq!(tids(&m), [41]);
+        let mut m = thread_mem(&[good, (41, 5, 0x7ffd_0000_1012, 0x20_f000, 0)]); m.remove(&(K + 0x10000 + 0x8000 + TO.rsp as u64));
+        assert_eq!(tids(&m), [41]);
+        let mut m = thread_mem(&[good, (41, 5, 0x7ffd_0000_1012, 0x20_f000, 0)]); m.remove(&(K + 0x10000 + TO.state as u64));
+        assert_eq!(tids(&m), [41]);
+        // liczniki mówią, dlaczego wątek odpadł
+        let mut m = thread_mem(&[good, (41, 5, 0x7ffd_0000_1012, 0x20_f000, 0), (42, 5, K, 1, 0), (43, 5, 0x7ffd_0000_1012, 0x20_f000, 0)]);
+        m.remove(&(K + 0x20000 + 0x8000 + TO.rip as u64)); m.insert(K + 0x40000 + TO.trap_frame as u64, 0);
+        assert_eq!(walk_threads(K, &TO, kread(&m)).1, ThreadCounts { total: 4, frame_unreadable: 1, not_user: 1, no_frame: 1, ..Default::default() });
+        // lista zapętlona na sobie (bez powrotu do głowy) kończy się po jednym obiegu; ogniwo spoza jądra ją przerywa
+        let mut m = thread_mem(&[good]); m.insert(K + 0x10000 + TO.list_entry as u64, K + 0x10000 + TO.list_entry as u64);
+        assert_eq!(tids(&m), [40]);
+        let mut m = thread_mem(&[good, (41, 5, 0x7ffd_0000_1012, 0x20_f000, 0)]); m.insert(K + 0x10000 + TO.list_entry as u64, 0x4141_4141);
+        assert_eq!(tids(&m), [40]);
+        // nieczytelna głowa listy, proces spoza pamięci jądra
+        assert!(walk_threads(K, &TO, |_, _| false).0.is_empty());
+        assert!(walk_threads(0x1000, &TO, kread(&thread_mem(&[good]))).0.is_empty());
     }
 
     #[test]

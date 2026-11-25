@@ -192,9 +192,9 @@ mod tests {
         let f = Finding { id: "5:7000:RWX".into(), detector: "rwx".into(), tag: "RWX".into(), addr: 0x7000, size: 8192,
             prot: region.prot, entropy: None, weight: 30, reason: "powód z /home/jan".into(), bytes_hex: Some(hex(bytes)) };
         let rr = RegionReport { region, bytes_read: 8192, truncated: false, entropy_max: Some(7.9), entropy_mean: Some(5.0),
-            zero_pages: 0, score: 60, severity: Severity::High, allowlisted: None, findings: vec![f], heat: None, profile: None, strings: vec![], sha256: None };
+            zero_pages: 0, score: 60, severity: Severity::High, allowlisted: None, allocation: None, findings: vec![f], heat: None, profile: None, strings: vec![], sha256: None };
         let p = ProcessReport { info: SourceInfo { os: "linux".into(), arch: "x86_64".into(), pid: Some(5), name: Some("tajny-proces".into()), source_type: "live".into(), exe: None, exe_deleted: false, exe_verified: false },
-            regions_total: 1, regions_unreadable: 0, bytes_scanned: 8192, max_severity: Severity::High, error: None, regions: vec![rr.clone()], layout: None, context: None };
+            regions_total: 1, regions_unreadable: 0, bytes_scanned: 8192, max_severity: Severity::High, error: None, regions: vec![rr.clone()], layout: None, stacks: None, context: None };
         (p, rr)
     }
 

@@ -167,8 +167,45 @@ pub struct ThreadInfo { pub tid: u32, pub addr: u64 }
 
 /// Rejestry wątku potrzebne do odwinięcia jego stosu (x86_64): adres instrukcji i 16 rejestrów
 /// ogólnych w numeracji procesora (0 rax, 1 rcx, 2 rdx, 3 rbx, 4 rsp, 5 rbp, 6 rsi, 7 rdi, 8-15).
+/// `known`: maska bitowa rejestrów, których wartość źródło faktycznie zna (odczyt z jądra gościa
+/// daje tylko część rejestrów); rsp musi być znany zawsze.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ThreadRegs { pub tid: u32, pub rip: u64, pub gpr: [u64; 16] }
+pub struct ThreadRegs { pub tid: u32, pub rip: u64, pub gpr: [u64; 16], pub known: u16 }
+
+/// Rejestry wątków procesu i liczba wątków, których rejestrów źródło nie umiało odczytać (np. odmowa
+/// dostępu albo stos jądrowy wątku wyrzucony z pamięci gościa).
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct ThreadSet { pub regs: Vec<ThreadRegs>, pub unread: u32 }
+
+/// Rezerwacja przestrzeni adresowej (Windows: jedno wywołanie przydziału albo jedno mapowanie, czyli
+/// jeden opis regionu w jądrze). Kilka regionów o różnej ochronie może należeć do jednej rezerwacji.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Allocation { pub base: u64, pub size: u64 }
+
+/// Rezerwacja, do której należy region ze znaleziskiem: adres, rozmiar i liczba regionów mapy w jej zakresie.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct AllocInfo { pub base: u64, pub size: u64, pub regions: u32 }
+
+/// Ile stosów wątków procesu udało się zbadać (Windows x64). Brak znalezisk znaczy coś tylko wtedy,
+/// gdy stosy faktycznie odwinięto do dna.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct StackStats {
+    /// Wątki, których rejestry źródło odczytało.
+    pub threads: u32,
+    /// Wątki, których rejestrów źródło nie umiało odczytać: ich stosy nie zostały zbadane.
+    #[serde(skip_serializing_if = "is_zero", default)]
+    pub unread: u32,
+    /// Wątki czekające w wywołaniu jądra (tylko ich stosy są odwijane).
+    pub waiting: u32,
+    /// Stosy odwinięte do dna; każda ramka wraca do obrazu modułu.
+    pub complete: u32,
+    /// Stosy z adresem powrotu poza obrazami modułów (zgłoszone jako znaleziska).
+    pub foreign: u32,
+    /// Stosy, których odwijanie porzucono, z podziałem na powody (stałe tokeny).
+    pub abandoned: u32,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty", default)]
+    pub reasons: std::collections::BTreeMap<String, u32>,
+}
 
 /// Zmiana kodu pochodzącego z pliku, stwierdzona przez backend dla jednego regionu.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -190,11 +227,16 @@ pub trait MemorySource {
     fn regions(&self) -> Result<Vec<Region>>;
     /// Częściowy odczyt dozwolony; zwraca liczbę przeczytanych bajtów.
     fn read_at(&self, addr: u64, buf: &mut [u8]) -> Result<usize>;
+    /// Odczyt całego bufora albo nic: true tylko wtedy, gdy każdy bajt pochodzi z pamięci procesu. Źródła,
+    /// które w `read_at` wypełniają zerami strony nieobecne w pamięci, muszą tę metodę zastąpić.
+    fn read_exact_at(&self, addr: u64, buf: &mut [u8]) -> bool { matches!(self.read_at(addr, buf), Ok(n) if n == buf.len()) }
     /// Wątki z adresami; pusta lista, gdy źródło ich nie udostępnia.
     fn threads(&self) -> Vec<ThreadInfo> { Vec::new() }
     /// Rejestry wątków odczytane bez wstrzymywania procesu; pusta lista, gdy źródło ich nie udostępnia.
     /// Wartości wątku, który właśnie działa, mogą być niespójne: odbiorca sprawdza je sam.
-    fn thread_regs(&self) -> Vec<ThreadRegs> { Vec::new() }
+    fn thread_regs(&self) -> ThreadSet { ThreadSet::default() }
+    /// Rezerwacje przestrzeni adresowej posortowane po adresie; pusta lista, gdy źródło ich nie zna.
+    fn allocations(&self) -> Vec<Allocation> { Vec::new() }
     /// Ile bajtów kodu z pliku zostało w tym regionie zmienionych w pamięci (strony, które przestały
     /// być współdzielone z plikiem) i adres pierwszej takiej strony, jeśli znany. None: źródło tego nie wie.
     fn modified_code(&self, _r: &Region) -> Option<CodeChange> { None }
@@ -202,6 +244,8 @@ pub trait MemorySource {
     /// raportu). None: backend takiego dowodu nie ma i decyduje lista dozwolonych programów.
     fn jit_evidence(&self) -> Option<String> { None }
 }
+
+fn is_zero(v: &u32) -> bool { *v == 0 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[serde(rename_all = "lowercase")]
@@ -236,6 +280,10 @@ pub struct RegionReport {
     /// powód obniżenia punktacji (lista dozwolonych), jawnie w raporcie
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub allowlisted: Option<String>,
+    /// rezerwacja przestrzeni adresowej, do której należy region (gdy źródło ją zna): pojedynczy
+    /// przydział wstrzykniętego kodu to zwykle samotny region, sterta kodu JIT to duża rezerwacja
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub allocation: Option<AllocInfo>,
     pub findings: Vec<Finding>,
     /// entropia komórek mapy ciepła w dziesiątych częściach bita (0..=80)
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -279,6 +327,9 @@ pub struct ProcessReport {
     /// pełna mapa regionów procesu ze znaleziskami od wagi "podejrzane" (do diagramu w raporcie)
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub layout: Option<Vec<Region>>,
+    /// pokrycie odwijania stosów wątków; brak, gdy źródło nie udostępnia rejestrów wątków
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub stacks: Option<StackStats>,
     /// kontekst systemowy procesu zebrany poza pamięcią (rodzice, sieć, pliki)
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub context: Option<ProcessContext>,

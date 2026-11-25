@@ -5,7 +5,7 @@
 //! z pamięci badanego procesu, więc są niezaufane: każda pętla ma limit, każdy odczyt może się
 //! nie udać, a wynik wątpliwy jest porzucany zamiast zgadywany.
 
-use nanshe_core::{Region, RegionKind, ThreadRegs};
+use nanshe_core::{Allocation, Region, RegionKind, ThreadRegs};
 use std::collections::HashMap;
 
 /// Najwięcej ramek jednego wątku.
@@ -24,12 +24,26 @@ const RSP: usize = 4;
 pub struct Image { pub base: u64, pub end: u64 }
 
 /// Obrazy modułów z mapy regionów (posortowanej po adresie). Kolejne regiony tego samego pliku
-/// tworzą jeden obraz; jego początek to nagłówek PE.
-pub fn images(regions: &[Region]) -> Vec<Image> {
+/// tworzą jeden obraz; jego początek to nagłówek PE. Mapa zbudowana z tablic stron (odczyt
+/// z hiperwizora) zawiera tylko strony obecne w pamięci, więc początek i koniec obrazu bywają
+/// ucięte: gdy źródło zna rezerwacje, obraz obejmuje całą rezerwację, w której leży.
+pub fn images(regions: &[Region], allocs: &[Allocation]) -> Vec<Image> {
+    let mut out = image_runs(regions);
+    for img in &mut out {
+        let i = allocs.partition_point(|a| a.base.saturating_add(a.size) <= img.base);
+        if let Some(a) = allocs.get(i).filter(|a| a.base <= img.base) { img.base = a.base; img.end = img.end.max(a.base.saturating_add(a.size)); }
+    }
+    // dwa ciągi regionów tej samej rezerwacji (rozdzielone innym regionem) stają się jednym obrazem
+    out.dedup_by(|b, a| if b.base < a.end { a.end = a.end.max(b.end); true } else { false });
+    out
+}
+
+fn image_runs(regions: &[Region]) -> Vec<Image> {
     let mut out: Vec<Image> = Vec::new();
     let mut last: Option<&str> = None;
     for r in regions {
-        let name = if r.kind == RegionKind::Image { r.backing.as_deref() } else { None };
+        // obraz, którego nazwy pliku źródło nie ustaliło, nadal jest obrazem (mapowaniem pliku wykonywalnego)
+        let name = if r.kind == RegionKind::Image { Some(r.backing.as_deref().unwrap_or("")) } else { None };
         match (name, last, out.last_mut()) {
             (Some(n), Some(l), Some(img)) if n == l && r.base >= img.end => img.end = r.base.saturating_add(r.size),
             (Some(_), _, _) => out.push(Image { base: r.base, end: r.base.saturating_add(r.size) }),
@@ -89,25 +103,55 @@ fn lookup(m: &dyn Mem, t: Table, rva: u32) -> Result<Option<Func>, ()> {
     Ok(None)
 }
 
-/// Stan odwijania: rejestry ogólne (numeracja x64: 4 = rsp) i adres instrukcji.
+/// Dlaczego odwijanie stosu wątku zostało porzucone. Token trafia do wyniku skanu, więc jest stały.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reason {
+    /// Obraz nie ma czytelnej tablicy funkcji (nagłówek PE albo katalog wyjątków nie leży w pamięci lub jest zły).
+    NoTable,
+    /// Nie udało się przeczytać wpisu tablicy funkcji.
+    Table,
+    /// Informacji o odwijaniu funkcji nie udało się przeczytać.
+    InfoRead,
+    /// Informacja o odwijaniu funkcji jest nieobsługiwana, błędna albo jej łańcuch jest za długi.
+    Info,
+    /// Nie udało się przeczytać stosu.
+    Stack,
+    /// Wskaźnik stosu po odwinięciu ramki nie rośnie, jest niewyrównany albo odszedł za daleko.
+    Bounds,
+    /// Limit liczby ramek.
+    Frames,
+    /// Funkcja ustawia wskaźnik stosu z rejestru, którego wartości źródło nie zna.
+    Register,
+}
+
+impl Reason {
+    pub fn token(self) -> &'static str {
+        match self { Reason::NoTable => "no-table", Reason::Table => "table-read", Reason::InfoRead => "unwind-info-read", Reason::Info => "unwind-info", Reason::Stack => "stack-read",
+            Reason::Bounds => "stack-bounds", Reason::Frames => "frame-limit", Reason::Register => "register-unknown" }
+    }
+}
+
+/// Stan odwijania: rejestry ogólne (numeracja x64: 4 = rsp), maska znanych rejestrów i adres instrukcji.
 #[derive(Clone, Debug)]
-struct State { gpr: [u64; 16], rip: u64 }
+struct State { gpr: [u64; 16], known: u16, rip: u64 }
 
 /// Cofa skutki prologu jednej funkcji. `off`: odległość rip od początku funkcji (operacje prologu
 /// późniejsze niż rip jeszcze się nie wykonały). Zwraca true, gdy ramka była ramką maszynową
 /// (rip i rsp są już ustawione, nie ma adresu powrotu do zdjęcia).
-fn undo_prolog(m: &dyn Mem, img: &Image, mut f: Func, off: u32, s: &mut State) -> Option<bool> {
+fn undo_prolog(m: &dyn Mem, img: &Image, mut f: Func, off: u32, s: &mut State) -> Result<bool, Reason> {
+    use Reason::{Bounds, Info, InfoRead, Stack};
+    let add = |a: u64, b: u64| a.checked_add(b).ok_or(Bounds);
     for depth in 0..MAX_CHAIN {
         // Bit 0 oznacza wskazanie na inny wpis tablicy zamiast na informację o odwijaniu.
-        if f.info & 1 == 1 { f = func_at(m, img.base.checked_add((f.info & !1) as u64)?)?; continue; }
-        let ui = img.base.checked_add(f.info as u64)?;
-        if ui.checked_add(4)? > img.end { return None; }
-        let h = rd::<4>(m, ui)?;
+        if f.info & 1 == 1 { f = func_at(m, img.base.checked_add((f.info & !1) as u64).ok_or(Info)?).ok_or(InfoRead)?; continue; }
+        let ui = img.base.checked_add(f.info as u64).ok_or(Info)?;
+        if ui.checked_add(4).ok_or(Info)? > img.end { return Err(Info); }
+        let h = rd::<4>(m, ui).ok_or(InfoRead)?;
         let (version, flags, count, freg, foff) = (h[0] & 7, h[0] >> 3, h[2] as usize, (h[3] & 15) as usize, (h[3] >> 4) as u64);
-        if version != 1 && version != 2 { return None; }
+        if version != 1 && version != 2 { return Err(Info); }
         let mut codes = vec![0u8; count * 2];
-        if count > 0 && !m.read(ui + 4, &mut codes) { return None; }
-        let slot = |i: usize| -> Option<u64> { codes.get(i * 2..i * 2 + 2).map(|b| u16::from_le_bytes([b[0], b[1]]) as u64) };
+        if count > 0 && !m.read(ui + 4, &mut codes) { return Err(InfoRead); }
+        let slot = |i: usize| -> Result<u64, Reason> { codes.get(i * 2..i * 2 + 2).map(|b| u16::from_le_bytes([b[0], b[1]]) as u64).ok_or(Info) };
         let mut i = 0;
         while i < count {
             let (at, op, info) = (codes[i * 2] as u32, codes[i * 2 + 1] & 15, (codes[i * 2 + 1] >> 4) as usize);
@@ -115,82 +159,103 @@ fn undo_prolog(m: &dyn Mem, img: &Image, mut f: Func, off: u32, s: &mut State) -
             let done = depth > 0 || off >= at;
             let sp = s.gpr[RSP];
             let len = match op {
-                0 => { if done { s.gpr[info] = u64at(m, sp)?; s.gpr[RSP] = sp.checked_add(8)?; } 1 } // PUSH_NONVOL
+                0 => { if done { s.gpr[info] = u64at(m, sp).ok_or(Stack)?; s.known |= 1 << info; s.gpr[RSP] = add(sp, 8)?; } 1 } // PUSH_NONVOL
                 1 => { // ALLOC_LARGE
                     let (n, len) = if info == 0 { (slot(i + 1)? * 8, 2) } else { (slot(i + 1)? | slot(i + 2)? << 16, 3) };
-                    if done { s.gpr[RSP] = sp.checked_add(n)?; }
+                    if done { s.gpr[RSP] = add(sp, n)?; }
                     len
                 }
-                2 => { if done { s.gpr[RSP] = sp.checked_add(info as u64 * 8 + 8)?; } 1 } // ALLOC_SMALL
-                3 => { if done { s.gpr[RSP] = s.gpr[freg].checked_sub(foff * 16)?; } 1 } // SET_FPREG
-                4 => { if done { s.gpr[info] = u64at(m, sp.checked_add(slot(i + 1)? * 8)?)?; } 2 } // SAVE_NONVOL
-                5 => { if done { s.gpr[info] = u64at(m, sp.checked_add(slot(i + 1)? | slot(i + 2)? << 16)?)?; } 3 } // SAVE_NONVOL_FAR
+                2 => { if done { s.gpr[RSP] = add(sp, info as u64 * 8 + 8)?; } 1 } // ALLOC_SMALL
+                3 => { // SET_FPREG: wskaźnik stosu wraca z rejestru ramki, więc jego wartość musi być znana
+                    if done {
+                        if s.known & (1 << freg) == 0 { return Err(Reason::Register); }
+                        s.gpr[RSP] = s.gpr[freg].checked_sub(foff * 16).ok_or(Bounds)?;
+                    }
+                    1
+                }
+                4 => { let o = slot(i + 1)? * 8; if done { s.gpr[info] = u64at(m, add(sp, o)?).ok_or(Stack)?; s.known |= 1 << info; } 2 } // SAVE_NONVOL
+                5 => { let o = slot(i + 1)? | slot(i + 2)? << 16; if done { s.gpr[info] = u64at(m, add(sp, o)?).ok_or(Stack)?; s.known |= 1 << info; } 3 } // SAVE_NONVOL_FAR
                 6 => if version == 2 { 1 } else { 2 }, // EPILOG (wersja 2) albo dawne SAVE_XMM
                 7 => 3,
                 8 => 2, // SAVE_XMM128
                 9 => 3, // SAVE_XMM128_FAR
                 10 => { // PUSH_MACHFRAME
                     if done {
-                        let fr = sp.checked_add(if info == 1 { 8 } else { 0 })?;
-                        s.rip = u64at(m, fr)?;
-                        s.gpr[RSP] = u64at(m, fr.checked_add(24)?)?;
-                        return Some(true);
+                        let fr = add(sp, if info == 1 { 8 } else { 0 })?;
+                        s.rip = u64at(m, fr).ok_or(Stack)?;
+                        s.gpr[RSP] = u64at(m, add(fr, 24)?).ok_or(Stack)?;
+                        return Ok(true);
                     }
                     1
                 }
-                _ => return None,
+                _ => return Err(Info),
             };
             i += len;
         }
-        if flags & 4 == 0 { return Some(false); }
+        if flags & 4 == 0 { return Ok(false); }
         // łańcuch: po kodach (wyrównanych do parzystej liczby) leży wpis funkcji nadrzędnej
-        f = func_at(m, ui + 4 + ((count + 1) & !1) as u64 * 2)?;
+        f = func_at(m, ui + 4 + ((count + 1) & !1) as u64 * 2).ok_or(InfoRead)?;
     }
-    None
+    Err(Info)
 }
 
 /// Adres powrotu poza obrazami modułów i liczba odwiniętych ramek.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Foreign { pub addr: u64, pub frames: usize }
 
+/// Wynik odwijania stosu jednego wątku.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Outcome {
+    /// Wątek nie stoi tuż za instrukcją `syscall` w obrazie modułu: jego rejestry nie są wiarygodne.
+    NotWaiting,
+    /// Stos odwinięty do dna (zerowy adres powrotu pierwszej funkcji wątku); każda ramka leży w obrazie modułu.
+    Complete { frames: usize },
+    /// Pierwszy adres powrotu poza obrazami modułów.
+    Foreign(Foreign),
+    Abandoned(Reason),
+}
+
 /// Odwijanie stosów wątków jednego procesu; tablice funkcji obrazów są wyszukiwane raz.
 pub struct Unwinder<'a> { mem: &'a dyn Mem, images: Vec<Image>, tables: HashMap<u64, Option<Table>> }
 
 impl<'a> Unwinder<'a> {
-    pub fn new(mem: &'a dyn Mem, regions: &[Region]) -> Self { Unwinder { mem, images: images(regions), tables: HashMap::new() } }
+    pub fn new(mem: &'a dyn Mem, regions: &[Region], allocs: &[Allocation]) -> Self { Unwinder { mem, images: images(regions, allocs), tables: HashMap::new() } }
 
     fn image(&self, addr: u64) -> Option<Image> {
         let i = self.images.partition_point(|m| m.end <= addr);
         self.images.get(i).filter(|m| m.base <= addr).cloned()
     }
 
-    /// Pierwszy adres powrotu poza obrazami modułów na stosie wątku, który stoi tuż za instrukcją
-    /// `syscall` w obrazie modułu. None: wątek nie jest w takim stanie, cały stos wraca do obrazów
-    /// albo odwijania nie dało się przeprowadzić wiarygodnie.
-    pub fn foreign_return(&mut self, t: &ThreadRegs) -> Option<Foreign> {
-        self.image(t.rip)?;
-        if rd::<2>(self.mem, t.rip.checked_sub(2)?)? != [0x0f, 0x05] { return None; }
+    /// Odwija stos wątku, który stoi tuż za instrukcją `syscall` w obrazie modułu, do pierwszego adresu
+    /// powrotu poza obrazami modułów albo do dna stosu. Wynik wątpliwy jest porzucany z podaniem powodu.
+    pub fn unwind(&mut self, t: &ThreadRegs) -> Outcome {
+        use Outcome::Abandoned;
+        if self.image(t.rip).is_none() { return Outcome::NotWaiting; }
+        if t.rip.checked_sub(2).and_then(|a| rd::<2>(self.mem, a)) != Some([0x0f, 0x05]) { return Outcome::NotWaiting; }
         let start = t.gpr[RSP];
-        let mut s = State { gpr: t.gpr, rip: t.rip };
+        let mut s = State { gpr: t.gpr, known: t.known | 1 << RSP, rip: t.rip };
         for frames in 0..MAX_FRAMES {
             let Some(img) = self.image(s.rip) else {
-                return (frames > 0).then_some(Foreign { addr: s.rip, frames });
+                // pierwsza funkcja wątku nie ma dokąd wracać: w miejscu jej adresu powrotu leży zero
+                return if s.rip == 0 { Outcome::Complete { frames } } else { Outcome::Foreign(Foreign { addr: s.rip, frames }) };
             };
             let mem = self.mem;
-            let tab = (*self.tables.entry(img.base).or_insert_with(|| table(mem, &img)))?;
-            let rva = u32::try_from(s.rip - img.base).ok()?;
-            let machine = match lookup(mem, tab, rva).ok()? {
-                Some(f) => undo_prolog(mem, &img, f, rva - f.begin, &mut s)?,
-                None => false, // liść: adres powrotu leży pod rsp
+            let Some(tab) = *self.tables.entry(img.base).or_insert_with(|| table(mem, &img)) else { return Abandoned(Reason::NoTable) };
+            let Ok(rva) = u32::try_from(s.rip - img.base) else { return Abandoned(Reason::NoTable) };
+            let machine = match lookup(mem, tab, rva) {
+                Err(()) => return Abandoned(Reason::Table),
+                Ok(Some(f)) => match undo_prolog(mem, &img, f, rva - f.begin, &mut s) { Ok(m) => m, Err(r) => return Abandoned(r) },
+                Ok(None) => false, // liść: adres powrotu leży pod rsp
             };
             if !machine {
-                s.rip = u64at(mem, s.gpr[RSP])?;
-                s.gpr[RSP] = s.gpr[RSP].checked_add(8)?;
+                let Some(ret) = u64at(mem, s.gpr[RSP]) else { return Abandoned(Reason::Stack) };
+                s.rip = ret;
+                s.gpr[RSP] = s.gpr[RSP].wrapping_add(8);
             }
             // stos rośnie w dół: po odwinięciu ramki wskaźnik musi być wyżej, wyrównany i niedaleko
             let sp = s.gpr[RSP];
-            if sp <= start || sp % 8 != 0 || sp - start > MAX_STACK_SPAN { return None; }
+            if sp <= start || sp % 8 != 0 || sp - start > MAX_STACK_SPAN { return Abandoned(Reason::Bounds); }
         }
-        None
+        Abandoned(Reason::Frames)
     }
 }

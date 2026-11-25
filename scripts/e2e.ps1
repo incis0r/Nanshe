@@ -50,6 +50,16 @@ Check "thread"   1 "THR-PRIV,X-PRIV"   # watek (wstrzymany) z adresem startu w p
 Check "stack-rx" 1 "THR-PRIV,X-PRIV"  # watek czeka w jadrze, stos wraca do kodu bez pliku (adres startu legalny)
 Check "stack-masked" 1 "THR-PRIV"    # jak wyzej, region RW z szumem: kod ukryty na czas uspienia
 Check "inject"   1 "ENT-X,RWX,X-PRIV"
+# pokrycie odwijania stosow: w czystym procesie kazdy czekajacy watek jest odwiniety do dna i zaden nie wraca
+# poza moduly; w probce stack-rx obcy powrot jest policzony. Bez tego brak znalezisk nic by nie znaczyl.
+function Proc0($name) { (Get-Content (Join-Path $Out "$name.json") -Raw -Encoding UTF8 | ConvertFrom-Json).processes[0] }
+$sc = (Proc0 "clean").stacks; $sx = (Proc0 "stack-rx").stacks
+$res = if ($sc.waiting -ge 1 -and $sc.complete -eq $sc.waiting -and $sc.foreign -eq 0 -and $sc.abandoned -eq 0 -and $sx.foreign -ge 1) { "OK" } else { $fail = 1; "FAIL" }
+"stosy     {0} clean: watki={1} czekajace={2} do-dna={3} obce={4} porzucone={5}; stack-rx: obce={6}" -f $res, $sc.threads, $sc.waiting, $sc.complete, $sc.foreign, $sc.abandoned, $sx.foreign
+# rezerwacja regionu ze znaleziskiem: pojedynczy przydzial probki rwx to samotny region
+$al = @((Proc0 "rwx").regions | Where-Object { $_.allocation } | ForEach-Object { $_.allocation })
+$res = if ($al.Count -ge 1 -and $al[0].regions -eq 1 -and $al[0].size -ge 4096) { "OK" } else { $fail = 1; "FAIL" }
+"rezerwacja {0} rwx: regionow-ze-znaleziskiem={1} regionow-w-rezerwacji={2} rozmiar={3}" -f $res, $al.Count, $(if ($al.Count) { $al[0].regions }), $(if ($al.Count) { $al[0].size })
 # red team: kontrola i ewazja
 Check "data-noise" 0 ""              # wysoka entropia w danych RW to nie znalezisko
 Check "rwx-lowent" 1 "RWX,X-PRIV"    # jak rwx, ale bez ENT-X na ladunku (asercja wyniku nizej)

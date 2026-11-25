@@ -278,11 +278,11 @@ mod tests {
             let f = Finding { id: format!("5:{base:x}:RWX"), detector: "rwx".into(), tag: "RWX".into(), addr: base, size: 8192, prot: region.prot,
                 entropy: None, weight: 30, reason: "r".into(), bytes_hex: Some(hex(bytes)) };
             RegionReport { region, bytes_read: 8192, truncated: false, entropy_max: Some(7.9), entropy_mean: Some(5.0), zero_pages: 0,
-                score: 60, severity: Severity::High, allowlisted: None, findings: vec![f], heat: None, profile: None, strings: vec![], sha256: None }
+                score: 60, severity: Severity::High, allowlisted: None, allocation: None, findings: vec![f], heat: None, profile: None, strings: vec![], sha256: None }
         }).collect();
         ScanResult { schema_version: 1, tool_version: "t".into(), timestamp: "x".into(), host: "h".into(), heat_cell_bytes: 65536, partial: false,
             processes: vec![ProcessReport { info: SourceInfo { os: "linux".into(), arch: "x86_64".into(), pid: Some(5), name: Some("p".into()), source_type: "live".into(), exe: None, exe_deleted: false, exe_verified: false },
-                regions_total: n_regions, regions_unreadable: 0, bytes_scanned: 0, max_severity: Severity::High, error: None, regions: regs, layout: None, context: None }], lang: None, host_info: None, files: vec![] }
+                regions_total: n_regions, regions_unreadable: 0, bytes_scanned: 0, max_severity: Severity::High, error: None, regions: regs, layout: None, stacks: None, context: None }], lang: None, host_info: None, files: vec![] }
     }
     fn good(id: &str) -> String {
         json!({"hypotheses":[{"label":"shellcode-stager","confidence":"assessed","for":["a"],"against":["b"],"evidence":[id]}],"summary":"s"}).to_string()

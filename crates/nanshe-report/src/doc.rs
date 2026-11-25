@@ -166,6 +166,38 @@ pub fn check_llm_matches(llm: &Value, result_sha256: &str) -> Result<()> {
     }
 }
 
+/// Powód porzucenia odwijania stosu słowami; nieznany token (nowsza wersja wyniku) zostaje bez zmian.
+fn stack_reason(token: &str) -> String {
+    match token {
+        "no-table" => tr!("moduł bez czytelnej tablicy funkcji", "module without a readable function table"),
+        "table-read" => tr!("tablica funkcji modułu poza pamięcią", "module function table not in memory"),
+        "unwind-info-read" => tr!("opis ramki funkcji poza pamięcią", "function frame description not in memory"),
+        "unwind-info" => tr!("opis ramki funkcji nieobsługiwany albo błędny", "function frame description unsupported or invalid"),
+        "stack-read" => tr!("strona stosu poza pamięcią", "stack page not in memory"),
+        "stack-bounds" => tr!("niespójny wskaźnik stosu", "inconsistent stack pointer"),
+        "frame-limit" => tr!("limit liczby ramek", "frame limit"),
+        "register-unknown" => tr!("nieznana wartość rejestru ramki", "frame register value unknown"),
+        "moved" => tr!("wątek ruszył w trakcie odczytu", "thread moved during the read"),
+        "own-stack" => tr!("adres powrotu wskazuje własny stos", "return address points into the thread's own stack"),
+        "outside-map" => tr!("adres powrotu poza mapą pamięci", "return address outside the memory map"),
+        "thread-limit" => tr!("limit liczby wątków", "thread limit"),
+        other => return clean(other),
+    }.to_string()
+}
+
+/// Pokrycie odwijania stosów jednym zdaniem: ile stosów faktycznie zbadano, a ilu się nie dało i dlaczego.
+fn stacks_text(st: &StackStats) -> String {
+    let mut t = trf!("{} wątków z odczytanymi rejestrami, {} czeka w wywołaniu jądra: {} odwiniętych do dna, {} z powrotem poza moduły, {} porzuconych",
+        "{} threads with registers read, {} waiting in a kernel call: {} unwound to the bottom, {} returning outside modules, {} abandoned", st.threads, st.waiting, st.complete, st.foreign, st.abandoned);
+    if !st.reasons.is_empty() {
+        let mut why: Vec<(&String, &u32)> = st.reasons.iter().collect();
+        why.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        t.push_str(&format!(" ({})", why.iter().map(|(k, n)| format!("{}: {n}", stack_reason(k))).collect::<Vec<_>>().join("; ")));
+    }
+    if st.unread > 0 { t.push_str(&trf!(". Rejestrów {} kolejnych wątków nie dało się odczytać, ich stosy nie zostały zbadane", ". The registers of {} more threads could not be read, their stacks were not examined", st.unread)); }
+    t
+}
+
 pub fn build(scan: &ScanResult, llm: Option<&Value>, o: &Options) -> Doc {
     let mut b: Vec<Block> = Vec::new();
     let flagged: Vec<&ProcessReport> = scan.processes.iter().filter(|p| p.max_severity >= o.min && p.max_severity > Severity::None).collect();
@@ -183,6 +215,13 @@ pub fn build(scan: &ScanResult, llm: Option<&Value>, o: &Options) -> Doc {
             trf!("WYNIK CZĘŚCIOWY: {} procesów niedostępnych, {} regionów nieodczytanych", "PARTIAL RESULT: {} processes inaccessible, {} regions not read", failed.len(), unreadable)
         } else { tr!("pełny", "complete").into() }),
     ];
+    let mut stacks = StackStats::default();
+    for st in scan.processes.iter().filter_map(|p| p.stacks.as_ref()) {
+        stacks.unread += st.unread;
+        stacks.threads += st.threads; stacks.waiting += st.waiting; stacks.complete += st.complete; stacks.foreign += st.foreign; stacks.abandoned += st.abandoned;
+        for (k, n) in &st.reasons { *stacks.reasons.entry(k.clone()).or_insert(0) += n; }
+    }
+    if stacks.threads + stacks.unread > 0 { kv.push((tr!("Stosy wątków", "Thread stacks").into(), stacks_text(&stacks))); }
     if let Some(h) = &scan.host_info {
         let os = [h.os.as_deref(), h.kernel.as_deref().map(|k| k)].iter().flatten().map(|s| clean(s)).collect::<Vec<_>>().join(tr!(", jądro/wersja ", ", kernel/version "));
         if !os.is_empty() { kv.push((tr!("System hosta", "Host operating system").into(), os)); }
@@ -311,6 +350,7 @@ pub fn build(scan: &ScanResult, llm: Option<&Value>, o: &Options) -> Doc {
                 (tr!("Plik programu", "Program file").to_string(), match &p.info.exe { Some(e) => format!("{}{}", clean(e), if p.info.exe_deleted { tr!(" (usunięty z dysku)", " (deleted from disk)") } else { "" }), None => tr!("nieznany", "unknown").into() }),
                 (tr!("Regiony", "Regions").to_string(), trf!("{} łącznie, {} nieodczytanych, przeskanowano {}", "{} total, {} not read, {} scanned", p.regions_total, p.regions_unreadable, size_h(p.bytes_scanned))),
             ];
+            if let Some(st) = &p.stacks { kv.push((tr!("Stosy wątków", "Thread stacks").into(), stacks_text(st))); }
             if p.info.source_type == "dump" { kv.push((tr!("Źródło danych", "Data source").into(), tr!("zrzut pamięci procesu (stan z chwili wykonania zrzutu, nie z chwili analizy)", "process memory dump (state at the time the dump was taken, not at analysis time)").into())); }
             if let Some(e) = &p.error { kv.push((tr!("Błąd", "Error").into(), clean(e))); }
             if let Some(c) = &p.context { context_keyvals(&mut kv, c); }
@@ -830,12 +870,31 @@ mod tests {
     fn proc_with(layout: Vec<Region>, finding_at: &[u64]) -> ProcessReport {
         let regions = finding_at.iter().map(|&base| {
             let r = layout.iter().find(|r| r.base == base).unwrap().clone();
-            RegionReport { region: r.clone(), bytes_read: r.size, truncated: false, entropy_max: Some(7.9), entropy_mean: Some(7.0), zero_pages: 0, score: 60, severity: Severity::High, allowlisted: None,
+            RegionReport { region: r.clone(), bytes_read: r.size, truncated: false, entropy_max: Some(7.9), entropy_mean: Some(7.0), zero_pages: 0, score: 60, severity: Severity::High, allowlisted: None, allocation: None,
                 findings: vec![Finding { id: format!("1:{base:x}:RWX"), detector: "rwx".into(), tag: "RWX".into(), addr: base, size: r.size, prot: r.prot, entropy: None, weight: 60, reason: "r".into(), bytes_hex: None }],
                 heat: None, profile: None, strings: vec![], sha256: None }
         }).collect();
         ProcessReport { info: SourceInfo { os: "linux".into(), arch: "x86_64".into(), pid: Some(1), name: Some("p".into()), source_type: "live".into(), exe: Some("/usr/bin/p".into()), exe_deleted: false, exe_verified: false },
-            regions_total: layout.len() as u64, regions_unreadable: 0, bytes_scanned: 0, max_severity: Severity::High, error: None, regions, layout: Some(layout), context: None }
+            regions_total: layout.len() as u64, regions_unreadable: 0, bytes_scanned: 0, max_severity: Severity::High, error: None, regions, layout: Some(layout), stacks: None, context: None }
+    }
+
+    #[test]
+    fn stack_coverage_is_stated_with_reasons_for_abandoned_stacks() {
+        let st = StackStats { threads: 20, unread: 0, waiting: 18, complete: 15, foreign: 1, abandoned: 2, reasons: [("stack-read".to_string(), 1), ("przyszly-token".to_string(), 1)].into_iter().collect() };
+        let t = stacks_text(&st);
+        assert_eq!(t, "20 wątków z odczytanymi rejestrami, 18 czeka w wywołaniu jądra: 15 odwiniętych do dna, 1 z powrotem poza moduły, 2 porzuconych (przyszly-token: 1; strona stosu poza pamięcią: 1)");
+        assert!(stacks_text(&StackStats { unread: 6, ..st.clone() }).ends_with("strona stosu poza pamięcią: 1). Rejestrów 6 kolejnych wątków nie dało się odczytać, ich stosy nie zostały zbadane"));
+        // kontrola: bez porzuconych nie ma nawiasu z powodami
+        assert!(!stacks_text(&StackStats { threads: 3, waiting: 3, complete: 3, ..Default::default() }).contains('('));
+        // wiersz trafia do metryki (suma procesów) i do opisu procesu; bez danych o stosach go nie ma
+        let layout = vec![region(0x1000, 0x1000, "rwx", RegionKind::Private, None)];
+        let mut p = proc_with(layout, &[0x1000]);
+        let scan = |p: &ProcessReport| ScanResult { schema_version: SCHEMA_VERSION, tool_version: "t".into(), timestamp: "t".into(), host: "h".into(), heat_cell_bytes: 0, partial: false, processes: vec![p.clone(), p.clone()], lang: None, host_info: None, files: vec![] };
+        let rows = |d: &Doc| d.blocks.iter().filter_map(|b| if let Block::KeyVals(k) = b { Some(k.iter().filter(|(k, _)| k == "Stosy wątków").map(|(_, v)| v.clone()).collect::<Vec<_>>()) } else { None }).flatten().collect::<Vec<_>>();
+        assert!(rows(&build(&scan(&p), None, &Options { min: Severity::Suspicious, result_sha256: None, result_name: None, kb_dir: None })).is_empty());
+        p.stacks = Some(st);
+        let r = rows(&build(&scan(&p), None, &Options { min: Severity::Suspicious, result_sha256: None, result_name: None, kb_dir: None }));
+        assert!(r.len() >= 2 && r[0].starts_with("40 wątków") && r[0].contains("30 odwiniętych") && r[1].starts_with("20 wątków"), "{r:?}");
     }
 
     #[test]

@@ -109,14 +109,14 @@ mod tests {
         let f = |tag: &str, reason: &str| Finding { id: format!("5:7f000000:{tag}"), detector: tag.to_lowercase(), tag: tag.into(), addr: 0x7f00_0000, size: 65536, prot: region.prot,
             entropy: None, weight: 30, reason: reason.into(), bytes_hex: None };
         let rr = RegionReport { region: region.clone(), bytes_read: 65536, truncated: false, entropy_max: Some(7.96), entropy_mean: Some(7.9), zero_pages: 0,
-            score: 60, severity: Severity::High, allowlisted: None, findings: vec![f("RWX", "region zapisywalny i wykonywalny"), f("X-PRIV", "zły | opis <b>x</b>")], heat: None, profile: None, strings: vec![], sha256: None };
+            score: 60, severity: Severity::High, allowlisted: None, allocation: None, findings: vec![f("RWX", "region zapisywalny i wykonywalny"), f("X-PRIV", "zły | opis <b>x</b>")], heat: None, profile: None, strings: vec![], sha256: None };
         let low = RegionReport { score: 10, severity: Severity::Info, findings: vec![f("ENT-X", "rzadkie strony")], region: Region { base: 0x1000, ..region.clone() }, ..rr.clone() };
         let info = |pid, name: &str| SourceInfo { os: "linux".into(), arch: "x86_64".into(), pid: Some(pid), name: Some(name.into()), source_type: "live".into(), exe: Some("/usr/bin/zażółć".into()), exe_deleted: false, exe_verified: false };
         let s = ScanResult { schema_version: SCHEMA_VERSION, tool_version: "0.1.0".into(), timestamp: "2026-11-22T00:00:00Z".into(), host: "lab-host".into(), heat_cell_bytes: 65536, partial: true,
             processes: vec![
-                ProcessReport { info: info(5, "próbka"), regions_total: 20, regions_unreadable: 1, bytes_scanned: 1 << 20, max_severity: Severity::High, error: None, regions: vec![rr, low], layout: None, context: None },
-                ProcessReport { info: info(6, "bezznalezisk"), regions_total: 9, regions_unreadable: 0, bytes_scanned: 4096, max_severity: Severity::None, error: None, regions: vec![], layout: None, context: None },
-                ProcessReport { info: info(7, "chroniony"), regions_total: 0, regions_unreadable: 0, bytes_scanned: 0, max_severity: Severity::None, error: Some("odmowa dostępu".into()), regions: vec![], layout: None, context: None },
+                ProcessReport { info: info(5, "próbka"), regions_total: 20, regions_unreadable: 1, bytes_scanned: 1 << 20, max_severity: Severity::High, error: None, regions: vec![rr, low], layout: None, stacks: None, context: None },
+                ProcessReport { info: info(6, "bezznalezisk"), regions_total: 9, regions_unreadable: 0, bytes_scanned: 4096, max_severity: Severity::None, error: None, regions: vec![], layout: None, stacks: None, context: None },
+                ProcessReport { info: info(7, "chroniony"), regions_total: 0, regions_unreadable: 0, bytes_scanned: 0, max_severity: Severity::None, error: Some("odmowa dostępu".into()), regions: vec![], layout: None, stacks: None, context: None },
             ], lang: None, host_info: None, files: vec![] };
         to_json(&s).into_bytes()
     }

@@ -2,7 +2,7 @@
 //! (`procdump -ma`, Menedżer zadań, `MiniDumpWriteDump` z pełną pamięcią).
 //! Regiony pochodzą ze strumienia MemoryInfoList (ten sam opis co VirtualQueryEx), treść ze
 //! strumienia Memory64List albo MemoryList, nazwy modułów z ModuleList, adresy startu wątków
-//! z ThreadInfoList.
+//! z ThreadInfoList, rejestry wątków (do odwijania stosów) z ThreadList.
 use crate::{covered, range_at, short, u16le, u32le, u64le, Parsed, Seg, Src, MAX_TABLE};
 use nanshe_core::*;
 use nanshe_core::{tr, trf};
@@ -15,6 +15,12 @@ const MEMORY64_LIST: u32 = 9;
 const MISC_INFO: u32 = 15;
 const MEMORY_INFO_LIST: u32 = 16;
 const THREAD_INFO_LIST: u32 = 17;
+
+/// Położenie rejestrów w strukturze CONTEXT (x64): Rax..R15 w numeracji procesora, potem Rip.
+const CONTEXT_RAX: usize = 0x78;
+const CONTEXT_RIP: usize = 0xf8;
+/// Najwięcej kontekstów wątków czytanych z jednego zrzutu.
+const MAX_THREAD_CONTEXTS: usize = 1 << 16;
 
 const MEM_COMMIT: u32 = 0x1000;
 const MEM_PRIVATE: u32 = 0x2_0000;
@@ -152,8 +158,24 @@ pub(crate) fn parse(src: &mut Src) -> Result<Parsed> {
             }
         }
     }
+    // --- rejestry wątków: struktura CONTEXT (x64) zapisana dla każdego wątku w strumieniu ThreadList
+    if p.arch == "x86_64" {
+        if let Some(b) = load(src, stream(THREAD_LIST)) {
+            let n = (u32le(&b, 0).unwrap_or(0) as usize).min(b.len().saturating_sub(4) / 48).min(MAX_THREAD_CONTEXTS);
+            for e in b[4..4 + n * 48].chunks_exact(48) {
+                let (Some(tid), Some(size), Some(rva)) = (u32le(e, 0), u32le(e, 40), u32le(e, 44)) else { continue };
+                // Rax..R15 leżą od 0x78, Rip pod 0xf8; krótszy zapis nie jest kontekstem x64
+                if tid == 0 { continue; }
+                if (size as usize) < CONTEXT_RIP + 8 { p.regs.unread += 1; continue; }
+                let Ok(c) = src.read(rva as u64, CONTEXT_RIP + 8) else { p.regs.unread += 1; continue };
+                let mut gpr = [0u64; 16];
+                for (i, g) in gpr.iter_mut().enumerate() { *g = u64le(&c, CONTEXT_RAX + i * 8).unwrap_or(0); }
+                p.regs.regs.push(ThreadRegs { tid, rip: u64le(&c, CONTEXT_RIP).unwrap_or(0), gpr, known: 0xffff });
+            }
+            p.regs.regs.sort_by_key(|t| t.tid);
+        }
+    }
     if p.threads.is_empty() {
-        let _ = THREAD_LIST; // strumień ThreadList niesie tylko konteksty rejestrów, bez adresu startu
         p.notes.push(tr!("minidump nie zawiera adresów startu wątków (strumień ThreadInfoList): wątki nie są oceniane", "the minidump has no thread start addresses (ThreadInfoList stream): threads are not assessed").into());
     }
     p.threads.sort_by_key(|t| t.tid);
@@ -173,8 +195,28 @@ pub(crate) mod tests {
     pub(crate) type R = (u64, u64, u32, u32, Option<Vec<u8>>);
 
     /// Pełny minidump z podanymi regionami, modułami (adres, rozmiar, ścieżka) i wątkami (tid, adres startu).
-    pub(crate) fn minidump(regions: &[R], modules: &[(u64, u32, &str)], threads: &[(u32, u64)], pid: u32) -> Vec<u8> {
+    pub(crate) fn minidump(regions: &[R], modules: &[(u64, u32, &str)], threads: &[(u32, u64)], pid: u32) -> Vec<u8> { minidump_with(regions, modules, threads, pid, &[]) }
+
+    /// Jak `minidump`, dodatkowo ze strumieniem ThreadList: (tid, rip, rsp, rozmiar zapisanego kontekstu).
+    pub(crate) fn minidump_with(regions: &[R], modules: &[(u64, u32, &str)], threads: &[(u32, u64)], pid: u32, contexts: &[(u32, u64, u64, u32)]) -> Vec<u8> {
         let mut streams: Vec<(u32, Vec<u8>)> = Vec::new();
+        if !contexts.is_empty() {
+            // wpisy po 48 bajtów, za nimi konteksty; RVA kontekstu jest na razie względne i zostanie przesunięte o położenie strumienia
+            let mut tl = Vec::new(); tl.extend((contexts.len() as u32).to_le_bytes());
+            let mut ctx = Vec::new();
+            for (tid, rip, rsp, size) in contexts {
+                let mut e = vec![0u8; 48];
+                e[0..4].copy_from_slice(&tid.to_le_bytes()); e[40..44].copy_from_slice(&size.to_le_bytes());
+                e[44..48].copy_from_slice(&((4 + contexts.len() * 48 + ctx.len()) as u32).to_le_bytes());
+                tl.extend(e);
+                let mut c = vec![0u8; 1232];
+                c[CONTEXT_RAX + 4 * 8..CONTEXT_RAX + 5 * 8].copy_from_slice(&rsp.to_le_bytes()); c[CONTEXT_RIP..CONTEXT_RIP + 8].copy_from_slice(&rip.to_le_bytes());
+                c[CONTEXT_RAX + 5 * 8..CONTEXT_RAX + 6 * 8].copy_from_slice(&0x55u64.to_le_bytes());
+                ctx.extend(c);
+            }
+            tl.extend(ctx);
+            streams.push((THREAD_LIST, tl));
+        }
         let mut sys = vec![0u8; 56]; sys[0..2].copy_from_slice(&9u16.to_le_bytes());
         streams.push((SYSTEM_INFO, sys));
         let mut misc = vec![0u8; 24]; misc[4..8].copy_from_slice(&1u32.to_le_bytes()); misc[8..12].copy_from_slice(&pid.to_le_bytes());
@@ -197,7 +239,10 @@ pub(crate) mod tests {
         let nstreams = streams.len() + 2;
         let mut off = 32 + nstreams * 12;
         let mut placed: Vec<(u32, usize, Vec<u8>)> = Vec::new();
-        for (t, b) in streams { placed.push((t, off, b.clone())); off += b.len(); }
+        for (t, mut b) in streams {
+            if t == THREAD_LIST { for i in 0..contexts.len() { let o = 4 + i * 48 + 44; let v = u32le(&b, o).unwrap() + off as u32; b[o..o + 4].copy_from_slice(&v.to_le_bytes()); } }
+            placed.push((t, off, b.clone())); off += b.len();
+        }
         let ml_off = off; off += 4 + modules.len() * 108;
         let mut names = Vec::new(); let mut name_rvas = Vec::new();
         for (_, _, n) in modules {
@@ -260,6 +305,24 @@ pub(crate) mod tests {
         assert!(buf[..0x1000].iter().all(|b| *b == 0x22) && buf[0x1000..0x2000].iter().all(|b| *b == 0x33));
         assert!(d.read_at(0x3_0000, &mut buf).is_err());
         assert!(d.notes.iter().any(|n| n.contains("1 czytelnych regionów nie ma treści")), "{:?}", d.notes);
+    }
+
+    #[test]
+    fn thread_registers_come_from_the_thread_list_stream() {
+        let regions: Vec<R> = vec![(0x1_0000, 0x1000, 0x04, MEM_PRIVATE, Some(vec![0; 0x1000]))];
+        let mods = [(0x7ff6_0000_0000u64, 0x2000u32, "C:\\a.exe")];
+        let set = |b: &[u8]| { let t = Tmp::new("mdmp-regs", b); crate::open(&t.0).unwrap().thread_regs() };
+        let open = |b: &[u8]| set(b).regs;
+        // dwa wątki z pełnym kontekstem; trzeci ma zapis za krótki na kontekst x64, czwarty zerowy numer
+        let d = open(&minidump_with(&regions, &mods, &[(9, 0x1_0000)], 5, &[(9, 0x7ff6_0000_1012, 0x1_0800, 1232), (4, 0x7ff6_0000_1100, 0x1_0900, 1232), (11, 1, 2, 0xf0), (0, 1, 2, 1232)]));
+        assert_eq!(d.iter().map(|t| (t.tid, t.rip, t.gpr[4], t.gpr[5], t.known)).collect::<Vec<_>>(), [(4, 0x7ff6_0000_1100, 0x1_0900, 0x55, 0xffff), (9, 0x7ff6_0000_1012, 0x1_0800, 0x55, 0xffff)]);
+        // kontrola: zrzut bez strumienia ThreadList nie ma rejestrów
+        assert!(open(&minidump(&regions, &mods, &[(9, 0x1_0000)], 5)).is_empty());
+        // kontekst wskazany poza plik jest pomijany, pozostałe zostają
+        let mut bad = minidump_with(&regions, &mods, &[], 5, &[(0x4242_4242, 1, 2, 1232), (4, 3, 4, 1232)]);
+        let at = bad.windows(4).position(|w| w == 0x4242_4242u32.to_le_bytes()).unwrap();
+        bad[at + 44..at + 48].copy_from_slice(&0xffff_fff0u32.to_le_bytes());
+        assert_eq!((set(&bad).regs.iter().map(|t| t.tid).collect::<Vec<_>>(), set(&bad).unread), (vec![4], 1));
     }
 
     #[test]

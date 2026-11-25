@@ -294,14 +294,14 @@ mod tests {
     fn reg(base: u64, tags: &[&str], score: u32, sha: Option<&str>) -> RegionReport {
         let region = Region { base, size: 0x1000, prot: Prot::parse("rwx"), kind: RegionKind::Private, backing: None, backing_deleted: false, label: None, readable: true };
         RegionReport { region: region.clone(), bytes_read: 0x1000, truncated: false, entropy_max: Some(7.0), entropy_mean: Some(6.0), zero_pages: 0, score,
-            severity: if score >= 60 { Severity::High } else if score >= 30 { Severity::Suspicious } else { Severity::Info }, allowlisted: None,
+            severity: if score >= 60 { Severity::High } else if score >= 30 { Severity::Suspicious } else { Severity::Info }, allowlisted: None, allocation: None,
             findings: tags.iter().map(|t| Finding { id: format!("5:{base:x}:{t}"), detector: t.to_lowercase(), tag: t.to_string(), addr: base, size: 0x1000, prot: region.prot, entropy: None, weight: score, reason: "r".into(), bytes_hex: None }).collect(),
             heat: None, profile: None, strings: vec![], sha256: sha.map(String::from) }
     }
     fn proc(pid: u32, name: &str, regions: Vec<RegionReport>) -> ProcessReport {
         let max = regions.iter().map(|r| r.severity).max().unwrap_or(Severity::None);
         ProcessReport { info: SourceInfo { os: "linux".into(), arch: "x86_64".into(), pid: Some(pid), name: Some(name.into()), source_type: "live".into(), exe: Some(format!("/usr/bin/{name}")), exe_deleted: false, exe_verified: false },
-            regions_total: 10, regions_unreadable: 0, bytes_scanned: 0, max_severity: max, error: None, regions, layout: None, context: None }
+            regions_total: 10, regions_unreadable: 0, bytes_scanned: 0, max_severity: max, error: None, regions, layout: None, stacks: None, context: None }
     }
     fn scan(ts: &str, processes: Vec<ProcessReport>) -> ScanResult {
         ScanResult { schema_version: SCHEMA_VERSION, tool_version: "t".into(), timestamp: ts.into(), host: "h".into(), heat_cell_bytes: 65536, partial: false, processes, lang: None, host_info: None, files: vec![] }
