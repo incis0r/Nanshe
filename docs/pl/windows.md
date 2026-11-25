@@ -139,9 +139,36 @@ Jak to działa i czego nie robi:
 - Rejestry pochodzą z `GetThreadContext` bez wstrzymywania wątku; proces nie jest zatrzymywany ani zmieniany. Liczą się tylko wątki stojące tuż za instrukcją `syscall` w obrazie modułu, których adres instrukcji i wskaźnik stosu są takie same przed odwijaniem i po nim.
 - Odwijanie korzysta z tablic wyjątków (`.pdata`) czytanych z pamięci procesu i kończy się na pierwszej ramce poza obrazami. Dalszych ramek nie ocenia.
 - Wynik wątpliwy jest porzucany: brak tablicy, nieznana wersja informacji o odwijaniu, nieudany odczyt, adres w regionie własnego stosu wątku.
-- Pomiar na stacji testowej (2026-11-25, 231 procesów): żadnego zgłoszenia poza próbkami, czas pełnego skanu bez zmian (35 s). To jeden pomiar na jednej stacji.
+- Ta sama kontrola działa na zrzucie procesu (rejestry ze strumienia `ThreadList` minidumpa) i przy odczycie gościa z hiperwizora (rejestry z jądra, zob. `docs/pl/hiperwizor.md`).
 
-Ograniczenia: sfałszowany stos (podstawione ramki wracające do obrazów modułów) omija tę kontrolę; kod wstrzyknięty do procesu z JIT, wracający do pamięci wykonywalnej, nie różni się od kodu środowiska; wątki działające w chwili skanu, procesy 32-bitowe, odczyt z hiperwizora, Linux i macOS nie są objęte.
+**Pokrycie.** Brak znalezisk znaczy coś tylko wtedy, gdy stosy faktycznie przejrzano, dlatego wynik podaje to dla każdego procesu (pole `stacks`), a raport pokazuje w metryce i w opisie procesu („Stosy wątków"):
+
+| Licznik | Znaczenie |
+|---|---|
+| `threads` | wątki, których rejestry odczytano |
+| `unread` | wątki, których rejestrów nie dało się odczytać; ich stosy nie zostały zbadane |
+| `waiting` | wątki czekające w wywołaniu jądra (tylko one są odwijane) |
+| `complete` | stosy odwinięte do dna (zerowy adres powrotu pierwszej funkcji wątku), każda ramka w obrazie modułu |
+| `foreign` | stosy z adresem powrotu poza obrazami modułów |
+| `abandoned` | stosy porzucone, z powodem: `no-table`, `table-read`, `unwind-info-read`, `unwind-info`, `stack-read`, `stack-bounds`, `frame-limit`, `register-unknown`, `moved`, `own-stack`, `outside-map`, `thread-limit` |
+
+Pomiar na stacji testowej (2026-11-25, skan na żywo, 229 procesów, 35 s): odczytano rejestry 1817 wątków, 408 nie odczytano; 1815 wątków czekało, 1773 stosy odwinięto do dna, 42 wracały poza moduły (wszystkie do pamięci wykonywalnej procesów z rozpoznanym środowiskiem JIT, więc bez zgłoszenia), żadnego nie porzucono. Żadnego zgłoszenia poza próbkami. To jeden pomiar na jednej stacji; dlaczego rejestrów 408 wątków nie dało się odczytać, nie zostało zbadane.
+
+Ograniczenia: sfałszowany stos (podstawione ramki wracające do obrazów modułów) omija tę kontrolę; kod wstrzyknięty do procesu z JIT, wracający do pamięci wykonywalnej, nie różni się od kodu środowiska; wątki działające w chwili skanu, procesy 32-bitowe, Linux i macOS nie są objęte.
+
+### Rezerwacja regionu ze znaleziskiem
+
+Każdy region ze znaleziskiem niesie opis rezerwacji, do której należy (pole `allocation`: adres bazowy, rozmiar, liczba regionów mapy w jej zakresie), gdy źródło ją zna: `AllocationBase` w skanie na żywo, wpis VAD przy odczycie z hiperwizora. Jest zapisywany dla analityka i do pomiarów; punktacja z niego nie korzysta.
+
+Pomiar, który miał uzasadnić jego użycie (2026-11-25, regiony z `X-PRIV`, `RWX` albo `X-MAP`), nie daje prostej reguły:
+
+| Gdzie | Regiony | Rezerwacja do 64 KiB | do 1 MiB | do 16 MiB | większa | Jedyny region w rezerwacji |
+|---|---|---|---|---|---|---|
+| stacja testowa, procesy ze środowiskiem .NET (10) | 376 | 271 | 91 | 14 | 0 | 102 |
+| stacja testowa, WebView2 (1) | 7 | 5 | 0 | 0 | 2 | 5 |
+| drugi gość, procesy bez rozpoznanego środowiska, głównie Electron i Qt WebEngine (7) | 429 | 13 | 8 | 22 | 386 | 15 |
+
+Kod generowany przez V8 leży w dużych rezerwacjach, ale środowisko .NET przydziela swój kod w wielu małych, z których jedna czwarta to pojedyncze regiony. „Samotny region wykonywalny w małej rezerwacji" opisuje więc zwykły kod .NET tak samo jak pojedynczy wstrzyknięty przydział, dlatego wagi zostały bez zmian.
 
 ## Skróty SHA-256
 

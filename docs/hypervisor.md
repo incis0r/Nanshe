@@ -71,7 +71,8 @@ After opening the guest, the scanner checks that the process list contains the `
 | Region type | private, mapped, image | private, mapped or image from the kernel VAD tree; from the process module list only when the VAD layout of the kernel is not known (older symbol files) |
 | Files mapped as data | known, with path | known, with the path from the kernel file object (without the drive letter) |
 | Comparison of code with the file on disk (`IMG-MOD`) | yes | no (the host does not see the guest's files) |
-| Threads, network, open files, process tree | yes | no |
+| Call stacks of waiting threads (`THR-PRIV`) | yes | yes, for threads whose kernel stack is in physical memory (see "Thread stacks from the kernel") |
+| Thread start addresses, network, open files, process tree | yes | no |
 | Reduced weight for just-in-time runtimes | yes | yes, on kernel evidence: the runtime library (`clr.dll`, `coreclr.dll`, `msedge.dll`) and the main program are images on the same volume as `ntdll.dll`, in their installation directories. The file owner is not checked from the host |
 
 Consequences worth knowing before reading a report:
@@ -82,6 +83,26 @@ Consequences worth knowing before reading a report:
 - **The guest keeps running during the scan,** so the result is not a consistent snapshot.
 - **`HDR` in non-executable memory is reported only for regions the kernel marks as private.** Sections without a file and regions of unknown type are skipped, because files mapped as data start with an image header. Anti-malware engines keep many program images in private memory and are reported with many `HDR` findings (228 in `MsMpEng.exe` on the first guest).
 - Anti-malware engines and other programs that generate code without a recognised runtime library appear with full weight.
+
+## Thread stacks from the kernel
+
+The call stacks of threads waiting in the kernel are unwound as in a live scan (`docs/windows.md`, "Thread call stacks"); only the source of the registers differs.
+
+- The thread list of a process is walked in the kernel (`_EPROCESS.ThreadListHead`). For a thread in the state "waiting" the user-mode instruction address, stack pointer and `rbp` are read from its trap frame (`_KTHREAD.TrapFrame`). A system call stores exactly these three there; the other non-volatile registers are saved elsewhere on the kernel stack, so they are passed as unknown, and a function that restores the stack pointer from such a register ends the unwinding (`register-unknown`) instead of producing a guess.
+- A thread that waits long has its kernel stack written to the page file. Its trap frame is then not in physical memory and the thread is counted as `unread`.
+- Function tables and unwind data of a library are rarely touched, so a process usually does not have these pages in its own page tables although other processes keep them in memory. The scanner finds them through the prototype page entries of the kernel (address in the page entry, or `_MMVAD.FirstPrototypePte` of the region) and reads them when they are valid or in transition. Pages that are only in the file on disk stay unreadable (`table-read`, `unwind-info-read`).
+- Reads for unwinding are strict: a page that is not in memory fails the read instead of being filled with zeros.
+
+Measured on 2026-11-25 (both guests on the same host, guests running):
+
+| Guest | Processes | Time | Threads read | Not read | Unwound to the bottom | Returning outside modules | Abandoned |
+|---|---|---|---|---|---|---|---|
+| Windows Server 2025 | 94 | 12 s | 290 | 290 | 160 | 1 (JIT code of a .NET process, no report) | 129: function table not in memory 114, unwind data not in memory 15 |
+| Windows 11 | 137 | 28 s | 402 | 771 | 275 | 0 | 127: function table not in memory 102, stack page not in memory 15, unwind data not in memory 10 |
+
+So from the host roughly a quarter of the threads were examined to the bottom of the stack on both guests (160 of 580 and 275 of 1173); the rest is stated as not examined. The numbers vary by a few percent between runs, because the guests keep running. Flagged processes and tags were the same as before the change on both guests.
+
+A fault found on the way: for an invalid page entry Windows sets an extra high address bit, and the memory library returned success and zeros for such an address outside guest memory. The first candidate address was therefore "read" as an empty page, which once produced a false stack finding (a `svchost.exe` thread "returning" to heap memory after unwinding from zeroed unwind data). Physical reads are now limited to the guest's memory size; the false finding disappeared and more trap frames became readable.
 
 ## What was measured
 
@@ -105,6 +126,7 @@ Second guest, 2026-11-24: Windows 11 Enterprise LTSC (build 26100.9974, 4 GiB RA
 - Crate `nanshe-vm`. Guest physical memory and the Windows kernel are located with the [memflow](https://github.com/memflow/memflow) library (MIT); process listing and module lists come from it.
 - Page tables are walked and guest memory is read by Nanshe itself (`walk_page_tables`, `leaf_entry`), including transition pages and entries whose address bits Windows inverts on processors affected by L1TF. memflow 0.2.4 combines the write bit of page-table levels with "or" instead of "and", which makes every page look writable and every code page `RWX`, and it does not translate transition pages.
 - A process under kernel page-table isolation has a second set of page tables for user mode; its address is read from `_KPROCESS.UserDirectoryTableBase` (offset from the same symbol file) and used when present.
+- Thread registers: `walk_threads` (bounded by `MAX_THREADS`, every pointer must lie in kernel memory, a repeated list entry ends the walk). Prototype page entries: `proto_pte_addr`, `proto_frames`. Physical reads are checked against the highest guest physical address (`within_physical`).
 - The guest is untrusted input. The page walk is bounded by the number of tables read (`MAX_TABLES`) and by the number of page ranges per process (`MAX_RANGES`); when a limit is reached the result for the process is marked incomplete. Both limits are tested, together with unreadable and self-referencing tables.
 
 ## Roadmap for this feature

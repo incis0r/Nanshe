@@ -71,7 +71,8 @@ Po otwarciu gościa skaner sprawdza, czy lista procesów zawiera proces `System`
 | Rodzaj regionu | prywatny, mapowany, obraz | prywatny, mapowany albo obraz z drzewa VAD jądra; z listy modułów procesu tylko wtedy, gdy układ VAD jądra nie jest znany (starsze pliki symboli) |
 | Pliki mapowane jako dane | znane, ze ścieżką | znane, ze ścieżką z obiektu pliku jądra (bez litery dysku) |
 | Porównanie kodu z plikiem na dysku (`IMG-MOD`) | tak | nie (host nie widzi plików gościa) |
-| Wątki, sieć, otwarte pliki, drzewo procesów | tak | nie |
+| Stosy wywołań wątków czekających (`THR-PRIV`) | tak | tak, dla wątków, których stos jądrowy leży w pamięci fizycznej (zob. „Stosy wątków z jądra") |
+| Adresy startu wątków, sieć, otwarte pliki, drzewo procesów | tak | nie |
 | Obniżka wagi dla środowisk tworzących kod w locie | tak | tak, na podstawie danych jądra: biblioteka środowiska (`clr.dll`, `coreclr.dll`, `msedge.dll`) i program główny są obrazami z tego samego woluminu co `ntdll.dll`, w swoich katalogach instalacyjnych. Właściciela pliku skaner z hosta nie sprawdza |
 
 Skutki, o których warto wiedzieć przed lekturą raportu:
@@ -82,6 +83,26 @@ Skutki, o których warto wiedzieć przed lekturą raportu:
 - **Gość działa w trakcie skanu,** więc wynik nie jest spójną migawką.
 - **`HDR` w pamięci niewykonywalnej jest zgłaszany tylko dla regionów, które jądro oznacza jako prywatne.** Sekcje bez pliku i regiony o nieznanym rodzaju są pomijane, bo pliki mapowane jako dane zaczynają się nagłówkiem obrazu. Silniki antywirusowe trzymają w pamięci prywatnej wiele obrazów programów i mają wiele znalezisk `HDR` (228 w `MsMpEng.exe` na pierwszym gościu).
 - Silniki antywirusowe i inne programy tworzące kod bez rozpoznanej biblioteki środowiska mają pełną wagę.
+
+## Stosy wątków z jądra
+
+Stosy wywołań wątków czekających w jądrze są odwijane tak jak w skanie na żywo (`docs/pl/windows.md`, „Stos wywołań wątków"); inne jest tylko źródło rejestrów.
+
+- Lista wątków procesu jest przechodzona w jądrze (`_EPROCESS.ThreadListHead`). Dla wątku w stanie „czeka" adres instrukcji trybu użytkownika, wskaźnik stosu i `rbp` są czytane z jego ramki pułapki (`_KTHREAD.TrapFrame`). Wywołanie systemowe zapisuje tam właśnie te trzy wartości; pozostałe rejestry nieulotne trafiają w inne miejsca stosu jądrowego, więc są przekazywane jako nieznane, a funkcja, która odtwarza wskaźnik stosu z takiego rejestru, kończy odwijanie (`register-unknown`) zamiast dawać zgadywany wynik.
+- Wątek czekający długo ma stos jądrowy zapisany do pliku wymiany. Jego ramki pułapki nie ma wtedy w pamięci fizycznej i wątek jest liczony jako `unread`.
+- Tablice funkcji i dane odwijania biblioteki są rzadko dotykane, więc proces zwykle nie ma tych stron we własnych tablicach stron, choć inne procesy trzymają je w pamięci. Skaner znajduje je przez prototypowe wpisy stron jądra (adres we wpisie strony albo `_MMVAD.FirstPrototypePte` regionu) i czyta, gdy są ważne albo przejściowe. Strony, które są tylko w pliku na dysku, pozostają nieczytelne (`table-read`, `unwind-info-read`).
+- Odczyty na potrzeby odwijania są ścisłe: strona, której nie ma w pamięci, daje błąd odczytu zamiast wypełnienia zerami.
+
+Pomiar z 2026-11-25 (oba goście na tym samym hoście, w trakcie pracy):
+
+| Gość | Procesy | Czas | Wątki odczytane | Nieodczytane | Odwinięte do dna | Powrót poza moduły | Porzucone |
+|---|---|---|---|---|---|---|---|
+| Windows Server 2025 | 94 | 12 s | 290 | 290 | 160 | 1 (kod JIT procesu .NET, bez zgłoszenia) | 129: tablica funkcji poza pamięcią 114, dane odwijania poza pamięcią 15 |
+| Windows 11 | 137 | 28 s | 402 | 771 | 275 | 0 | 127: tablica funkcji poza pamięcią 102, strona stosu poza pamięcią 15, dane odwijania poza pamięcią 10 |
+
+Z hosta do dna stosu zbadano więc na obu gościach mniej więcej jedną czwartą wątków (160 z 580 i 275 z 1173); reszta jest podana jako niezbadana. Liczby różnią się o kilka procent między przebiegami, bo goście pracują w trakcie odczytu. Oflagowane procesy i tagi były na obu gościach takie same jak przed zmianą.
+
+Błąd znaleziony po drodze: we wpisie strony nieważnym dla procesora Windows ustawia dodatkowy wysoki bit adresu, a biblioteka czytająca pamięć zwracała dla takiego adresu spoza pamięci gościa sukces i same zera. Pierwsza kandydatura adresu „czytała się" więc jako pusta strona, co raz dało fałszywe znalezisko ze stosu (wątek `svchost.exe` „wracający" do pamięci sterty po odwinięciu z wyzerowanych danych odwijania). Odczyty fizyczne są teraz ograniczone do rozmiaru pamięci gościa; fałszywe znalezisko zniknęło i więcej ramek pułapek stało się czytelnych.
 
 ## Co zmierzono
 
@@ -105,6 +126,7 @@ Drugi gość, 2026-11-24: Windows 11 Enterprise LTSC (build 26100.9974, 4 GiB RA
 - Moduł `nanshe-vm`. Pamięć fizyczną gościa i jądro Windows odnajduje biblioteka [memflow](https://github.com/memflow/memflow) (MIT); z niej pochodzi lista procesów i listy modułów.
 - Tablice stron przechodzi i pamięć gościa czyta sam Nanshe (`walk_page_tables`, `leaf_entry`), razem ze stronami przejściowymi i wpisami, w których Windows odwraca bity adresu na procesorach podatnych na L1TF. memflow 0.2.4 łączy bit zapisu poziomów tablic stron przez „lub" zamiast „i", przez co każda strona wygląda na zapisywalną, a każda strona kodu na `RWX`, i nie tłumaczy stron przejściowych.
 - Proces objęty izolacją tablic stron jądra ma drugi zestaw tablic dla trybu użytkownika; jego adres jest czytany z `_KPROCESS.UserDirectoryTableBase` (przesunięcie z tego samego pliku symboli) i używany, gdy istnieje.
+- Rejestry wątków: `walk_threads` (limit `MAX_THREADS`, każdy wskaźnik musi leżeć w pamięci jądra, powtórzone ogniwo listy kończy przejście). Prototypowe wpisy stron: `proto_pte_addr`, `proto_frames`. Odczyty fizyczne są sprawdzane względem najwyższego adresu fizycznego gościa (`within_physical`).
 - Gość jest daną niezaufaną. Przejście tablic ma limit liczby czytanych tablic (`MAX_TABLES`) i limit liczby zakresów stron na proces (`MAX_RANGES`); po osiągnięciu limitu wynik procesu jest oznaczany jako niepełny. Oba limity są testowane, razem z tablicami nieczytelnymi i wskazującymi na siebie.
 
 ## Plan dla tej funkcji

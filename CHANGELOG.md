@@ -10,12 +10,17 @@ All notable changes to this project are documented here. The format follows [Kee
 - `nanshe vm`: reduced weight for just-in-time runtimes on kernel evidence (runtime library and main program are images on the guest's system volume, in their installation directories).
 - Windows x64: call stacks of threads waiting in the kernel are unwound from the exception tables in the process memory; a stack that returns to memory not backed by a file gives `THR-PRIV` (executable memory: a taken-over thread; non-executable memory: code hidden while sleeping). Threads are not suspended. New samples `stack-rx` and `stack-masked`, fuzz target `unwind`.
 - Windows: `X-TMP` also reports the code of a module image loaded from a temporary or public directory (`%TEMP%`, `C:\Windows\Temp`, `C:\Users\Public`, the recycle bin), which closes the documented `ximage` blind spot.
+- Stack unwinding coverage in the result (field `stacks` per process) and in the report: threads read and not read, waiting, unwound to the bottom, returning outside modules, abandoned with the reason. Measured on the test host: 1773 of 1815 waiting threads unwound to the bottom, none abandoned.
+- Thread call stacks are also unwound for minidumps (registers from the `ThreadList` stream) and for guests read from the hypervisor (registers from the trap frames of waiting threads in the guest kernel; only `rsp` and `rbp` are known there, and a frame that needs another register is given up).
+- `nanshe vm`: pages of shared regions that the process does not have in its own page tables are read through the kernel's prototype page entries when they are in physical memory.
+- Every region with a finding carries its reservation (`allocation`: base, size, number of regions) on Windows; recorded for analysis, not used by the score. The measurement is in `docs/windows.md`.
 - Fuzz targets for the Windows system tables, the handling of model responses and the report generator.
 - macOS: process context (parents, children, user, start time, threads, command line), code signature state and notable entitlements in the result; reduced weight for JIT regions when the kernel-checked signature is valid, has a hardened runtime, the `allow-jit` entitlement and a publisher identity (a locally signed program gets none).
 
 ### Fixed
 
 - `nanshe vm`: the cache of page tables is bounded for every reader, including the reads of kernel structures.
+- `nanshe vm`: physical reads are limited to the guest's memory size. An invalid page entry carries an extra high address bit, and for such an address the memory library returned success and zeros, so transition pages could be read as empty pages.
 
 ### Changed
 
