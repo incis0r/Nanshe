@@ -308,7 +308,7 @@ mod tests {
     fn detector_tags(os: &str) -> Vec<&'static str> {
         match os {
             "linux" => vec!["RWX", "X-PRIV", "ENT-X", "HDR", "THR-PRIV", "IMG-MOD", "SHC", "MEMFD", "DEL-EXEC", "X-TMP"],
-            "windows" => vec!["RWX", "X-PRIV", "ENT-X", "HDR", "THR-PRIV", "IMG-MOD", "SHC", "X-MAP", "GUARD-X"],
+            "windows" => vec!["RWX", "X-PRIV", "ENT-X", "HDR", "THR-PRIV", "IMG-MOD", "SHC", "X-MAP", "GUARD-X", "X-TMP"],
             _ => vec!["RWX", "X-PRIV", "ENT-X", "HDR", "THR-PRIV", "IMG-MOD", "SHC"],
         }
     }

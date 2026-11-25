@@ -110,6 +110,7 @@ nanshe report wynik.json
 | `RWX` | 30 | `PAGE_EXECUTE_READWRITE` / `PAGE_EXECUTE_WRITECOPY` page |
 | `X-PRIV` | 30 | executable private memory (`MEM_PRIVATE`) |
 | `X-MAP` | 30 | executable `MEM_MAPPED` mapping, that is a section that is not a module image |
+| `X-TMP` | 30 | code of a module image (`MEM_IMAGE`) loaded from `\AppData\Local\Temp`, `\AppData\LocalLow\Temp`, `\Windows\Temp`, `\Users\Public` or `\$Recycle.Bin` |
 | `GUARD-X` | 30 | executable region with `PAGE_GUARD`, content not read |
 | `ENT-X` | 20/30 | high entropy in an executable region |
 | `HDR` | 40 | PE header (`MZ` + `PE\0\0`, non-zero Machine field, 1-96 sections) in a region not backed by a file: at the start of a page in any region, and in executable regions also at any offset |
@@ -155,7 +156,8 @@ Limitations of this reduction:
 
 Each item has a sample in `tests/samples` and an expectation in `scripts/e2e.ps1`:
 
-- **`SEC_IMAGE` section from a file outside the system directories** (`ximage`): `MEM_IMAGE` regions are not scored, the payload is invisible.
+- **`SEC_IMAGE` section from a file outside the system directories**: `X-TMP` covers only a list of temporary and public directories (the sample `ximage` in `%TEMP%`). An image loaded from another user-writable directory (the profile, `ProgramData`, a directory of its own) is still not scored, because ordinary programs run from there.
+- **`X-TMP` false positives**: installers and updaters that unpack into `%TEMP%` and run from there, and Electron applications that unpack native libraries there (`*.tmp.node`; one such observation on a test machine), get the "suspicious" severity.
 - **PE header with a corrupted signature and no section table** (`pe-corrupt`): `HDR` does not react, `X-PRIV` remains. A header whose `MZ` and `PE` signatures were wiped while the section table remained is detected by `HDR` in executable regions (`pe-wiped`).
 - **Header off a page boundary in non-executable data**: invisible (deliberately, because copies of headers in ordinary data are an everyday occurrence). In executable regions a header at an offset is detected (`pe-offset`).
 - A process with more than 1 048 576 regions: the first regions up to the limit are scanned, the findings are kept, and the result for the process is marked as incomplete.

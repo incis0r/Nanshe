@@ -125,7 +125,7 @@ fn tag_gloss(tag: &str) -> &'static str {
         "GUARD-X" => tr!("wykonywalny region za strażnikiem (PAGE_GUARD); treść celowo nieodczytana", "executable region behind a guard page (PAGE_GUARD); contents deliberately not read"),
         "MEMFD" => tr!("wykonywalne mapowanie memfd (plik istniejący tylko w pamięci)", "executable memfd mapping (a file that exists only in memory)"),
         "DEL-EXEC" => tr!("wykonywalne mapowanie pliku usuniętego z dysku", "executable mapping of a file deleted from disk"),
-        "X-TMP" => tr!("wykonywalne mapowanie pliku z katalogu zapisywalnego dla wszystkich, np. /tmp (Linux)", "executable mapping of a file from a world-writable directory, e.g. /tmp (Linux)"),
+        "X-TMP" => tr!("kod z pliku w katalogu tymczasowym: /tmp i podobne (Linux), moduł z katalogu tymczasowego (Windows)", "code from a file in a temporary directory: /tmp and similar (Linux), a module from a temporary directory (Windows)"),
         "ENT-X" => tr!("wysoka entropia w regionie wykonywalnym (kod spakowany lub zaszyfrowany)", "high entropy in an executable region (packed or encrypted code)"),
         "HDR" => tr!("nagłówek obrazu PE/ELF/Mach-O w pamięci bez pliku źródłowego", "PE/ELF/Mach-O image header in memory not backed by a file"),
         "THR-PRIV" => tr!("wątek ulokowany w pamięci bez pliku źródłowego", "thread located in memory not backed by a file"),

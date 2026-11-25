@@ -139,12 +139,26 @@ impl Detector for DelExec {
 /// jak `X-MAP` na Windows, więc ładunek R-X z pliku omijał wszystkie detektory. Pliki usunięte
 /// pokrywa `DEL-EXEC`, pamięć anonimowa `X-PRIV`; ten detektor celuje w plik, który pozostał na dysku.
 struct XTmp;
+/// Katalogi Windows, do których zwykły użytkownik zapisuje bez podniesienia uprawnień i z których
+/// oprogramowanie na stałe nie działa. Profil użytkownika jako całość celowo nie jest na liście:
+/// stamtąd działają zwykłe programy (Teams, aplikacje Electron).
+const WIN_TEMP_DIRS: [&str; 5] = ["\\appdata\\local\\temp\\", "\\appdata\\locallow\\temp\\", "\\windows\\temp\\", "\\users\\public\\", "\\$recycle.bin\\"];
 impl Detector for XTmp {
     fn id(&self) -> &'static str { "x-tmp" }
-    fn applies(&self, i: &nanshe_core::SourceInfo) -> bool { i.os == "linux" }
+    fn applies(&self, i: &nanshe_core::SourceInfo) -> bool { i.os == "linux" || i.os == "windows" }
     fn scan(&self, r: &Region, _d: &[u8], ctx: &Ctx) -> Vec<Finding> {
         let Some(b) = r.backing.as_deref() else { return vec![] };
-        if r.is_x() && r.kind == RegionKind::Mapped && !r.backing_deleted && !is_memfd(r)
+        if !r.is_x() { return vec![]; }
+        if ctx.info.os == "windows" {
+            // Obraz modułu (SEC_IMAGE) załadowany z katalogu tymczasowego: treść zgadza się z plikiem,
+            // więc IMG-MOD milczy, a X-MAP dotyczy tylko sekcji niebędących obrazem.
+            let low = b.to_ascii_lowercase();
+            return if r.kind == RegionKind::Image && WIN_TEMP_DIRS.iter().any(|d| low.contains(d)) {
+                vec![ctx.finding(self.id(), "X-TMP", r, r.base, r.size, 30,
+                    trf!("kod modułu załadowanego z katalogu tymczasowego ({b})", "code of a module loaded from a temporary directory ({b})"))]
+            } else { vec![] };
+        }
+        if r.kind == RegionKind::Mapped && !r.backing_deleted && !is_memfd(r)
             && WORLD_WRITABLE_DIRS.iter().any(|d| b.starts_with(d)) {
             vec![ctx.finding(self.id(), "X-TMP", r, r.base, r.size, 30,
                 trf!("wykonywalne mapowanie pliku z katalogu zapisywalnego dla wszystkich ({b})", "executable mapping of a file from a world-writable directory ({b})"))]

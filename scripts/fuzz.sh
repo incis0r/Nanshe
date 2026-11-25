@@ -18,7 +18,7 @@ podman run --rm -i --platform "linux/$(uname -m | sed 's/x86_64/amd64/;s/aarch64
       mkdir -p fuzz/corpus/$t
       [ -d /tmp/seeds/$t ] && cp -n /tmp/seeds/$t/* fuzz/corpus/$t/ 2>/dev/null || true
       # raport: ziarnem jest prawdziwy plik wyniku z przykładów w repo
-      if [ $t = report ]; then for f in docs/examples/*.json lab/przyklady/macos/probka.json; do [ -f "$f" ] && cp "$f" "fuzz/corpus/report/seed-$(basename "$f")" 2>/dev/null || true; done; fi
+      if [ $t = report ]; then for f in docs/examples/*.json; do [ -f "$f" ] && cp "$f" "fuzz/corpus/report/seed-$(basename "$f")" 2>/dev/null || true; done; fi
       limit=65536; [ $t = pagetables ] && limit=262144; [ $t = dump ] && limit=16384; [ $t = report ] && limit=262144
       if cargo +nightly fuzz run $t -- -max_total_time=$SECS -max_len=$limit -timeout=20 -rss_limit_mb=2048 -print_final_stats=1 > /target/fuzz-$t.log 2>&1; then res=OK; else res=FAIL; fail=1; fi
       echo "$t: $res | $(grep -E "stat::number_of_executed_units|stat::new_units_added" /target/fuzz-$t.log | tr "\n" " ") | cov $(grep -oE "cov: [0-9]+" /target/fuzz-$t.log | tail -1)"

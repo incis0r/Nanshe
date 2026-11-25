@@ -35,6 +35,17 @@
   },
   "SHC": {
    "tech": "Wyszukiwanie w regionach wykonywalnych bez pliku: odczyt adresu PEB (gs:[0x60], fs:[0x30]), pętla skrótów nazw funkcji z ROR 13, kopia wejścia do jądra (mov r10, rcx; mov eax, numer; syscall) poza ntdll, ustalanie własnego adresu i prolog znanych etapów ładujących. Przeglądarki oparte na Chromium kopiują wejścia do jądra do własnej pamięci w ramach piaskownicy."
+  },
+  "X-TMP": {
+   "name": "kod z katalogu tymczasowego",
+   "en": "code of a module image loaded from a temporary directory (Windows); installers and self-updating programs that unpack themselves there also trigger it",
+   "meaning": "Program wykonuje kod pliku (programu albo biblioteki) załadowanego z katalogu tymczasowego albo publicznego, do którego zwykły użytkownik zapisuje bez uprawnień administratora.",
+   "why": "Katalogi tymczasowe to pierwsze miejsce, do którego atakujący zapisuje pobrane narzędzia. Biblioteka załadowana stamtąd jako zwykły moduł zgadza się z plikiem na dysku, więc porównanie pamięci z plikiem niczego nie wykaże.",
+   "attack": [
+    "T1574 Hijack Execution Flow",
+    "T1055 Process Injection"
+   ],
+   "tech": "Wykonywalny region typu MEM_IMAGE (sekcja SEC_IMAGE) z pliku w \\AppData\\Local\\Temp, \\AppData\\LocalLow\\Temp, \\Windows\\Temp, \\Users\\Public albo \\$Recycle.Bin."
   }
  },
  "combos": [
@@ -182,6 +193,13 @@
     "do": "Wypisz zmienione funkcje narzędziem pe-sieve, które pokazuje podpięcia i łatki (zmiany w kodzie biblioteki) z nazwami funkcji",
     "cmd": "pe-sieve64.exe /pid {pid} /shellc 0 /iat 1",
     "look": "Spójrz na wiersze Hooked i IAT Hooked w podsumowaniu oraz na pliki .tag w katalogu wyników, gdzie są nazwy zmienionych funkcji i cel przekierowania. Przekierowania do biblioteki programu antywirusowego lub EDR są zgodne z normalną pracą ochrony. Przekierowanie do pamięci bez pliku albo łatki w funkcjach takich jak AmsiScanBuffer lub EtwEventWrite sugerują próbę wyłączenia zabezpieczeń: zrób zrzut procesu i zgłoś znalezisko."
+   }
+  ],
+  "X-TMP": [
+   {
+    "do": "Sprawdź daty, podpis cyfrowy i skrót pliku, wstawiając w miejsce FILE ścieżkę pliku z tabeli regionu pamięci",
+    "cmd": "Get-Item 'FILE' | Format-List FullName,CreationTimeUtc,LastWriteTimeUtc ; Get-AuthenticodeSignature 'FILE' | Format-List Status,SignerCertificate ; Get-FileHash 'FILE'",
+    "look": "Patrz na daty utworzenia i modyfikacji, pole Status podpisu (Valid oznacza ważny podpis) i nazwę wystawcy oraz skrót (64 znaki szesnastkowe). Niegroźny przypadek: instalator albo program aktualizujący znanego producenta z ważnym podpisem, uruchomiony przed chwilą przez użytkownika, albo biblioteka natywna aplikacji Electron (plik .node) rozpakowana przy jej starcie. Niepokoić powinien brak podpisu, data zbieżna z podejrzewanym incydentem, nazwa udająca plik systemowy albo skrót oznaczony w bazie reputacji plików jako złośliwy: wtedy skopiuj plik jako dowód, zanim zniknie."
    }
   ]
  },

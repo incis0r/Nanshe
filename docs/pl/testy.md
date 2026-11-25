@@ -14,12 +14,12 @@ powershell -ExecutionPolicy Bypass -File scripts\e2e.ps1 -Bin target\release -Ou
 
 Kod wyjścia skryptów e2e: 0 gdy wszystko zgodne, 1 gdy cokolwiek odbiega.
 
-## Stan na 2026-11-24
+## Stan na 2026-11-25
 
 | Warstwa | Wynik |
 |---|---|
-| Testy jednostkowe | 148 przechodzi (analyze 26, core 3, dump 8, kb 7, live 21, llm 40, report 30, vm 13) |
-| macOS (arm64, natywnie) | 147 testów jednostkowych (w tym 4 backendu macOS, uruchamiane tylko tam) oraz `scripts/e2e-macos.sh`: 7 próbek i 4 grupy asercji dodatkowych; zob. [macos.md](macos.md) |
+| Testy jednostkowe | 151 przechodzi (analyze 28, core 3, dump 8, kb 7, live 21, llm 40, report 30, vm 14) |
+| macOS (arm64, natywnie) | 153 testy jednostkowe (w tym 4 backendu macOS, uruchamiane tylko tam) oraz `scripts/e2e-macos.sh`: 7 próbek i 4 grupy asercji dodatkowych; zob. [macos.md](macos.md) |
 | Odczyt z hiperwizora (`nanshe vm`) | jedno uruchomienie na żywo na gościu Windows Server 2025 pod KVM (zob. [hiperwizor.md](hiperwizor.md)); bez automatycznego testu end-to-end |
 | Pełne skany na żywo, Linux | `nanshe scan --all` na 20 hostach jednego labu (19 x86_64, 1 arm64), 2026-11-23, przed strojeniem detekcji i po nim; żadnego procesu nie weryfikowano ręcznie |
 | e2e Linux (aarch64, kontener) | 16 próbek statycznych, 2 dynamiczne i 8 grup asercji dodatkowych |
@@ -43,6 +43,7 @@ Nie ma: zestawu oceny jakości modeli. Fuzzing jest opisany w sekcji „Fuzzing"
 | `each_condition_is_necessary` | usunięcie jednej cechy (W, X, brak pliku, entropia) gasi odpowiadający jej tag | to jest test mutacyjny |
 | `memfd_and_deleted` | `MEMFD` i `DEL-EXEC` na Linuksie | brak tych tagów na Windows sprawdza `x_map_is_windows_only...` |
 | `x_tmp_flags_exec_from_world_writable_dir` | `X-TMP` (30 punktów, „podejrzane") dla wykonywalnego mapowania pliku z `/tmp`, `/var/tmp`, `/dev/shm`, `/run/shm` | katalog systemowy, brak prawa wykonania, Windows: brak; plik usunięty daje tylko `DEL-EXEC` |
+| `x_tmp_flags_windows_module_image_from_temp_dir` | `X-TMP` (30 punktów) na Windows dla kodu obrazu modułu z `%TEMP%`, `\Windows\Temp`, `\Users\Public`, kosza; niezależnie od wielkości liter i postaci ścieżki | katalog systemowy, profil użytkownika poza katalogiem tymczasowym, brak prawa wykonania; sekcja niebędąca obrazem daje tylko `X-MAP` |
 | `hdr_only_without_backing` | `HDR` dla nagłówka w regionie bez pliku, z adresem strony | ten sam nagłówek w regionie z plikiem: brak |
 | `hdr_found_at_any_offset_with_same_validation` | w regionie wykonywalnym nagłówek ELF i PE jest wykrywany pod dowolnym przesunięciem, z adresem i przesunięciem w opisie | ten sam nagłówek w danych RW, uszkodzone pole ELF, `MZ` bez `PE`, Mach-O poza początkiem strony, dane losowe: brak |
 | `windows_jit_needs_verified_exe_and_system_runtime_image` | Windows: sterta JIT w procesie z systemowym .NET spada z 60 do 20 punktów, `X-MAP` z 30 do 10, znaleziska zostają widoczne ze stałym znacznikiem | program spoza katalogów systemowych, brak modułu środowiska, plik zmapowany jako dane, `clr.dll` z profilu użytkownika, z `\Windows\Temp`, z podkatalogu udającego `\Windows\` albo spoza katalogu środowiska: bez obniżki; wykonywalne mapowanie pliku (`X-MAP` z plikiem) nigdy nie jest obniżane; ładunek o wysokiej entropii zostaje „podejrzany", a nagłówek obrazu nie jest obniżany |
@@ -252,7 +253,7 @@ Asercje dodatkowe:
 | `rwx-lowent` | RWX, niska entropia | 1 | `RWX`, `X-PRIV` | 60 |
 | `pe-corrupt` | `MZ` z wymazaną sygnaturą `PE` | 1 | `X-PRIV`: `HDR` nie reaguje | 30 |
 | `pe-offset` | nagłówek PE w środku strony w regionie R-X | 1 | `HDR`, `X-PRIV` | 70 |
-| `ximage` | sekcja `SEC_IMAGE` z kopii exe w `%TEMP%` | 0 | brak: **udokumentowany ślepy punkt** | - |
+| `ximage` | sekcja `SEC_IMAGE` z kopii exe w `%TEMP%` | 1 | `X-TMP` (do 2026-11-25 ślepy punkt, kod 0) | - |
 | `guard` | RWX ze strażnikiem | 1 | `GUARD-X`, `RWX`, `X-PRIV` | 90 |
 | `guard-hide` | nagłówek PE za strażnikiem | 1 | `GUARD-X`, `X-PRIV`: `HDR` nie widzi treści | 60 |
 | `inject-map` | instrukcja dla modelu w nazwie mapowanego pliku | 1 | `X-MAP` | 30 |

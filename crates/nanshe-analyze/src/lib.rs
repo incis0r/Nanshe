@@ -443,6 +443,32 @@ mod tests {
     }
 
     #[test]
+    fn x_tmp_flags_windows_module_image_from_temp_dir() {
+        let cfg = Config::default();
+        struct Win(Region);
+        impl MemorySource for Win {
+            fn info(&self) -> SourceInfo { SourceInfo { os: "windows".into(), arch: "x86_64".into(), pid: Some(7), name: Some("app.exe".into()), source_type: "live".into(),
+                exe: Some("C:\\Program Files\\App\\app.exe".into()), exe_deleted: false, exe_verified: true } }
+            fn regions(&self) -> Result<Vec<Region>> { Ok(vec![self.0.clone()]) }
+            fn read_at(&self, _a: u64, b: &mut [u8]) -> Result<usize> { b.fill(0x90); Ok(b.len()) }
+        }
+        let run = |path: &str, prot: &str, kind: RegionKind| tags(&scan_source(&Win(reg(0x10000, 8192, prot, kind, Some(path))), &cfg));
+        // obraz modułu z katalogu tymczasowego: X-TMP, waga 30; wielkość liter i postać ścieżki bez znaczenia
+        let p = scan_source(&Win(reg(0x10000, 8192, "r-x", RegionKind::Image, Some("C:\\Users\\jan\\AppData\\Local\\Temp\\ns-ximage-1.exe"))), &cfg);
+        assert_eq!(tags(&p), ["X-TMP"]);
+        assert_eq!((p.regions[0].score, p.regions[0].severity), (30, Severity::Suspicious));
+        for path in ["\\Device\\HarddiskVolume3\\WINDOWS\\TEMP\\a.dll", "C:\\Users\\Public\\a.dll", "\\Users\\x\\AppData\\LocalLow\\Temp\\a.dll", "C:\\$Recycle.Bin\\S-1-5\\a.exe"] {
+            assert_eq!(run(path, "r-x", RegionKind::Image), ["X-TMP"], "{path}");
+        }
+        // kontrole: każdy warunek jest konieczny
+        assert!(run("C:\\Windows\\System32\\a.dll", "r-x", RegionKind::Image).is_empty(), "katalog systemowy");
+        assert!(run("C:\\Users\\jan\\AppData\\Local\\Microsoft\\Teams\\a.dll", "r-x", RegionKind::Image).is_empty(), "profil użytkownika poza katalogiem tymczasowym");
+        assert!(run("C:\\Users\\jan\\AppData\\Local\\Temp\\a.dll", "r--", RegionKind::Image).is_empty(), "bez prawa wykonania");
+        // sekcja niebędąca obrazem to domena X-MAP; X-TMP nie dubluje
+        assert_eq!(run("C:\\Windows\\Temp\\a.dll", "r-x", RegionKind::Mapped), ["X-MAP"]);
+    }
+
+    #[test]
     fn windows_jit_needs_verified_exe_and_system_runtime_image() {
         struct Win { verified: bool, runtime: Option<(&'static str, RegionKind)>, payload: Vec<u8>, map_x: bool }
         impl MemorySource for Win {

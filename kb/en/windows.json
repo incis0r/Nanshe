@@ -35,6 +35,17 @@
   },
   "SHC": {
    "tech": "Search in executable regions without a file: read of the PEB address (gs:[0x60], fs:[0x30]), a function-name hashing loop with ROR 13, a copy of the kernel entry (mov r10, rcx; mov eax, number; syscall) outside ntdll, finding its own address and the prologue of known loader stages. Chromium-based browsers copy kernel entries into their own memory as part of the sandbox."
+  },
+  "X-TMP": {
+   "name": "code from a temporary directory",
+   "en": "code of a module image loaded from a temporary directory (Windows); installers and self-updating programs that unpack themselves there also trigger it",
+   "meaning": "The program runs code of a file (a program or a library) loaded from a temporary or public directory that an ordinary user can write to without administrator rights.",
+   "why": "Temporary directories are the first place an attacker writes downloaded tools to. A library loaded from there as a regular module matches its file on disk, so comparing memory with the file shows nothing.",
+   "attack": [
+    "T1574 Hijack Execution Flow",
+    "T1055 Process Injection"
+   ],
+   "tech": "Executable MEM_IMAGE region (SEC_IMAGE section) from a file in \\AppData\\Local\\Temp, \\AppData\\LocalLow\\Temp, \\Windows\\Temp, \\Users\\Public or \\$Recycle.Bin."
   }
  },
  "combos": [
@@ -182,6 +193,13 @@
     "do": "List the modified functions with pe-sieve, which shows hooks and patches (changes in the code of a library) with function names",
     "cmd": "pe-sieve64.exe /pid {pid} /shellc 0 /iat 1",
     "look": "Look at the Hooked and IAT Hooked lines in the summary and at the .tag files in the output directory, which hold the names of the modified functions and the redirect target. Redirects into a library of an antivirus or EDR product are consistent with the normal work of protection software. A redirect into memory not backed by a file, or patches in functions such as AmsiScanBuffer or EtwEventWrite, suggest an attempt to disable protections: take a process dump and report the finding."
+   }
+  ],
+  "X-TMP": [
+   {
+    "do": "Check the dates, the digital signature and the hash of the file, replacing FILE with the file path from the memory region table",
+    "cmd": "Get-Item 'FILE' | Format-List FullName,CreationTimeUtc,LastWriteTimeUtc ; Get-AuthenticodeSignature 'FILE' | Format-List Status,SignerCertificate ; Get-FileHash 'FILE'",
+    "look": "Look at the creation and modification dates, the signature Status field (Valid means a valid signature) with the signer name, and the hash (64 hexadecimal characters). Benign case: an installer or updater from a known vendor with a valid signature, started by the user a moment ago, or a native library of an Electron application (a .node file) unpacked when it started. Be concerned if there is no signature, the date matches the suspected incident, the name imitates a system file, or the hash is flagged as malicious in a file reputation database: in that case copy the file as evidence before it disappears."
    }
   ]
  },

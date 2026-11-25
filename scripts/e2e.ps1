@@ -54,7 +54,7 @@ Check "rwx-lowent" 1 "RWX,X-PRIV"    # jak rwx, ale bez ENT-X na ladunku (asercj
 Check "pe-corrupt" 1 "X-PRIV"        # zla sygnatura PE i brak tablicy sekcji: HDR gluchy (kontrola)
 Check "pe-wiped" 1 "HDR,X-PRIV"      # sygnatury MZ i PE wyzerowane, tablica sekcji zostala: HDR po tablicy
 Check "pe-offset"  1 "HDR,X-PRIV"    # naglowek PE w srodku strony: HDR szuka pod dowolnym przesunieciem
-Check "ximage"     0 ""              # SLEPY PUNKT: MEM_IMAGE z %TEMP% niewidoczny (X-MAP tylko dla MEM_MAPPED)
+Check "ximage"     1 "X-TMP"         # obraz modulu (MEM_IMAGE) z %TEMP%; do 2026-11-25 slepy punkt, kod 0
 Check "guard"      1 "GUARD-X,RWX,X-PRIV"  # strony straznika nie czytamy (Z1), ale metadane alarmuja
 Check "guard-hide" 1 "GUARD-X,X-PRIV"  # jak pe, ale za PAGE_GUARD: HDR slepy, GUARD-X mowi, ze tresci nie sprawdzono
 # red team: wstrzykniecie do warstwy LLM przez metadane

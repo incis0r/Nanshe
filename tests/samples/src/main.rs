@@ -345,8 +345,8 @@ mod imp {
 ///   rwx-lowent   RWX z kodem o niskiej entropii: RWX i X-PRIV bez ENT-X (entropia nie jedyny nośnik)
 ///   pe-corrupt   nagłówek MZ bez poprawnej sygnatury PE (antyforenzycznie): HDR głuchy, zostaje X-PRIV
 ///   pe-offset    prawdziwy nagłówek PE w środku strony w regionie R-X: HDR znajduje go pod przesunięciem
-///   ximage       znany ślepy punkt: sekcja SEC_IMAGE z kopii własnego exe w %TEMP% daje regiony
-///                MEM_IMAGE: X-MAP łapie wyłącznie MEM_MAPPED, więc ładunek jest niewidoczny
+///   ximage       sekcja SEC_IMAGE z kopii własnego exe w %TEMP% daje regiony MEM_IMAGE: X-MAP łapie
+///                wyłącznie MEM_MAPPED, IMG-MOD milczy (treść zgodna z plikiem); zgłasza X-TMP
 ///   guard        region RWX z PAGE_GUARD: strony strażnika nie czytamy (Z1), ale metadane alarmują
 ///   guard-hide   jak guard, ale R-X z nagłówkiem PE: odczyt zdjąłby strażnika, więc treść jest
 ///                niedostępna i detektory treści (HDR) są ślepe: zostaje X-PRIV

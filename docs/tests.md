@@ -14,12 +14,12 @@ powershell -ExecutionPolicy Bypass -File scripts\e2e.ps1 -Bin target\release -Ou
 
 Exit code of the e2e scripts: 0 when everything matches, 1 when anything deviates.
 
-## Status as of 2026-11-24
+## Status as of 2026-11-25
 
 | Layer | Result |
 |---|---|
-| Unit tests | 148 pass (analyze 26, core 3, dump 8, kb 7, live 21, llm 40, report 30, vm 13) |
-| macOS (arm64, native) | 147 unit tests (4 of them for the macOS backend, which run only there) and `scripts/e2e-macos.sh`: 7 samples and 4 groups of additional assertions; see [macos.md](macos.md) |
+| Unit tests | 151 pass (analyze 28, core 3, dump 8, kb 7, live 21, llm 40, report 30, vm 14) |
+| macOS (arm64, native) | 153 unit tests (4 of them for the macOS backend, which run only there) and `scripts/e2e-macos.sh`: 7 samples and 4 groups of additional assertions; see [macos.md](macos.md) |
 | Hypervisor read (`nanshe vm`) | one live run against a Windows Server 2025 guest on KVM (see [hypervisor.md](hypervisor.md)); no automated end-to-end test |
 | Full live scans, Linux | `nanshe scan --all` on 20 hosts of one lab (19 x86_64, 1 arm64), 2026-11-23, before and after the detection tuning; no process was verified manually |
 | e2e Linux (aarch64, container) | 16 static samples, 2 dynamic and 8 groups of additional assertions |
@@ -43,6 +43,7 @@ Not present: a model quality evaluation set. Fuzzing is described in the section
 | `each_condition_is_necessary` | removing one property (W, X, no file, entropy) switches off the tag that corresponds to it | this is a mutation test |
 | `memfd_and_deleted` | `MEMFD` and `DEL-EXEC` on Linux | the absence of these tags on Windows is checked by `x_map_is_windows_only...` |
 | `x_tmp_flags_exec_from_world_writable_dir` | `X-TMP` (30 points, "suspicious") for an executable mapping of a file from `/tmp`, `/var/tmp`, `/dev/shm`, `/run/shm` | system directory, no execute permission, Windows: none; a deleted file gives only `DEL-EXEC` |
+| `x_tmp_flags_windows_module_image_from_temp_dir` | `X-TMP` (30 points) on Windows for the code of a module image from `%TEMP%`, `\Windows\Temp`, `\Users\Public`, the recycle bin; regardless of letter case and path form | system directory, user profile outside the temporary directory, no execute permission; a section that is not an image gives only `X-MAP` |
 | `hdr_only_without_backing` | `HDR` for a header in a region without a file, with the page address | the same header in a file-backed region: none |
 | `hdr_found_at_any_offset_with_same_validation` | in an executable region an ELF and PE header is detected at any offset, with the address and offset in the description | the same header in RW data, a corrupted ELF field, `MZ` without `PE`, Mach-O not at the start of a page, random data: none |
 | `windows_jit_needs_verified_exe_and_system_runtime_image` | Windows: a JIT heap in a process with the system .NET drops from 60 to 20 points, `X-MAP` from 30 to 10, the findings stay visible with a fixed marker | a program outside the system directories, no runtime module, a file mapped as data, `clr.dll` from a user profile, from `\Windows\Temp`, from a subdirectory pretending to be `\Windows\` or from outside the runtime directory: no reduction; an executable file mapping (`X-MAP` with a file) is never reduced; a high-entropy payload stays "suspicious", and an image header is not reduced |
@@ -252,7 +253,7 @@ Additional assertions:
 | `rwx-lowent` | RWX, low entropy | 1 | `RWX`, `X-PRIV` | 60 |
 | `pe-corrupt` | `MZ` with the `PE` signature erased | 1 | `X-PRIV`: `HDR` does not react | 30 |
 | `pe-offset` | PE header in the middle of a page in an R-X region | 1 | `HDR`, `X-PRIV` | 70 |
-| `ximage` | a `SEC_IMAGE` section from a copy of the exe in `%TEMP%` | 0 | none: **documented blind spot** | - |
+| `ximage` | a `SEC_IMAGE` section from a copy of the exe in `%TEMP%` | 1 | `X-TMP` (until 2026-11-25 a blind spot, code 0) | - |
 | `guard` | RWX with a guard | 1 | `GUARD-X`, `RWX`, `X-PRIV` | 90 |
 | `guard-hide` | PE header behind a guard | 1 | `GUARD-X`, `X-PRIV`: `HDR` does not see the content | 60 |
 | `inject-map` | instruction for the model in the name of the mapped file | 1 | `X-MAP` | 30 |

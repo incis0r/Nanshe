@@ -110,6 +110,7 @@ nanshe report wynik.json
 | `RWX` | 30 | strona `PAGE_EXECUTE_READWRITE` / `PAGE_EXECUTE_WRITECOPY` |
 | `X-PRIV` | 30 | wykonywalna pamięć prywatna (`MEM_PRIVATE`) |
 | `X-MAP` | 30 | wykonywalne mapowanie `MEM_MAPPED`, czyli sekcja niebędąca obrazem modułu |
+| `X-TMP` | 30 | kod obrazu modułu (`MEM_IMAGE`) załadowanego z `\AppData\Local\Temp`, `\AppData\LocalLow\Temp`, `\Windows\Temp`, `\Users\Public` albo `\$Recycle.Bin` |
 | `GUARD-X` | 30 | wykonywalny region z `PAGE_GUARD`, treść nieodczytana |
 | `ENT-X` | 20/30 | wysoka entropia w regionie wykonywalnym |
 | `HDR` | 40 | nagłówek PE (`MZ` + `PE\0\0`, niezerowe pole Machine, 1-96 sekcji) w regionie bez pliku: na początku strony w każdym regionie, a w regionach wykonywalnych także pod dowolnym przesunięciem |
@@ -155,7 +156,8 @@ Ograniczenia tej obniżki:
 
 Każdy punkt ma próbkę w `tests/samples` i oczekiwanie w `scripts/e2e.ps1`:
 
-- **Sekcja `SEC_IMAGE` z pliku spoza katalogów systemowych** (`ximage`): regiony `MEM_IMAGE` nie są punktowane, ładunek niewidoczny.
+- **Sekcja `SEC_IMAGE` z pliku spoza katalogów systemowych**: `X-TMP` obejmuje tylko listę katalogów tymczasowych i publicznych (próbka `ximage` w `%TEMP%`). Obraz załadowany z innego katalogu zapisywalnego dla użytkownika (profil, `ProgramData`, własny katalog) nadal nie jest punktowany, bo stamtąd działają zwykłe programy.
+- **Fałszywe alarmy `X-TMP`**: instalatory i programy aktualizujące, które rozpakowują się do `%TEMP%` i stamtąd działają, oraz aplikacje Electron rozpakowujące tam biblioteki natywne (`*.tmp.node`; jedna taka obserwacja na maszynie testowej) dostaną wagę „podejrzane".
 - **Nagłówek PE z uszkodzoną sygnaturą i bez tablicy sekcji** (`pe-corrupt`): `HDR` nie reaguje, zostaje `X-PRIV`. Nagłówek z wymazanymi sygnaturami `MZ` i `PE`, po którym została tablica sekcji, jest wykrywany przez `HDR` w regionach wykonywalnych (`pe-wiped`).
 - **Nagłówek poza granicą strony w danych niewykonywalnych**: niewidoczny (świadomie, bo kopie nagłówków w zwykłych danych są codziennością). W regionach wykonywalnych nagłówek pod przesunięciem jest wykrywany (`pe-offset`).
 - Proces z ponad 1 048 576 regionami: skanowane są pierwsze regiony do limitu, znaleziska zostają, a wynik procesu jest oznaczony jako niekompletny.
