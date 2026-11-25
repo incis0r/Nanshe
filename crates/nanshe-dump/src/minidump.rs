@@ -162,7 +162,8 @@ pub(crate) fn parse(src: &mut Src) -> Result<Parsed> {
     if p.arch == "x86_64" {
         if let Some(b) = load(src, stream(THREAD_LIST)) {
             let n = (u32le(&b, 0).unwrap_or(0) as usize).min(b.len().saturating_sub(4) / 48).min(MAX_THREAD_CONTEXTS);
-            for e in b[4..4 + n * 48].chunks_exact(48) {
+            // strumień krótszy niż licznik wpisów (4 bajty) nie ma żadnego wpisu
+            for e in b.get(4..4 + n * 48).unwrap_or(&[]).chunks_exact(48) {
                 let (Some(tid), Some(size), Some(rva)) = (u32le(e, 0), u32le(e, 40), u32le(e, 44)) else { continue };
                 // Rax..R15 leżą od 0x78, Rip pod 0xf8; krótszy zapis nie jest kontekstem x64
                 if tid == 0 { continue; }
@@ -323,6 +324,13 @@ pub(crate) mod tests {
         let at = bad.windows(4).position(|w| w == 0x4242_4242u32.to_le_bytes()).unwrap();
         bad[at + 44..at + 48].copy_from_slice(&0xffff_fff0u32.to_le_bytes());
         assert_eq!((set(&bad).regs.iter().map(|t| t.tid).collect::<Vec<_>>(), set(&bad).unread), (vec![4], 1));
+        // strumień ThreadList obcięty w katalogu do 0-3 bajtów (krócej niż licznik wpisów): brak rejestrów, bez paniki
+        let good = minidump_with(&regions, &mods, &[], 5, &[(9, 1, 2, 1232)]);
+        let entry = (0..8).map(|i| 32 + i * 12).find(|o| u32le(&good, *o) == Some(THREAD_LIST)).unwrap();
+        for len in 0u32..4 {
+            let mut short = good.clone(); short[entry + 4..entry + 8].copy_from_slice(&len.to_le_bytes());
+            assert!(set(&short).regs.is_empty(), "{len}");
+        }
     }
 
     #[test]
