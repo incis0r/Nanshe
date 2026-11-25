@@ -25,6 +25,3 @@ fuzz/Cargo.lock
 
 # zrzuty awaryjne narzędzi budujących
 *.core
-
-# surowe wyniki skanów maszyn LAB (pamięć, wiersze poleceń): tylko lokalnie, do gita idą raporty
-lab/przyklady/hosty/**/skan.json
