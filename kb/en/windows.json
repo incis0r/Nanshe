@@ -28,7 +28,7 @@
    "tech": "Committed MEM_PRIVATE memory region with execute permission."
   },
   "THR-PRIV": {
-   "tech": "The thread start address (ThreadQuerySetWin32StartAddress) points to a memory region that is neither a module image nor a file mapping."
+   "tech": "The thread start address (ThreadQuerySetWin32StartAddress) points to a memory region that is neither a module image nor a file mapping. Second case (x64): the thread waits in a kernel call and the first return address on its stack outside module images lies in memory not backed by a file; if that memory is not executable, this is what code hidden while sleeping looks like."
   },
   "IMG-MOD": {
    "tech": "Pages of an executable module image (MEM_IMAGE) that are not shared according to QueryWorkingSetEx. Full severity applies only to amsi.dll and wldp.dll; in other modules benign causes are common (relocation, the Chromium sandbox, the .NET runtime)."

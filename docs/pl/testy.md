@@ -18,8 +18,8 @@ Kod wyjścia skryptów e2e: 0 gdy wszystko zgodne, 1 gdy cokolwiek odbiega.
 
 | Warstwa | Wynik |
 |---|---|
-| Testy jednostkowe | 151 przechodzi (analyze 28, core 3, dump 8, kb 7, live 21, llm 40, report 30, vm 14) |
-| macOS (arm64, natywnie) | 153 testy jednostkowe (w tym 4 backendu macOS, uruchamiane tylko tam) oraz `scripts/e2e-macos.sh`: 7 próbek i 4 grupy asercji dodatkowych; zob. [macos.md](macos.md) |
+| Testy jednostkowe | 153 przechodzą (analyze 30, core 3, dump 8, kb 7, live 21, llm 40, report 30, vm 14) |
+| macOS (arm64, natywnie) | 155 testów jednostkowych (w tym 4 backendu macOS, uruchamiane tylko tam) oraz `scripts/e2e-macos.sh`: 7 próbek i 4 grupy asercji dodatkowych; zob. [macos.md](macos.md) |
 | Odczyt z hiperwizora (`nanshe vm`) | jedno uruchomienie na żywo na gościu Windows Server 2025 pod KVM (zob. [hiperwizor.md](hiperwizor.md)); bez automatycznego testu end-to-end |
 | Pełne skany na żywo, Linux | `nanshe scan --all` na 20 hostach jednego labu (19 x86_64, 1 arm64), 2026-11-23, przed strojeniem detekcji i po nim; żadnego procesu nie weryfikowano ręcznie |
 | e2e Linux (aarch64, kontener) | 16 próbek statycznych, 2 dynamiczne i 8 grup asercji dodatkowych |
@@ -49,6 +49,7 @@ Nie ma: zestawu oceny jakości modeli. Fuzzing jest opisany w sekcji „Fuzzing"
 | `windows_jit_needs_verified_exe_and_system_runtime_image` | Windows: sterta JIT w procesie z systemowym .NET spada z 60 do 20 punktów, `X-MAP` z 30 do 10, znaleziska zostają widoczne ze stałym znacznikiem | program spoza katalogów systemowych, brak modułu środowiska, plik zmapowany jako dane, `clr.dll` z profilu użytkownika, z `\Windows\Temp`, z podkatalogu udającego `\Windows\` albo spoza katalogu środowiska: bez obniżki; wykonywalne mapowanie pliku (`X-MAP` z plikiem) nigdy nie jest obniżane; ładunek o wysokiej entropii zostaje „podejrzany", a nagłówek obrazu nie jest obniżany |
 | `detectors::headers` (PE) | nagłówek PE wymaga niezerowego pola Machine i 1-96 sekcji | `MZ...PE` z zerowym Machine albo bez sekcji: brak |
 | `thread_in_memory_without_a_file_is_flagged_at_full_weight` | `THR-PRIV` (40 punktów) dla wątku ulokowanego w pamięci bez pliku; w procesie ze środowiskiem JIT `X-PRIV` jest obniżany, a `THR-PRIV` nie | wątek w kodzie z pliku, brak wątków, region jądra `[vdso]`: brak |
+| `stack_of_a_waiting_thread_returning_to_memory_without_a_file_is_reported` | odwinięcie stosu wątku przez trzy ramki syntetycznego obrazu PE (liść za `syscall`, funkcja z `push` i `sub rsp`, funkcja ze wskaźnikiem ramki): `THR-PRIV` (40 punktów) z adresem powrotu dla regionu R-X i dla regionu RW (inny opis) | wątek nie stoi za `syscall`, rejestry zmienione między odczytami, nieznana wersja informacji o odwijaniu, stos wracający tylko do obrazów, adres w regionie własnego stosu, adres poza mapą, region z plikiem, Linux: brak; przy środowisku JIT powrót do R-X: brak, do RW: zostaje |
 | `modified_code_of_a_file_is_flagged_only_in_read_only_executable_mappings` | `IMG-MOD` dla zmienionego kodu z pliku: 40 punktów na Linuksie i dla `amsi.dll` na Windows, 10 dla zwykłej biblioteki Windows | brak zmian, zero bajtów, dane bez prawa wykonania, kod zapisywalny, pamięć bez pliku: brak |
 | `region_limit_keeps_findings_and_marks_result_incomplete` | mapa o długości limitu: znaleziska sprzed limitu zostają, wynik procesu ma błąd o obcięciu | poniżej limitu: wynik pełny, bez błędu |
 | `unreadable_region_does_not_allocate_its_full_size` | nieczytelny region 64 MiB nie powoduje alokacji 64 MiB | - |
@@ -190,6 +191,7 @@ Parsery danych pochodzących z badanego systemu są testowane fuzzerem `cargo-fu
 | `wintables` | dowolne bajty jako tablice połączeń i uchwytów Windows, dowolny tekst jako ścieżki programów i identyfikatory właścicieli | bez paniki |
 | `llm` | dowolny tekst jako odpowiedź modelu (walidacja wyjaśnień i korelacji, wydobycie JSON, kształty odpowiedzi dostawców) i jako ciągi z pamięci procesu (filtry sekretów i wstrzyknięć, sprawdzenie adresu) | bez paniki |
 | `report` | dowolny plik wyniku przez raport i raport różnicowy, w obu językach; ziarnami są prawdziwe pliki wyników | bez paniki. Wolny (około 2 sekund na przebieg z prawdziwym wynikiem), więc mało wykonań |
+| `unwind` | dowolny obraz PE (nagłówek, tablica funkcji, informacje o odwijaniu), stos i rejestry wątku; ziarnem jest układ z testu jednostkowego | bez paniki; ograniczona praca (limit ramek, ogniw łańcucha i rozmiaru tablicy). 2026-11-25: 11,2 mln wykonań w 2 minuty, bez awarii |
 
 Uruchamianie: `scripts/fuzz.sh [sekundy na cel] [cele...]` w kontenerze (kompilator nightly i `cargo-fuzz` są instalowane tam, nie na stacji). Ziarna pochodzą z budowniczych testów jednostkowych (`NANSHE_FUZZ_SEEDS`). CI uruchamia każdy cel na minutę przy każdym pushu.
 
@@ -248,6 +250,8 @@ Asercje dodatkowe:
 | `xmap` | wykonywalny widok sekcji bez pliku | 1 | `RWX`, `X-MAP` | 60 |
 | `rx-stage` | zapis do RW, potem R-X | 1 | `X-PRIV` | 30 |
 | `thread` | prywatny region R-X i wątek z adresem startu w tym regionie, utworzony jako wstrzymany (nic się nie wykonuje) | 1 | `THR-PRIV`, `X-PRIV` | 70 |
+| `stack-rx` | wątek śpi w jądrze, a adres powrotu z `Sleep` na jego stosie wskazuje prywatny region R-X (adres startu wątku jest legalny; z regionu nic się nie wykonuje) | 1 | `THR-PRIV`, `X-PRIV` | 70 |
+| `stack-masked` | jak `stack-rx`, ale region jest RW z szumem o wysokiej entropii: kod ukryty na czas uśpienia | 1 | `THR-PRIV` | 40 |
 | `inject` | jak `rwx`, z instrukcją dla modelu | 1 | `ENT-X`, `RWX`, `X-PRIV` | 90 |
 | `data-noise` | wysoka entropia w danych RW (kontrola negatywna) | 0 | brak | - |
 | `rwx-lowent` | RWX, niska entropia | 1 | `RWX`, `X-PRIV` | 60 |

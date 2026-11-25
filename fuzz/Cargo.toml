@@ -80,3 +80,10 @@ path = "fuzz_targets/report.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "unwind"
+path = "fuzz_targets/unwind.rs"
+test = false
+doc = false
+bench = false

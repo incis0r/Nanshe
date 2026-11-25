@@ -347,6 +347,8 @@ mod imp {
 ///   pe-offset    prawdziwy nagłówek PE w środku strony w regionie R-X: HDR znajduje go pod przesunięciem
 ///   ximage       sekcja SEC_IMAGE z kopii własnego exe w %TEMP% daje regiony MEM_IMAGE: X-MAP łapie
 ///                wyłącznie MEM_MAPPED, IMG-MOD milczy (treść zgodna z plikiem); zgłasza X-TMP
+///   stack-rx     wątek czeka w jądrze, a jego stos wraca do R-X bez pliku (adres startu legalny): THR-PRIV
+///   stack-masked jak wyżej, ale region jest RW z szumem (kod ukryty na czas uśpienia): sam THR-PRIV
 ///   guard        region RWX z PAGE_GUARD: strony strażnika nie czytamy (Z1), ale metadane alarmują
 ///   guard-hide   jak guard, ale R-X z nagłówkiem PE: odczyt zdjąłby strażnika, więc treść jest
 ///                niedostępna i detektory treści (HDR) są ślepe: zostaje X-PRIV
@@ -466,6 +468,31 @@ mod imp {
         };
         assert!(!h.is_null(), "CreateThread");
     }
+
+    // Wejście w Sleep z podmienionym adresem powrotu: funkcja nadpisuje własny adres powrotu
+    // wartością z rcx i skacze do Sleep (rdx) z czasem INFINITE. Sleep nie wraca, więc pod
+    // podstawiony adres nic nigdy nie skacze; na stosie zostaje ramka "wywołania z tego adresu".
+    #[cfg(target_arch = "x86_64")]
+    core::arch::global_asm!(".globl ns_park", "ns_park:", "mov qword ptr [rsp], rcx", "mov ecx, 0xFFFFFFFF", "jmp rdx");
+    #[cfg(target_arch = "x86_64")]
+    extern "C" { fn ns_park(fake_return: usize, sleep: usize) -> !; }
+
+    /// Wątek czekający w jądrze, którego stos wywołań wraca do pamięci bez pliku. `masked`: region
+    /// jest niewykonywalny i wypełniony szumem (kod ukryty na czas uśpienia); inaczej R-X z kodem
+    /// o niskiej entropii. Z regionu nic się nie wykonuje: wątek śpi bez końca.
+    #[cfg(target_arch = "x86_64")]
+    fn stack_return(masked: bool) {
+        use windows_sys::Win32::System::Threading::Sleep;
+        let len = 16 * 1024;
+        let p = alloc(len, PAGE_READWRITE);
+        if masked { fill(p, &noise(len)); } else { fill(p, &low_code(len)); protect_rx(p, len); }
+        let fake = p as usize + 0x180;
+        // SAFETY: ns_park nie wraca (Sleep z czasem INFINITE), więc podstawiony adres powrotu nie jest używany.
+        std::thread::spawn(move || unsafe { ns_park(fake, Sleep as usize) });
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    fn stack_return(_masked: bool) { eprintln!("próbka tylko dla x86_64"); std::process::exit(2); }
 
     /// Sekcja z własnego pliku o zadanej ochronie; widok i uchwyty żyją do końca procesu.
     /// Uwaga: sekcja wykonywalna (PAGE_EXECUTE_*) wymaga uchwytu z GENERIC_EXECUTE, stąd access_mode.
@@ -663,6 +690,8 @@ mod imp {
             "patch" => patch_library(true),
             "touch" => patch_library(false),
             "thread" => thread_in_private(),
+            "stack-rx" => stack_return(false),
+            "stack-masked" => stack_return(true),
             "data-noise" => data_noise(),
             "rwx-lowent" => rwx_lowent(),
             "pe-corrupt" => pe_corrupt(),

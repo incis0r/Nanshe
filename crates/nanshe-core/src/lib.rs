@@ -165,6 +165,11 @@ pub struct SourceInfo {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThreadInfo { pub tid: u32, pub addr: u64 }
 
+/// Rejestry wątku potrzebne do odwinięcia jego stosu (x86_64): adres instrukcji i 16 rejestrów
+/// ogólnych w numeracji procesora (0 rax, 1 rcx, 2 rdx, 3 rbx, 4 rsp, 5 rbp, 6 rsi, 7 rdi, 8-15).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThreadRegs { pub tid: u32, pub rip: u64, pub gpr: [u64; 16] }
+
 /// Zmiana kodu pochodzącego z pliku, stwierdzona przez backend dla jednego regionu.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CodeChange {
@@ -187,6 +192,9 @@ pub trait MemorySource {
     fn read_at(&self, addr: u64, buf: &mut [u8]) -> Result<usize>;
     /// Wątki z adresami; pusta lista, gdy źródło ich nie udostępnia.
     fn threads(&self) -> Vec<ThreadInfo> { Vec::new() }
+    /// Rejestry wątków odczytane bez wstrzymywania procesu; pusta lista, gdy źródło ich nie udostępnia.
+    /// Wartości wątku, który właśnie działa, mogą być niespójne: odbiorca sprawdza je sam.
+    fn thread_regs(&self) -> Vec<ThreadRegs> { Vec::new() }
     /// Ile bajtów kodu z pliku zostało w tym regionie zmienionych w pamięci (strony, które przestały
     /// być współdzielone z plikiem) i adres pierwszej takiej strony, jeśli znany. None: źródło tego nie wie.
     fn modified_code(&self, _r: &Region) -> Option<CodeChange> { None }

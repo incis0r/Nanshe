@@ -47,6 +47,8 @@ Check "xmap"     1 "RWX,X-MAP"
 Check "rx-stage" 1 "X-PRIV"
 Check "shc" 1 "SHC,X-PRIV"
 Check "thread"   1 "THR-PRIV,X-PRIV"   # watek (wstrzymany) z adresem startu w pamieci bez pliku
+Check "stack-rx" 1 "THR-PRIV,X-PRIV"  # watek czeka w jadrze, stos wraca do kodu bez pliku (adres startu legalny)
+Check "stack-masked" 1 "THR-PRIV"    # jak wyzej, region RW z szumem: kod ukryty na czas uspienia
 Check "inject"   1 "ENT-X,RWX,X-PRIV"
 # red team: kontrola i ewazja
 Check "data-noise" 0 ""              # wysoka entropia w danych RW to nie znalezisko

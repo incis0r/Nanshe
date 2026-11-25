@@ -28,7 +28,7 @@
    "tech": "Zatwierdzony region typu MEM_PRIVATE z prawem wykonania."
   },
   "THR-PRIV": {
-   "tech": "Adres startu wątku (ThreadQuerySetWin32StartAddress) wskazuje region, który nie jest obrazem modułu ani mapowaniem pliku."
+   "tech": "Adres startu wątku (ThreadQuerySetWin32StartAddress) wskazuje region, który nie jest obrazem modułu ani mapowaniem pliku. Drugi przypadek (x64): wątek czeka w wywołaniu jądra, a pierwszy adres powrotu na jego stosie poza obrazami modułów leży w pamięci bez pliku; jeśli ta pamięć nie jest wykonywalna, tak wygląda kod ukryty na czas uśpienia."
   },
   "IMG-MOD": {
    "tech": "Strony wykonywalnego obrazu modułu (MEM_IMAGE), które według QueryWorkingSetEx nie są współdzielone. Pełna waga tylko dla amsi.dll i wldp.dll; w pozostałych modułach przyczyny łagodne są częste (relokacja, piaskownica Chromium, środowisko .NET)."

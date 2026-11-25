@@ -9,7 +9,7 @@ pub trait Detector: Sync {
 }
 
 pub fn all() -> Vec<Box<dyn Detector>> {
-    vec![Box::new(Rwx), Box::new(XPriv), Box::new(XMap), Box::new(GuardX), Box::new(Memfd), Box::new(DelExec), Box::new(XTmp), Box::new(EntX), Box::new(Hdr), Box::new(ThrPriv), Box::new(ImgMod), Box::new(Shc)]
+    vec![Box::new(Rwx), Box::new(XPriv), Box::new(XMap), Box::new(GuardX), Box::new(Memfd), Box::new(DelExec), Box::new(XTmp), Box::new(EntX), Box::new(Hdr), Box::new(ThrPriv), Box::new(StkPriv), Box::new(ImgMod), Box::new(Shc)]
 }
 
 fn is_memfd(r: &Region) -> bool {
@@ -178,6 +178,26 @@ impl Detector for ThrPriv {
         let more = if ctx.threads.len() > 4 { format!(" i {} kolejnych", ctx.threads.len() - 4) } else { String::new() };
         let what = if ctx.info.os == "windows" { tr!("ma adres startu w pamięci bez pliku", "has its start address in memory not backed by a file") } else { tr!("wywołuje jądro z kodu w pamięci bez pliku", "calls the kernel from code in memory not backed by a file") };
         vec![ctx.finding(self.id(), "THR-PRIV", r, ctx.threads[0].addr, PAGE as u64, 40, trf!("wątek {tids}{more} {what}", "thread {tids}{more} {what}"))]
+    }
+}
+
+/// Wątek czeka w jądrze, a jego stos wywołań wraca do pamięci bez pliku (Windows x64). Dwa przypadki:
+/// pamięć wykonywalna (działający kod bez pliku, także gdy wątek przejęto, a adres startu jest
+/// legalny) i pamięć niewykonywalna (kod ukryty na czas uśpienia: uprawnienia zdjęte, treść
+/// zaszyfrowana). W procesie z rozpoznanym środowiskiem JIT powrót do pamięci wykonywalnej jest
+/// zwykłym stanem wątku zarządzanego i nie jest zgłaszany; powrót do niewykonywalnej zawsze.
+struct StkPriv;
+impl Detector for StkPriv {
+    fn id(&self) -> &'static str { "stk-priv" }
+    fn applies(&self, i: &nanshe_core::SourceInfo) -> bool { i.os == "windows" }
+    fn scan(&self, r: &Region, _d: &[u8], ctx: &Ctx) -> Vec<Finding> {
+        if ctx.returns.is_empty() || r.backing.is_some() { return vec![]; }
+        if r.is_x() && ctx.allow.is_some() { return vec![]; }
+        let tids = ctx.returns.iter().take(4).map(|t| t.tid.to_string()).collect::<Vec<_>>().join(", ");
+        let more = if ctx.returns.len() > 4 { trf!(" i {} kolejnych", " and {} more", ctx.returns.len() - 4) } else { String::new() };
+        let what = if r.is_x() { tr!("czeka w jądrze, a jego stos wywołań wraca do kodu w pamięci bez pliku", "waits in the kernel and its call stack returns to code in memory not backed by a file") }
+            else { tr!("czeka w jądrze, a jego stos wywołań wraca do pamięci bez pliku, która nie jest wykonywalna (tak wygląda kod ukryty na czas uśpienia)", "waits in the kernel and its call stack returns to memory not backed by a file that is not executable (this is what code hidden while sleeping looks like)") };
+        vec![ctx.finding(self.id(), "THR-PRIV", r, ctx.returns[0].addr, PAGE as u64, 40, trf!("wątek {tids}{more} {what}", "thread {tids}{more} {what}"))]
     }
 }
 

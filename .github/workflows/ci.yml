@@ -59,7 +59,7 @@ jobs:
         run: rustup toolchain install nightly --profile minimal && cargo install cargo-fuzz --locked
       - name: One minute per target
         run: |
-          for t in dump pediff pagetables maps detectors wintables llm report; do
+          for t in dump pediff pagetables maps detectors wintables llm report unwind; do
             echo "::group::$t"
             cargo +nightly fuzz run "$t" -- -max_total_time=60 -max_len=65536 -timeout=20 -rss_limit_mb=2048 || { echo "::error title=fuzz::target $t failed"; exit 1; }
             echo "::endgroup::"

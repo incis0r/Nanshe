@@ -114,7 +114,7 @@ nanshe report wynik.json
 | `GUARD-X` | 30 | executable region with `PAGE_GUARD`, content not read |
 | `ENT-X` | 20/30 | high entropy in an executable region |
 | `HDR` | 40 | PE header (`MZ` + `PE\0\0`, non-zero Machine field, 1-96 sections) in a region not backed by a file: at the start of a page in any region, and in executable regions also at any offset |
-| `THR-PRIV` | 40 | the thread start address lies in memory not backed by a file |
+| `THR-PRIV` | 40 | the thread start address lies in memory not backed by a file; or (x64) the thread waits in the kernel and its call stack returns to memory not backed by a file (see "Thread call stacks") |
 | `IMG-MOD` | 10/40 | pages of an executable, non-writable module image are no longer shared with the file (copy on write); 40 for `amsi.dll` and `wldp.dll`, 10 for the rest |
 | `SHC` | 40/20/10 | code patterns typical of shellcode in executable memory that does not come from a file on disk (anonymous memory, `memfd`): finding its own address, a direct system call, the prologue of known loader stages, on Windows also reading the PEB, a function-name hashing loop and a copy of the kernel entry outside `ntdll`. 40 for two classes or one strong class, 20 for a single weaker class (below the threshold on its own), 10 for a lone kernel-entry copy in a Chromium-based browser (its sandbox does that). Not reduced for JIT runtimes |
 
@@ -123,6 +123,25 @@ nanshe report wynik.json
 `THR-PRIV` and `IMG-MOD` are not subject to the reduction for JIT runtimes. The start address comes from `NtQueryInformationThread`, and the page state from `QueryWorkingSetEx` (both read-only). `IMG-MOD` evaluates only the pages present in the working set of the process. It compares them with the PE file on disk (relocations applied for the actual load address) and states the number of differing bytes and the address of the first one; when the contents equal the file, an informational finding (10 points) remains, because the identity of the file cannot be confirmed; when the contents could not be compared, the finding says so.
 
 Measurement on the test host (2026-11-22, 240 processes): `IMG-MOD` occurred in 28 regions of 19 processes, including `user32.dll` in 10 processes, `clr.dll` in 9, `ntdll.dll` in 3 (WebView2 processes) and the libraries of the monitoring agent. I did not examine the causes one by one; known benign sources are relocation of libraries without ASLR, Chromium sandbox hooks and the .NET runtime itself. That is why an ordinary library gets 10 points ("info", also together with `ENT-X` in the same code; at 20 points ten ordinary processes became "suspicious"), and only the script security modules (`amsi.dll`, `wldp.dll`), whose modification in memory is typical of bypasses, carry the full severity. `THR-PRIV` did not occur even once in this measurement.
+
+### Thread call stacks
+
+The thread start address is not enough when code takes over an existing thread or hides while sleeping (drops the execute permission and encrypts its own memory). On Windows x64 the scanner therefore unwinds the stacks of threads that wait in a kernel call and checks the first return address that lies outside module images:
+
+| Where the stack returns | Result |
+|---|---|
+| a module image (the whole stack) | nothing |
+| executable memory not backed by a file | `THR-PRIV` 40; nothing in a process with a recognised JIT runtime, because that is what an ordinary managed-code thread looks like |
+| non-executable memory not backed by a file | `THR-PRIV` 40, also in a process with JIT: this is what code hidden while sleeping looks like |
+
+How it works and what it does not do:
+
+- Registers come from `GetThreadContext` without suspending the thread; the process is neither stopped nor changed. Only threads standing right after a `syscall` instruction in a module image count, and only when the instruction address and the stack pointer are the same before and after unwinding.
+- Unwinding uses the exception tables (`.pdata`) read from the memory of the process and ends at the first frame outside the images. Frames beyond it are not evaluated.
+- A doubtful result is dropped: no table, an unknown unwind-info version, a failed read, an address inside the thread's own stack region.
+- Measurement on the test host (2026-11-25, 231 processes): no report outside the samples, full scan time unchanged (35 s). This is one measurement on one host.
+
+Limitations: a spoofed stack (planted frames that return to module images) bypasses this check; code injected into a process with JIT that returns to executable memory does not differ from the runtime's own code; threads running at the moment of the scan, 32-bit processes, reading from the hypervisor, Linux and macOS are not covered.
 
 ## SHA-256 hashes
 

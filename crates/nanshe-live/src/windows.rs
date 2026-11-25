@@ -162,6 +162,44 @@ impl MemorySource for WinProcess {
         out
     }
 
+    /// Rejestry wątków (GetThreadContext) bez wstrzymywania: proces nie jest zatrzymywany ani zmieniany.
+    /// Dla wątku czekającego w jądrze wartości są stałe; dla działającego mogą być niespójne, co
+    /// odbiorca sprawdza sam (drugi odczyt po analizie). Tylko x86_64.
+    #[cfg(target_arch = "x86_64")]
+    fn thread_regs(&self) -> Vec<nanshe_core::ThreadRegs> {
+        const THREAD_GET_CONTEXT: u32 = 0x0008;
+        const THREAD_QUERY_INFORMATION: u32 = 0x0040;
+        // CONTEXT_AMD64 | CONTEXT_CONTROL | CONTEXT_INTEGER
+        const FLAGS: u32 = 0x0010_0003;
+        // struktura CONTEXT (x64): 1232 bajty, wyrównanie 16; ContextFlags pod 0x30, Rax..R15 od 0x78, Rip pod 0xf8
+        #[repr(C, align(16))]
+        struct Context([u8; 1232]);
+        let mut out = Vec::new();
+        let mut prev: Option<Handle> = None;
+        for _ in 0..100_000 {
+            let mut next: HANDLE = null_mut();
+            // SAFETY: uchwyt procesu jest ważny; poprzedni uchwyt wątku (albo null) wskazuje miejsce w liście; wynik w zmiennej lokalnej.
+            let st = unsafe { NtGetNextThread(self.h.0, prev.as_ref().map(|h| h.0).unwrap_or(null_mut()), THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, 0, 0, &mut next) };
+            if st < 0 || next.is_null() { break; }
+            let h = Handle(next);
+            let mut c = Context([0u8; 1232]);
+            c.0[0x30..0x34].copy_from_slice(&FLAGS.to_le_bytes());
+            // SAFETY: bufor ma rozmiar i wyrównanie struktury CONTEXT; funkcja zapisuje tylko w nim.
+            let ok = unsafe { GetThreadContext(h.0, c.0.as_mut_ptr() as *mut c_void) };
+            // SAFETY: uchwyt wątku z udanego wywołania.
+            let tid = unsafe { GetThreadId(h.0) };
+            if ok != 0 && tid != 0 {
+                let q = |o: usize| u64::from_le_bytes(c.0[o..o + 8].try_into().unwrap_or([0; 8]));
+                let mut gpr = [0u64; 16];
+                for (i, g) in gpr.iter_mut().enumerate() { *g = q(0x78 + i * 8); }
+                out.push(nanshe_core::ThreadRegs { tid, rip: q(0xf8), gpr });
+            }
+            prev = Some(h);
+        }
+        out.sort_by_key(|t| t.tid);
+        out
+    }
+
     /// Strony kodu obrazu, które nie są już współdzielone z plikiem (kopia przy zapisie), wg zestawu
     /// roboczego procesu. Strony spoza zestawu roboczego nie są oceniane.
     fn modified_code(&self, r: &Region) -> Option<CodeChange> {
@@ -300,6 +338,8 @@ extern "system" {
     fn GetFileType(h: HANDLE) -> u32;
     fn GetDriveTypeW(root: *const u16) -> u32;
     fn GetThreadId(h: HANDLE) -> u32;
+    #[cfg(target_arch = "x86_64")]
+    fn GetThreadContext(h: HANDLE, context: *mut c_void) -> i32;
     fn K32QueryWorkingSetEx(process: HANDLE, buf: *mut c_void, size: u32) -> i32;
     fn GetFinalPathNameByHandleW(h: HANDLE, path: *mut u16, len: u32, flags: u32) -> u32;
     fn GetTickCount64() -> u64;

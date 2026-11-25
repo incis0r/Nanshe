@@ -18,8 +18,8 @@ Exit code of the e2e scripts: 0 when everything matches, 1 when anything deviate
 
 | Layer | Result |
 |---|---|
-| Unit tests | 151 pass (analyze 28, core 3, dump 8, kb 7, live 21, llm 40, report 30, vm 14) |
-| macOS (arm64, native) | 153 unit tests (4 of them for the macOS backend, which run only there) and `scripts/e2e-macos.sh`: 7 samples and 4 groups of additional assertions; see [macos.md](macos.md) |
+| Unit tests | 153 pass (analyze 30, core 3, dump 8, kb 7, live 21, llm 40, report 30, vm 14) |
+| macOS (arm64, native) | 155 unit tests (4 of them for the macOS backend, which run only there) and `scripts/e2e-macos.sh`: 7 samples and 4 groups of additional assertions; see [macos.md](macos.md) |
 | Hypervisor read (`nanshe vm`) | one live run against a Windows Server 2025 guest on KVM (see [hypervisor.md](hypervisor.md)); no automated end-to-end test |
 | Full live scans, Linux | `nanshe scan --all` on 20 hosts of one lab (19 x86_64, 1 arm64), 2026-11-23, before and after the detection tuning; no process was verified manually |
 | e2e Linux (aarch64, container) | 16 static samples, 2 dynamic and 8 groups of additional assertions |
@@ -49,6 +49,7 @@ Not present: a model quality evaluation set. Fuzzing is described in the section
 | `windows_jit_needs_verified_exe_and_system_runtime_image` | Windows: a JIT heap in a process with the system .NET drops from 60 to 20 points, `X-MAP` from 30 to 10, the findings stay visible with a fixed marker | a program outside the system directories, no runtime module, a file mapped as data, `clr.dll` from a user profile, from `\Windows\Temp`, from a subdirectory pretending to be `\Windows\` or from outside the runtime directory: no reduction; an executable file mapping (`X-MAP` with a file) is never reduced; a high-entropy payload stays "suspicious", and an image header is not reduced |
 | `detectors::headers` (PE) | a PE header requires a non-zero Machine field and 1-96 sections | `MZ...PE` with a zero Machine or without sections: none |
 | `thread_in_memory_without_a_file_is_flagged_at_full_weight` | `THR-PRIV` (40 points) for a thread located in memory without a file; in a process with a JIT runtime `X-PRIV` is reduced and `THR-PRIV` is not | a thread in file-backed code, no threads, the kernel region `[vdso]`: none |
+| `stack_of_a_waiting_thread_returning_to_memory_without_a_file_is_reported` | unwinding a thread stack through three frames of a synthetic PE image (a leaf after `syscall`, a function with `push` and `sub rsp`, a function with a frame pointer): `THR-PRIV` (40 points) with the return address for an R-X region and for an RW region (different wording) | thread not standing after `syscall`, registers changed between the reads, unknown unwind-info version, stack returning only to images, address in the thread's own stack region, address outside the map, file-backed region, Linux: none; with a JIT runtime a return to R-X: none, to RW: stays |
 | `modified_code_of_a_file_is_flagged_only_in_read_only_executable_mappings` | `IMG-MOD` for modified file-backed code: 40 points on Linux and for `amsi.dll` on Windows, 10 for an ordinary Windows library | no changes, zero bytes, data without execute permission, writable code, memory without a file: none |
 | `region_limit_keeps_findings_and_marks_result_incomplete` | a map as long as the limit: findings from before the limit stay, the process result carries a truncation error | below the limit: full result, no error |
 | `unreadable_region_does_not_allocate_its_full_size` | an unreadable 64 MiB region does not cause a 64 MiB allocation | - |
@@ -190,6 +191,7 @@ Parsers of data that comes from the examined system are fuzzed with `cargo-fuzz`
 | `wintables` | arbitrary bytes as Windows connection and handle tables, arbitrary text as program paths and owner identifiers | no panic |
 | `llm` | arbitrary text as a model response (validation of explanations and correlations, JSON extraction, provider response shapes) and as strings from process memory (secret and injection filters, URL check) | no panic |
 | `report` | an arbitrary result file through the report and the differential report, in both languages; seeds are real result files | no panic. Slow (about 2 seconds per run with a real result), so few executions |
+| `unwind` | an arbitrary PE image (header, function table, unwind information), a stack and thread registers; the seed is the layout of the unit test | no panic; bounded work (limits on frames, chain links and table size). 2026-11-25: 11.2 million executions in 2 minutes, no failures |
 
 How to run: `scripts/fuzz.sh [seconds per target] [targets...]` runs them in a container (nightly compiler and `cargo-fuzz` are installed there, not on the workstation). Seeds come from the unit-test builders (`NANSHE_FUZZ_SEEDS`). CI runs every target for one minute on each push.
 
@@ -248,6 +250,8 @@ Additional assertions:
 | `xmap` | executable section view without a file | 1 | `RWX`, `X-MAP` | 60 |
 | `rx-stage` | write to RW, then R-X | 1 | `X-PRIV` | 30 |
 | `thread` | a private R-X region and a thread with its start address in that region, created suspended (nothing executes) | 1 | `THR-PRIV`, `X-PRIV` | 70 |
+| `stack-rx` | a thread sleeps in the kernel and the return address from `Sleep` on its stack points to a private R-X region (the thread start address is legitimate; nothing executes from the region) | 1 | `THR-PRIV`, `X-PRIV` | 70 |
+| `stack-masked` | like `stack-rx`, but the region is RW with high-entropy noise: code hidden while sleeping | 1 | `THR-PRIV` | 40 |
 | `inject` | like `rwx`, with an instruction for the model | 1 | `ENT-X`, `RWX`, `X-PRIV` | 90 |
 | `data-noise` | high entropy in RW data (negative control) | 0 | none | - |
 | `rwx-lowent` | RWX, low entropy | 1 | `RWX`, `X-PRIV` | 60 |

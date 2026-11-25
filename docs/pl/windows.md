@@ -114,7 +114,7 @@ nanshe report wynik.json
 | `GUARD-X` | 30 | wykonywalny region z `PAGE_GUARD`, treść nieodczytana |
 | `ENT-X` | 20/30 | wysoka entropia w regionie wykonywalnym |
 | `HDR` | 40 | nagłówek PE (`MZ` + `PE\0\0`, niezerowe pole Machine, 1-96 sekcji) w regionie bez pliku: na początku strony w każdym regionie, a w regionach wykonywalnych także pod dowolnym przesunięciem |
-| `THR-PRIV` | 40 | adres startu wątku leży w pamięci bez pliku |
+| `THR-PRIV` | 40 | adres startu wątku leży w pamięci bez pliku; albo (x64) wątek czeka w jądrze, a jego stos wywołań wraca do pamięci bez pliku (zob. „Stos wywołań wątków") |
 | `IMG-MOD` | 10/40 | strony wykonywalnego, niezapisywalnego obrazu modułu nie są już współdzielone z plikiem (kopia przy zapisie); 40 dla `amsi.dll` i `wldp.dll`, 10 dla pozostałych |
 | `SHC` | 40/20/10 | wzorce kodu typowe dla shellcode'u w pamięci wykonywalnej, która nie pochodzi z pliku na dysku (pamięć anonimowa, `memfd`): ustalanie własnego adresu, bezpośrednie wywołanie jądra, prolog znanych etapów ładujących, na Windows także odczyt PEB, pętla skrótów nazw funkcji i kopia wejścia do jądra poza `ntdll`. 40 za dwie klasy albo jedną mocną, 20 za pojedynczą słabszą (sama nie przekracza progu), 10 za samą kopię wejścia do jądra w przeglądarce opartej na Chromium (robi to jej piaskownica). Bez obniżki dla środowisk JIT |
 
@@ -123,6 +123,25 @@ nanshe report wynik.json
 `THR-PRIV` i `IMG-MOD` nie podlegają obniżce dla środowisk JIT. Adres startu pochodzi z `NtQueryInformationThread`, a stan stron z `QueryWorkingSetEx` (oba tylko do odczytu). `IMG-MOD` ocenia wyłącznie strony obecne w zestawie roboczym procesu. Porównuje je z plikiem PE na dysku (z relokacjami dla faktycznego adresu załadowania) i podaje liczbę różniących się bajtów oraz adres pierwszego; gdy treść jest zgodna z plikiem, zostaje znalezisko informacyjne (10 punktów), bo tożsamości pliku nie da się potwierdzić; gdy treści nie dało się porównać, znalezisko to mówi.
 
 Pomiar na stacji testowej (2026-11-22, 240 procesów): `IMG-MOD` wystąpił w 28 regionach 19 procesów, w tym `user32.dll` w 10 procesach, `clr.dll` w 9, `ntdll.dll` w 3 (procesy WebView2) i biblioteki agenta monitoringu. Przyczyn nie badałem pojedynczo; znane łagodne źródła to relokacja bibliotek bez ASLR, podpięcia piaskownicy Chromium i samo środowisko .NET. Dlatego zwykła biblioteka dostaje 10 punktów („info", także razem z `ENT-X` w tym samym kodzie; przy 20 punktach dziesięć zwykłych procesów stawało się „podejrzane"), a pełną wagę mają tylko moduły zabezpieczeń skryptów (`amsi.dll`, `wldp.dll`), których zmiana w pamięci jest typowa dla obejść. `THR-PRIV` nie wystąpił w tym pomiarze ani razu.
+
+### Stos wywołań wątków
+
+Adres startu wątku nie wystarcza, gdy kod przejmuje istniejący wątek albo chowa się na czas uśpienia (zdejmuje prawo wykonania i szyfruje własną pamięć). Dlatego na Windows x64 skaner odwija stosy wątków, które czekają w wywołaniu jądra, i sprawdza pierwszy adres powrotu leżący poza obrazami modułów:
+
+| Dokąd wraca stos | Wynik |
+|---|---|
+| obraz modułu (cały stos) | nic |
+| pamięć wykonywalna bez pliku | `THR-PRIV` 40; w procesie z rozpoznanym środowiskiem JIT nic, bo tak wygląda zwykły wątek kodu zarządzanego |
+| pamięć niewykonywalna bez pliku | `THR-PRIV` 40, także w procesie z JIT: tak wygląda kod ukryty na czas uśpienia |
+
+Jak to działa i czego nie robi:
+
+- Rejestry pochodzą z `GetThreadContext` bez wstrzymywania wątku; proces nie jest zatrzymywany ani zmieniany. Liczą się tylko wątki stojące tuż za instrukcją `syscall` w obrazie modułu, których adres instrukcji i wskaźnik stosu są takie same przed odwijaniem i po nim.
+- Odwijanie korzysta z tablic wyjątków (`.pdata`) czytanych z pamięci procesu i kończy się na pierwszej ramce poza obrazami. Dalszych ramek nie ocenia.
+- Wynik wątpliwy jest porzucany: brak tablicy, nieznana wersja informacji o odwijaniu, nieudany odczyt, adres w regionie własnego stosu wątku.
+- Pomiar na stacji testowej (2026-11-25, 231 procesów): żadnego zgłoszenia poza próbkami, czas pełnego skanu bez zmian (35 s). To jeden pomiar na jednej stacji.
+
+Ograniczenia: sfałszowany stos (podstawione ramki wracające do obrazów modułów) omija tę kontrolę; kod wstrzyknięty do procesu z JIT, wracający do pamięci wykonywalnej, nie różni się od kodu środowiska; wątki działające w chwili skanu, procesy 32-bitowe, odczyt z hiperwizora, Linux i macOS nie są objęte.
 
 ## Skróty SHA-256
 

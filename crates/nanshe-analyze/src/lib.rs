@@ -3,6 +3,7 @@
 
 pub mod detectors;
 pub mod entropy;
+pub mod unwind;
 
 use nanshe_core::*;
 use nanshe_core::trf;
@@ -72,6 +73,8 @@ pub struct Ctx<'a> {
     pub page_entropy: &'a [f32],
     /// wątki, których adres leży w tym regionie
     pub threads: &'a [ThreadInfo],
+    /// wątki czekające w jądrze, których stos wywołań wraca pod adres w tym regionie (adres powrotu)
+    pub returns: &'a [ThreadInfo],
     /// zmieniony kod z pliku w tym regionie: (bajty, adres pierwszej strony)
     pub modified: Option<CodeChange>,
     pub traits: ProcTraits,
@@ -184,6 +187,29 @@ fn proc_traits(cfg: &Config, info: &SourceInfo, regions: &[Region]) -> ProcTrait
     }
 }
 
+/// Wątki, których stos wywołań wraca do pamięci poza obrazami modułów (Windows x64). Rejestry są
+/// czytane bez wstrzymywania procesu, więc liczą się tylko wątki stojące za instrukcją `syscall`,
+/// których adres instrukcji i wskaźnik stosu nie zmieniły się w czasie odwijania. Adres powrotu
+/// w regionie własnego stosu wątku to ślad nieudanego odwinięcia i jest pomijany.
+fn stack_returns(src: &dyn MemorySource, info: &SourceInfo, regions: &[Region]) -> Vec<ThreadInfo> {
+    if info.os != "windows" || info.arch != "x86_64" { return Vec::new(); }
+    let first = src.thread_regs();
+    if first.is_empty() { return Vec::new(); }
+    let mem = |a: u64, b: &mut [u8]| matches!(src.read_at(a, b), Ok(n) if n == b.len());
+    let mut un = unwind::Unwinder::new(&mem, regions);
+    let region_of = |a: u64| regions.iter().position(|r| a >= r.base && a < r.base.saturating_add(r.size));
+    let found: Vec<(&nanshe_core::ThreadRegs, u64)> = first.iter().take(MAX_UNWIND_THREADS)
+        .filter_map(|t| un.foreign_return(t).map(|f| (t, f.addr)))
+        .filter(|(t, a)| matches!((region_of(*a), region_of(t.gpr[4])), (Some(x), Some(y)) if x != y))
+        .collect();
+    if found.is_empty() { return Vec::new(); }
+    let again = src.thread_regs();
+    found.into_iter().filter(|(t, _)| again.iter().any(|n| n.tid == t.tid && n.rip == t.rip && n.gpr[4] == t.gpr[4]))
+        .map(|(t, addr)| ThreadInfo { tid: t.tid, addr }).collect()
+}
+/// Najwięcej wątków jednego procesu, których stosy są odwijane.
+const MAX_UNWIND_THREADS: usize = 4096;
+
 pub fn scan_source(src: &dyn MemorySource, cfg: &Config) -> ProcessReport {
     let info = src.info();
     let mut rep = ProcessReport {
@@ -201,6 +227,7 @@ pub fn scan_source(src: &dyn MemorySource, cfg: &Config) -> ProcessReport {
     }
     let dets: Vec<_> = detectors::all().into_iter().filter(|d| d.applies(&info)).collect();
     let threads = src.threads();
+    let returns = stack_returns(src, &info, &regions);
     let allow = if info.os == "windows" { jit_allow_windows(&info, &regions) } else { jit_allow(cfg, &info) };
     // dowód z systemu (np. podpis z uprawnieniem do JIT na macOS) ma pierwszeństwo przed listą nazw programów
     let allow = src.jit_evidence().or(allow);
@@ -220,7 +247,8 @@ pub fn scan_source(src: &dyn MemorySource, cfg: &Config) -> ProcessReport {
         let here: Vec<ThreadInfo> = threads.iter().filter(|t| t.addr >= r.base && t.addr < end).cloned().collect();
         // pytamy tylko o wykonywalny, niezapisywalny kod z pliku: tam zmiana w pamięci jest nietypowa
         let modified = if r.backing.is_some() && r.is_x() && !r.is_w() { src.modified_code(r).filter(|m| m.bytes > 0 || (m.compared && !m.verified)) } else { None };
-        let ctx = Ctx { info: &info, cfg, page_entropy: &stats.entropy, threads: &here, modified, traits, allow: allow.as_deref(), data: &data };
+        let back: Vec<ThreadInfo> = returns.iter().filter(|t| t.addr >= r.base && t.addr < end).cloned().collect();
+        let ctx = Ctx { info: &info, cfg, page_entropy: &stats.entropy, threads: &here, returns: &back, modified, traits, allow: allow.as_deref(), data: &data };
 
         let mut findings: Vec<Finding> = dets.iter().flat_map(|d| d.scan(r, &data, &ctx)).collect();
         if findings.is_empty() && !(cfg.heatmap && !data.is_empty()) { continue; }
@@ -466,6 +494,115 @@ mod tests {
         assert!(run("C:\\Users\\jan\\AppData\\Local\\Temp\\a.dll", "r--", RegionKind::Image).is_empty(), "bez prawa wykonania");
         // sekcja niebędąca obrazem to domena X-MAP; X-TMP nie dubluje
         assert_eq!(run("C:\\Windows\\Temp\\a.dll", "r-x", RegionKind::Mapped), ["X-MAP"]);
+    }
+
+    /// Proces Windows z jednym obrazem modułu (nagłówek PE, kod, tablica funkcji), stosem wątku
+    /// i regionem bez pliku, do którego wraca stos: ntdll (liść za syscall) <- A <- B <- region.
+    struct Stacked { target_prot: &'static str, jit: bool, syscall: bool, version: u8, ret: u64, moved: bool, mapped: bool, calls: std::cell::Cell<u32> }
+    impl Stacked {
+        const IMG: u64 = 0x7ff0_0000_0000;
+        const STACK: u64 = 0x10_0000;
+        const TARGET: u64 = 0x20_0000;
+        fn new(target_prot: &'static str) -> Self { Stacked { target_prot, jit: false, syscall: true, version: 1, ret: Self::TARGET + 0x10, moved: false, mapped: false, calls: std::cell::Cell::new(0) } }
+        fn image(&self) -> Vec<u8> {
+            let mut m = vec![0u8; 0x3000];
+            let put32 = |m: &mut Vec<u8>, o: usize, v: u32| m[o..o + 4].copy_from_slice(&v.to_le_bytes());
+            m[0] = b'M'; m[1] = b'Z'; put32(&mut m, 0x3c, 0x80);
+            m[0x80..0x84].copy_from_slice(b"PE\0\0");
+            let opt = 0x80 + 24;
+            m[opt] = 0x0b; m[opt + 1] = 0x02;
+            put32(&mut m, opt + 108, 16);
+            put32(&mut m, opt + 112 + 24, 0x2000); put32(&mut m, opt + 112 + 28, 24);
+            if self.syscall { m[0x1010] = 0x0f; m[0x1011] = 0x05; }
+            // tablica funkcji: A (0x1100-0x1200), B (0x1200-0x1300)
+            for (i, (b, e, u)) in [(0x1100u32, 0x1200u32, 0x2100u32), (0x1200, 0x1300, 0x2200)].iter().enumerate() {
+                put32(&mut m, 0x2000 + i * 12, *b); put32(&mut m, 0x2000 + i * 12 + 4, *e); put32(&mut m, 0x2000 + i * 12 + 8, *u);
+            }
+            // A: push rbx; sub rsp, 0x28
+            m[0x2100..0x2108].copy_from_slice(&[self.version, 8, 2, 0, 8, 0x42, 4, 0x30]);
+            // B: push rbp; sub rsp, 0x40; lea rbp, [rsp+0x20]
+            m[0x2200..0x220c].copy_from_slice(&[self.version, 13, 4, 0x25, 13, 0x03, 8, 0x01, 8, 0, 1, 0x50]);
+            m
+        }
+        fn stack(&self) -> Vec<u8> {
+            let mut m = vec![0u8; 0x2000];
+            let put = |m: &mut Vec<u8>, a: u64, v: u64| { let o = (a - Self::STACK) as usize; m[o..o + 8].copy_from_slice(&v.to_le_bytes()); };
+            put(&mut m, 0x10_1000, Self::IMG + 0x1150); // powrót ze stubu do A
+            put(&mut m, 0x10_1038, Self::IMG + 0x1250); // powrót z A do B
+            put(&mut m, 0x10_1088, self.ret);            // powrót z B poza obrazy
+            m
+        }
+    }
+    impl MemorySource for Stacked {
+        fn info(&self) -> SourceInfo { SourceInfo { os: "windows".into(), arch: "x86_64".into(), pid: Some(7), name: Some("app.exe".into()), source_type: "live".into(),
+            exe: Some("C:\\Program Files\\App\\app.exe".into()), exe_deleted: false, exe_verified: true } }
+        fn regions(&self) -> Result<Vec<Region>> {
+            let dll = Some("C:\\Windows\\System32\\ntdll.dll");
+            Ok(vec![reg(Self::STACK, 0x2000, "rw-", RegionKind::Private, None), if self.mapped { reg(Self::TARGET, 0x1000, self.target_prot, RegionKind::Mapped, Some("C:\\Dane\\plik.bin")) } else { reg(Self::TARGET, 0x1000, self.target_prot, RegionKind::Private, None) },
+                reg(Self::IMG, 0x1000, "r--", RegionKind::Image, dll), reg(Self::IMG + 0x1000, 0x1000, "r-x", RegionKind::Image, dll), reg(Self::IMG + 0x2000, 0x1000, "r--", RegionKind::Image, dll)])
+        }
+        fn read_at(&self, a: u64, b: &mut [u8]) -> Result<usize> {
+            let (base, m) = if a >= Self::IMG { (Self::IMG, self.image()) } else if a >= Self::TARGET { (Self::TARGET, vec![0x90u8; 0x1000]) } else { (Self::STACK, self.stack()) };
+            let o = a.checked_sub(base).map(|o| o as usize).filter(|o| *o < m.len()).ok_or_else(|| nanshe_core::Error::NotFound("poza zakresem".into()))?;
+            let n = b.len().min(m.len() - o);
+            b[..n].copy_from_slice(&m[o..o + n]);
+            Ok(n)
+        }
+        fn thread_regs(&self) -> Vec<nanshe_core::ThreadRegs> {
+            self.calls.set(self.calls.get() + 1);
+            let mut gpr = [0u64; 16];
+            gpr[4] = 0x10_1000 + if self.moved && self.calls.get() > 1 { 8 } else { 0 };
+            gpr[5] = 0x10_1060;
+            vec![nanshe_core::ThreadRegs { tid: 21, rip: Self::IMG + 0x1012, gpr }]
+        }
+        fn jit_evidence(&self) -> Option<String> { self.jit.then(|| "jit:test".to_string()) }
+    }
+
+    /// Ziarno dla celu fuzzingu `unwind`: 8 bajtów nagłówka (rip, rsp, rbp, podział), obraz i stos.
+    #[test]
+    fn fuzz_seeds() {
+        let Some(dir) = std::env::var_os("NANSHE_FUZZ_SEEDS") else { return };
+        let dir = std::path::Path::new(&dir).join("unwind");
+        std::fs::create_dir_all(&dir).unwrap();
+        let s = Stacked::new("r-x");
+        let mut seed = Vec::new();
+        for w in [0x1012u16, 0x1000, 0x1060, 0x3000] { seed.extend(w.to_le_bytes()); }
+        seed.extend(s.image()); seed.extend(s.stack());
+        std::fs::write(dir.join("stack"), seed).unwrap();
+    }
+
+    #[test]
+    fn stack_of_a_waiting_thread_returning_to_memory_without_a_file_is_reported() {
+        let cfg = Config::default();
+        let thr = |s: &dyn MemorySource| scan_source(s, &cfg).regions.iter().flat_map(|r| r.findings.clone()).filter(|f| f.detector == "stk-priv").collect::<Vec<_>>();
+        // powrót do wykonywalnej pamięci bez pliku: THR-PRIV z adresem powrotu, waga 40
+        let f = thr(&Stacked::new("r-x"));
+        assert_eq!(f.len(), 1);
+        assert_eq!((f[0].tag.as_str(), f[0].addr, f[0].weight), ("THR-PRIV", Stacked::TARGET + 0x10, 40));
+        assert!(f[0].reason.contains("wątek 21") && f[0].reason.contains("wraca do kodu"), "{}", f[0].reason);
+        // powrót do pamięci niewykonywalnej (kod ukryty na czas uśpienia): zgłaszany, innym opisem
+        let f = thr(&Stacked::new("rw-"));
+        assert!(f.len() == 1 && f[0].weight == 40 && f[0].reason.contains("nie jest wykonywalna"), "{f:?}");
+        // środowisko JIT: powrót do kodu bez pliku jest zwykły, do pamięci niewykonywalnej nie
+        assert!(thr(&Stacked { jit: true, ..Stacked::new("r-x") }).is_empty());
+        assert_eq!(thr(&Stacked { jit: true, ..Stacked::new("rw-") }).len(), 1);
+        // kontrole: każdy warunek jest konieczny
+        assert!(thr(&Stacked { syscall: false, ..Stacked::new("r-x") }).is_empty(), "wątek nie stoi za syscall");
+        assert!(thr(&Stacked { moved: true, ..Stacked::new("r-x") }).is_empty(), "rejestry zmieniły się w czasie odwijania");
+        assert!(thr(&Stacked { version: 5, ..Stacked::new("r-x") }).is_empty(), "nieznana wersja informacji o odwijaniu");
+        assert!(thr(&Stacked { ret: Stacked::IMG + 0x1180, ..Stacked::new("r-x") }).is_empty(), "stos wraca tylko do obrazów");
+        assert!(thr(&Stacked { ret: Stacked::STACK + 0x1800, ..Stacked::new("r-x") }).is_empty(), "adres w regionie własnego stosu");
+        assert!(thr(&Stacked { ret: 0x30_0000, ..Stacked::new("r-x") }).is_empty(), "adres poza mapą regionów");
+        assert!(thr(&Stacked { mapped: true, ..Stacked::new("rw-") }).is_empty(), "region z plikiem to nie pamięć bez pliku");
+        // tylko Windows x64
+        struct Lin(Stacked);
+        impl MemorySource for Lin {
+            fn info(&self) -> SourceInfo { SourceInfo { os: "linux".into(), ..self.0.info() } }
+            fn regions(&self) -> Result<Vec<Region>> { self.0.regions() }
+            fn read_at(&self, a: u64, b: &mut [u8]) -> Result<usize> { self.0.read_at(a, b) }
+            fn thread_regs(&self) -> Vec<nanshe_core::ThreadRegs> { self.0.thread_regs() }
+        }
+        assert!(thr(&Lin(Stacked::new("r-x"))).is_empty());
     }
 
     #[test]
