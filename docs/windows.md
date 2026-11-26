@@ -103,6 +103,8 @@ nanshe scan --all --min high --json host.json
 nanshe report wynik.json
 ```
 
+The printed summary lists processes from the highest severity down, puts regions with the same tags, permissions, score and source on one line (count, size range, the first addresses), collects inaccessible processes by cause and explains each tag once at the end. `--regions` prints every region on its own line with its entropy and finding descriptions. Colours (chosen for a dark background) are used only on a terminal; `--color always|never` overrides this and the `NO_COLOR` variable turns them off.
+
 ## Detectors that work on Windows
 
 | Tag | Points | Condition |

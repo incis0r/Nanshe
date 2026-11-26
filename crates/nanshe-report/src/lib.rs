@@ -6,10 +6,10 @@ pub mod doc;
 pub mod md;
 pub mod memory;
 pub mod pdf;
+pub mod text;
 
 use nanshe_core::*;
 use nanshe_core::{tr, trf};
-use std::fmt::Write;
 
 pub fn to_json(r: &ScanResult) -> String {
     serde_json::to_string_pretty(r).expect("serializacja wyniku")
@@ -27,35 +27,7 @@ pub fn sev_label(s: Severity) -> &'static str {
     match s { Severity::None => "-", Severity::Info => "info", Severity::Suspicious => tr!("podejrzane", "suspicious"), Severity::High => tr!("wysokie", "high") }
 }
 
-pub fn to_text(r: &ScanResult, min: Severity) -> String {
-    let mut o = String::new();
-    let shown: Vec<_> = r.processes.iter().filter(|p| p.max_severity >= min || p.error.is_some()).collect();
-    let _ = writeln!(o, "{}", trf!("nanshe {} | host {} | procesów: {} | znalezisk: {}{}", "nanshe {} | host {} | processes: {} | findings: {}{}",
-        r.tool_version, r.host, r.processes.len(), r.finding_count(),
-        if r.partial { tr!(" | WYNIK CZĘŚCIOWY", " | PARTIAL RESULT") } else { "" }));
-    for p in shown {
-        let _ = writeln!(o, "{}", trf!("\n[{}] {} ({}/{}) - {} | regionów: {}, nieczytelnych: {}, przeskanowano: {} KiB", "\n[{}] {} ({}/{}) - {} | regions: {}, unreadable: {}, scanned: {} KiB",
-            p.info.pid.map(|x| x.to_string()).unwrap_or("-".into()),
-            p.info.name.as_deref().unwrap_or("?"), p.info.os, p.info.arch, sev_label(p.max_severity),
-            p.regions_total, p.regions_unreadable, p.bytes_scanned / 1024));
-        if let Some(e) = &p.error { let _ = writeln!(o, "{}", trf!("  błąd: {e}", "  error: {e}")); }
-        let mut regs: Vec<_> = p.regions.iter().filter(|x| x.severity >= min && !x.findings.is_empty()).collect();
-        regs.sort_by(|a, b| b.score.cmp(&a.score).then(a.region.base.cmp(&b.region.base)));
-        for x in regs {
-            let tags: Vec<_> = x.findings.iter().map(|f| f.tag.as_str()).collect();
-            let _ = writeln!(o, "  {:#018x} {:>8} KiB {} {:<10} pkt {:>3} ent {} [{}] {}{}",
-                x.region.base, x.region.size / 1024,
-                x.region.prot.map(|p| p.to_string()).unwrap_or("???".into()),
-                sev_label(x.severity), x.score,
-                x.entropy_max.map(|e| format!("{e:.2}")).unwrap_or("-".into()),
-                tags.join(","),
-                x.region.backing.as_deref().or(x.region.label.as_deref()).unwrap_or("<anon>"),
-                x.allowlisted.as_ref().map(|a| trf!(" (obniżone: {a})", " (reduced: {a})")).unwrap_or_default());
-            for f in &x.findings { let _ = writeln!(o, "      {:<8} {}", f.tag, f.reason); }
-        }
-    }
-    o
-}
+pub use text::{to_text, TextOptions};
 
 pub use nanshe_core::sha256_hex;
 

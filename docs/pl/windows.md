@@ -103,6 +103,8 @@ nanshe scan --all --min high --json host.json
 nanshe report wynik.json
 ```
 
+Wydruk skanu podaje procesy od najwyższej wagi, regiony o tych samych znacznikach, uprawnieniach, punktacji i źródle w jednym wierszu (liczba, zakres rozmiarów, pierwsze adresy), procesy niedostępne zebrane według przyczyny, a opis każdego znacznika raz na końcu. `--regions` wypisuje każdy region osobno, z entropią i opisami znalezisk. Kolory (dobrane do ciemnego tła) są używane tylko na terminalu; `--color always|never` zmienia to, a zmienna `NO_COLOR` je wyłącza.
+
 ## Detektory działające na Windows
 
 | Tag | Punkty | Warunek |

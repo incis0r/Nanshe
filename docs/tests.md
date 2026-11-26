@@ -18,8 +18,8 @@ Exit code of the e2e scripts: 0 when everything matches, 1 when anything deviate
 
 | Layer | Result |
 |---|---|
-| Unit tests | 160 pass (analyze 30, core 3, dump 9, kb 7, live 21, llm 40, report 31, vm 19) |
-| macOS (arm64, native) | 162 unit tests (4 of them for the macOS backend, which run only there) and `scripts/e2e-macos.sh`: 7 samples and 4 groups of additional assertions; see [macos.md](macos.md) |
+| Unit tests | 166 pass (analyze 30, core 3, dump 9, kb 7, live 21, llm 40, report 37, vm 19) |
+| macOS (arm64, native) | 168 unit tests (4 of them for the macOS backend, which run only there) and `scripts/e2e-macos.sh`: 7 samples and 4 groups of additional assertions; see [macos.md](macos.md) |
 | Hypervisor read (`nanshe vm`) | one live run against a Windows Server 2025 guest on KVM (see [hypervisor.md](hypervisor.md)); no automated end-to-end test |
 | Full live scans, Linux | `nanshe scan --all` on 20 hosts of one lab (19 x86_64, 1 arm64), 2026-11-23, before and after the detection tuning; no process was verified manually |
 | e2e Linux (aarch64, container) | 16 static samples, 2 dynamic and 8 groups of additional assertions |
@@ -139,6 +139,12 @@ New in this version (analysis and live reading):
 | `long_token_is_broken_and_unknown_glyph_replaced` | a long string without spaces is broken; a character outside the font becomes a question mark |
 | `map_merges_files_marks_findings_and_shows_gaps` | address space diagram: mappings of one file merged into a row, a finding has its own row, large gaps are shown as breaks; control: without a finding the same region is ordinary memory, without a region map there is no diagram |
 | `stack_coverage_is_stated_with_reasons_for_abandoned_stacks` | the stack coverage sentence: counters, reasons in words (an unknown token stays as it is), threads not read; the row appears in the header (sum over processes) and in the process description only when the result has the data |
+| `processes_are_ordered_by_severity_and_regions_grouped` | printed summary: processes from the highest severity regardless of PID, regions with the same features on one line with the size range and addresses, nothing below the threshold, no ANSI sequences without the colour option |
+| `inaccessible_processes_are_collapsed_by_cause` | printed summary: processes with an error are collected under one cause (the message without the process number) with the list of PIDs, and counted in the totals |
+| `tag_descriptions_are_printed_once_without_the_varying_detail` | printed summary: each tag is described once; a description that differs between regions is cut to the common part |
+| `regions_option_lists_every_region_with_its_own_description` | `--regions`: every region with its address, entropy and full descriptions |
+| `colour_marks_severity_and_english_has_no_polish_words` | colour sequences on severity headings; the English summary has English headings, counts and "score" |
+| `nothing_above_the_threshold_is_said_plainly` | threshold `high` hides lower sections; with nothing to show the summary says so |
 | `long_map_is_collapsed_but_findings_and_neighbours_stay` | a map of 201 regions collapses to a few rows, the finding and its neighbours stay, the sum of sizes matches |
 | `knowledge_base_explains_findings_in_plain_language` | the report contains the guide, a description of the feature combination with a benign and a concerning explanation, verification commands with the region addresses and the glossary; the hint about the JIT runtime changes after `libjvm` is added to the map, and without a region map it does not appear at all; a combination without its own description is composed from the single features |
 | `overview_matrix_tree_scatter_and_hashes` | a processes x features matrix with the number of regions, a common tree with one root and a shared parent shown once, a scatter plot only for a process with at least three regions, the region hash and the hash of the mapped file in the report; control: a single process has no common tree, and a result without hashes says so explicitly |

@@ -173,6 +173,15 @@ pub fn open_process(pid: u32) -> Result<Box<dyn MemorySource>> {
 #[cfg(windows)]
 pub fn list_processes() -> Result<Vec<ProcEntry>> { windows::list() }
 
+/// Czy własne wyjście (stdout albo stderr) przyjmie sekwencje ANSI. Na Windows włącza ich obsługę
+/// w konsoli; na pozostałych systemach terminal obsługuje je sam.
+pub fn ansi_output(stderr: bool) -> bool {
+    #[cfg(windows)]
+    { windows::enable_ansi(stderr) }
+    #[cfg(not(windows))]
+    { let _ = stderr; true }
+}
+
 /// Przygotowanie skanera przed pierwszym otwarciem procesu. Zwraca ostrzeżenie, jeśli się nie udało.
 pub fn prepare() -> Option<String> {
     #[cfg(windows)]

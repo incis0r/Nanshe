@@ -50,6 +50,8 @@ nanshe explain wynik.json --url http://127.0.0.1:11434   # LLM interpretation + 
 
 Exit codes of `scan`: 0 no findings at or above the `--min` threshold, 1 there are findings, 2 error, 3 partial result without findings.
 
+The printed summary lists processes from the highest severity down, puts regions with the same tags, permissions, score and source on one line (count, size range, the first addresses), collects inaccessible processes by cause and explains each tag once at the end. `--regions` prints every region on its own line with its entropy and finding descriptions. Colours (chosen for a dark background) are used only on a terminal; `--color always|never` overrides this and the `NO_COLOR` variable turns them off.
+
 Kernel threads are skipped in the process list of `scan --all`: they have no user memory. They are recognised by the `PF_KTHREAD` flag in `/proc/<pid>/stat`, not by name, so a process that merely names itself like a kernel thread is scanned normally.
 
 ## Detectors that work on Linux

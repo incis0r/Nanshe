@@ -50,6 +50,8 @@ nanshe explain wynik.json --url http://127.0.0.1:11434   # interpretacja LLM + r
 
 Kody wyjścia `scan`: 0 brak znalezisk od progu `--min`, 1 są znaleziska, 2 błąd, 3 wynik częściowy bez znalezisk.
 
+Wydruk skanu podaje procesy od najwyższej wagi, regiony o tych samych znacznikach, uprawnieniach, punktacji i źródle w jednym wierszu (liczba, zakres rozmiarów, pierwsze adresy), procesy niedostępne zebrane według przyczyny, a opis każdego znacznika raz na końcu. `--regions` wypisuje każdy region osobno, z entropią i opisami znalezisk. Kolory (dobrane do ciemnego tła) są używane tylko na terminalu; `--color always|never` zmienia to, a zmienna `NO_COLOR` je wyłącza.
+
 Wątki jądra są pomijane na liście procesów `scan --all`: nie mają pamięci użytkownika. Są rozpoznawane po fladze `PF_KTHREAD` w `/proc/<pid>/stat`, a nie po nazwie, więc proces, który tylko nazywa się jak wątek jądra, jest skanowany normalnie.
 
 ## Detektory działające na Linuksie

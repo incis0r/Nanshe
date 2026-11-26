@@ -29,6 +29,28 @@ fn from_wide(buf: &[u16]) -> String {
     String::from_utf16_lossy(&buf[..end])
 }
 
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetStdHandle(which: u32) -> HANDLE;
+    fn GetConsoleMode(console: HANDLE, mode: *mut u32) -> i32;
+    fn SetConsoleMode(console: HANDLE, mode: u32) -> i32;
+}
+
+/// Włącza obsługę sekwencji ANSI w konsoli własnego wyjścia (stdout albo stderr). Fałsz, gdy wyjście
+/// nie jest konsolą albo konsola sekwencji nie obsługuje; wtedy wydruk ma zostać bez kolorów.
+pub fn enable_ansi(stderr: bool) -> bool {
+    const STD_OUTPUT: u32 = -11i32 as u32;
+    const STD_ERROR: u32 = -12i32 as u32;
+    const VIRTUAL_TERMINAL: u32 = 0x4;
+    // SAFETY: uchwyt standardowego wyjścia własnego procesu; `mode` to poprawny wskaźnik na u32.
+    unsafe {
+        let h = GetStdHandle(if stderr { STD_ERROR } else { STD_OUTPUT });
+        let mut mode = 0u32;
+        if GetConsoleMode(h, &mut mode) == 0 { return false; }
+        mode & VIRTUAL_TERMINAL != 0 || SetConsoleMode(h, mode | VIRTUAL_TERMINAL) != 0
+    }
+}
+
 /// Włącza SeDebugPrivilege we własnym tokenie (nie zmienia stanu badanych procesów).
 pub fn enable_debug_privilege() -> bool {
     let name: Vec<u16> = "SeDebugPrivilege\0".encode_utf16().collect();
@@ -59,7 +81,7 @@ impl WinProcess {
             let e = unsafe { GetLastError() };
             return Err(match e {
                 ERROR_INVALID_PARAMETER => Error::NotFound(format!("pid {pid}")),
-                ERROR_ACCESS_DENIED => Error::Access(trf!("pid {pid}: odmowa dostępu (wymagany administrator z SeDebugPrivilege; procesy chronione PPL są niedostępne)", "pid {pid}: access denied (an administrator with SeDebugPrivilege is required; PPL-protected processes are inaccessible)")),
+                ERROR_ACCESS_DENIED => Error::Access(trf!("pid {pid}: wymagany administrator z SeDebugPrivilege; procesy chronione PPL są niedostępne", "pid {pid}: an administrator with SeDebugPrivilege is required; PPL-protected processes are inaccessible")),
                 _ => Error::Access(trf!("pid {pid}: OpenProcess, błąd {e}", "pid {pid}: OpenProcess, error {e}")),
             });
         }

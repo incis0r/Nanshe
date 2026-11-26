@@ -24,6 +24,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
+- Printed summary of `scan` and `vm`: processes are ordered from the highest severity, regions with the same tags, permissions, score and source share one line, inaccessible processes are collected by cause, tag descriptions are printed once, sizes are given in KiB or MiB. New options: `--regions` (every region on its own line with entropy and descriptions) and `--color auto|always|never` (colours for a dark background, on a terminal only; `NO_COLOR` is honoured). The JSON result is unchanged; scripts that parsed the old text have to be adapted.
+- English output is complete for the printed messages of `map`, `formats`, `explain`, `llm` and `cloud`, and the scan summary no longer prints the Polish abbreviation of "score".
+- Windows: the message for a process that cannot be opened no longer repeats "access denied" after the error kind.
+- `nanshe formats` lists the macOS live source and the `SHC` detector.
 - `nanshe vm`: an executable page that no VAD entry describes is examined as private memory, and an image whose file cannot be named as a mapping without a file; kernel structures are read through Nanshe's own address translation, including transition pages.
 
 ## [0.2.0] - 2026-11-24

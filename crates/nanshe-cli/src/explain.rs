@@ -1,6 +1,7 @@
 //! Komendy `nanshe explain`, `nanshe llm check` i `nanshe cloud list`.
 use clap::{Args, Subcommand};
 use nanshe_core::*;
+use nanshe_core::{tr, trf};
 use nanshe_llm::backend::{LlmBackend, ModelInfo, Ollama};
 use nanshe_llm::cloud::{self, Cloud, Provider};
 use nanshe_llm::context::DataLevel;
@@ -115,11 +116,11 @@ pub fn llm_cmd(cmd: LlmCmd) -> Result<ExitCode> {
     let LlmCmd::Check { conn } = cmd;
     let b = conn.backend()?;
     let i = b.info().map_err(Error::Access)?;
-    let place = match conn.provider()? { None => conn.url.clone(), Some(p) => format!("{} - CHMURA", p.base_url) };
+    let place = match conn.provider()? { None => conn.url.clone(), Some(p) => format!("{} - {}", p.base_url, tr!("CHMURA", "CLOUD")) };
     println!("backend:  {} {} ({place})", i.backend, i.server_version.as_deref().unwrap_or(""));
     println!("model:    {}{}", i.model, i.digest.as_deref().map(|d| format!(" [{}]", &d[..d.len().min(12)])).unwrap_or_default());
-    println!("kontekst: {} tokenów (maksimum modelu)", i.context_length.map(|c| c.to_string()).unwrap_or("?".into()));
-    println!("próbkowanie: {}", if i.fixed_sampling { "temperatura 0" } else { "domyślne modelu (nie da się ustalić)" });
+    println!("{}", trf!("kontekst: {} tokenów (maksimum modelu)", "context:  {} tokens (model maximum)", i.context_length.map(|c| c.to_string()).unwrap_or("?".into())));
+    println!("{} {}", tr!("próbkowanie:", "sampling:"), if i.fixed_sampling { tr!("temperatura 0", "temperature 0") } else { tr!("domyślne modelu (nie da się ustalić)", "model default (cannot be fixed)") });
     Ok(ExitCode::SUCCESS)
 }
 
@@ -127,13 +128,14 @@ pub fn cloud_cmd(cmd: CloudCmd) -> Result<ExitCode> {
     let CloudCmd::List { what } = cmd;
     match what {
         CloudList::Providers => {
-            println!("{:<10} {:<10} {:<28} {:<26} {}", "DOSTAWCA", "API", "KLUCZ", "MODEL DOMYŚLNY", "ADRES");
+            println!("{:<10} {:<10} {:<28} {:<26} {}", tr!("DOSTAWCA", "PROVIDER"), "API", tr!("KLUCZ", "KEY"), tr!("MODEL DOMYŚLNY", "DEFAULT MODEL"), tr!("ADRES", "ADDRESS"));
             for p in cloud::PROVIDERS {
                 let api = match p.api { cloud::Api::OpenAi => "openai", cloud::Api::Anthropic => "anthropic" };
-                let key = cloud::key_source(p, None).map(|s| format!("jest ({s})")).unwrap_or_else(|| format!("brak ({})", p.key_env[0]));
-                println!("{:<10} {:<10} {:<28} {:<26} {}", p.id, api, key, p.default_model.unwrap_or("- (podaj --model)"), p.base_url);
+                let key = cloud::key_source(p, None).map(|s| trf!("jest ({s})", "present ({s})")).unwrap_or_else(|| trf!("brak ({})", "missing ({})", p.key_env[0]));
+                println!("{:<10} {:<10} {:<28} {:<26} {}", p.id, api, key, p.default_model.unwrap_or(tr!("- (podaj --model)", "- (give --model)")), p.base_url);
             }
-            println!("\nKlucz: zmienna z kolumny KLUCZ, NANSHE_<DOSTAWCA>_KEY_FILE albo --key-file <plik>.\nUżycie: nanshe explain wynik.json --llm <dostawca> --allow-cloud [--model <id>]");
+            println!("{}", tr!("\nKlucz: zmienna z kolumny KLUCZ, NANSHE_<DOSTAWCA>_KEY_FILE albo --key-file <plik>.\nUżycie: nanshe explain wynik.json --llm <dostawca> --allow-cloud [--model <id>]",
+                "\nKey: the variable from the KEY column, NANSHE_<PROVIDER>_KEY_FILE or --key-file <file>.\nUsage: nanshe explain result.json --llm <provider> --allow-cloud [--model <id>]"));
             Ok(ExitCode::SUCCESS)
         }
         CloudList::Models { provider, key_file, filter, timeout } => {
@@ -146,22 +148,22 @@ pub fn cloud_cmd(cmd: CloudCmd) -> Result<ExitCode> {
                 let key = match cloud::resolve_key(p, key_file.as_deref()) {
                     Ok(k) => k,
                     Err(e) if provider.is_some() => return Err(Error::Invalid(e)),
-                    Err(_) => { eprintln!("{}: pominięty, brak klucza ({})", p.id, p.key_env[0]); continue; }
+                    Err(_) => { eprintln!("{}", trf!("{}: pominięty, brak klucza ({})", "{}: skipped, no key ({})", p.id, p.key_env[0])); continue; }
                 };
                 let list = match Cloud::new(p, "", key, Duration::from_secs(timeout)).list_models() {
                     Ok(l) => l,
                     Err(e) => { eprintln!("{}: {e}", p.id); failed = true; continue; }
                 };
                 let list: Vec<_> = list.into_iter().filter(|m| filter.as_ref().map(|f| m.id.to_lowercase().contains(&f.to_lowercase())).unwrap_or(true)).collect();
-                println!("# {} ({} modeli{})", p.id, list.len(), filter.as_ref().map(|f| format!(", filtr \"{f}\"")).unwrap_or_default());
-                println!("{:<48} {:>10} {:>18}  {}", "MODEL", "KONTEKST", "USD/1M wej.+wyj.", "UWAGI");
+                println!("{}", trf!("# {} (modeli: {}{})", "# {} (models: {}{})", p.id, list.len(), filter.as_ref().map(|f| trf!(", filtr \"{f}\"", ", filter \"{f}\"")).unwrap_or_default()));
+                println!("{:<48} {:>10} {:>18}  {}", "MODEL", tr!("KONTEKST", "CONTEXT"), tr!("USD/1M wej.+wyj.", "USD/1M in+out"), tr!("UWAGI", "NOTES"));
                 for m in &list {
                     let price = m.price_per_mtok.map(|(i, o)| format!("{i}+{o}")).unwrap_or_else(|| "-".into());
                     let mut notes = Vec::new();
-                    if p.default_model == Some(m.id.as_str()) { notes.push("domyślny"); }
+                    if p.default_model == Some(m.id.as_str()) { notes.push(tr!("domyślny", "default")); }
                     if let Some(pr) = &m.params {
-                        if !pr.iter().any(|x| x == "structured_outputs") { notes.push("bez wymuszania schematu"); }
-                        if !pr.iter().any(|x| x == "temperature") { notes.push("bez ustalonej temperatury"); }
+                        if !pr.iter().any(|x| x == "structured_outputs") { notes.push(tr!("bez wymuszania schematu", "no schema enforcement")); }
+                        if !pr.iter().any(|x| x == "temperature") { notes.push(tr!("bez ustalonej temperatury", "no fixed temperature")); }
                     }
                     println!("{:<48} {:>10} {:>18}  {}", m.id, m.context_length.map(|c| c.to_string()).unwrap_or_else(|| "-".into()), price, notes.join(", "));
                 }
@@ -204,9 +206,9 @@ pub fn run(a: ExplainArgs) -> Result<ExitCode> {
         let mi = ModelInfo { backend: "dry-run".into(), model: a.conn.model().unwrap_or_else(|_| "?".into()), digest: None, context_length: None, server_version: None, fixed_sampling: false };
         let o = nanshe_llm::explain(&scan, &sha, &Never, &mi, &opts, &crate::now_rfc3339());
         println!("{}", serde_json::to_string_pretty(&o.payloads).expect("json"));
-        eprintln!("dry-run: {} zapytań zostałoby wysłanych do {} (poziom danych {}{}); nic nie wysłano", o.payloads.len(),
-            provider.map(|p| format!("{} - CHMURA", p.id)).unwrap_or_else(|| "ollama".into()), level.as_str(),
-            if is_cloud { ", po pseudonimizacji" } else { "" });
+        eprintln!("{}", trf!("dry-run: zapytań do wysłania: {}, cel: {} (poziom danych {}{}); nic nie wysłano", "dry-run: requests that would be sent: {}, target: {} (data level {}{}); nothing was sent", o.payloads.len(),
+            provider.map(|p| format!("{} - {}", p.id, tr!("CHMURA", "CLOUD"))).unwrap_or_else(|| "ollama".into()), level.as_str(),
+            if is_cloud { tr!(", po pseudonimizacji", ", after pseudonymisation") } else { "" }));
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -219,7 +221,7 @@ pub fn run(a: ExplainArgs) -> Result<ExitCode> {
         _ => {}
     }
     if let Some(p) = provider {
-        eprintln!("UWAGA: dane ze skanu (poziom {}, po pseudonimizacji) idą poza własną infrastrukturę do {} ({}), model {}", level.as_str(), p.id, p.base_url, mi.model);
+        eprintln!("{}", trf!("UWAGA: dane ze skanu (poziom {}, po pseudonimizacji) idą poza własną infrastrukturę do {} ({}), model {}", "WARNING: scan data (level {}, after pseudonymisation) leaves your own infrastructure for {} ({}), model {}", level.as_str(), p.id, p.base_url, mi.model));
     }
     let o = nanshe_llm::explain(&scan, &sha, b.as_ref(), &mi, &opts, &crate::now_rfc3339());
     let out = a.out.clone().unwrap_or_else(|| a.result.with_extension("llm.json"));
@@ -228,38 +230,38 @@ pub fn run(a: ExplainArgs) -> Result<ExitCode> {
 
     println!("== {} ==", nanshe_llm::NOTICE);
     let h = &o.result["header"];
-    println!("model {} | poziom danych {} | zapytań {} | z pamięci podręcznej {} | tokeny {}+{}",
-        h["model"].as_str().unwrap_or("?"), level.as_str(), h["usage"]["calls"], h["usage"]["cache_hits"], h["usage"]["prompt_tokens"], h["usage"]["output_tokens"]);
+    println!("{}", trf!("model {} | poziom danych {} | zapytań {} | z pamięci podręcznej {} | tokeny {}+{}", "model {} | data level {} | requests {} | from cache {} | tokens {}+{}",
+        h["model"].as_str().unwrap_or("?"), level.as_str(), h["usage"]["calls"], h["usage"]["cache_hits"], h["usage"]["prompt_tokens"], h["usage"]["output_tokens"]));
     let mut not_ok = 0;
     for p in o.result["processes"].as_array().into_iter().flatten() {
         println!("\n[{}] {}", p["pid"], p["name"].as_str().unwrap_or("?"));
         for r in p["regions"].as_array().into_iter().flatten() {
             let markers: Vec<&str> = r["markers"].as_array().into_iter().flatten().filter_map(|m| m.as_str()).collect();
-            print!("  {} (pkt {}){}", r["base"].as_str().unwrap_or("?"), r["deterministic_score"],
+            print!("  {} ({} {}){}", r["base"].as_str().unwrap_or("?"), tr!("pkt", "score"), r["deterministic_score"],
                 if markers.is_empty() { String::new() } else { format!(" [{}]", markers.join(",")) });
             if r["status"] == "ok" {
                 println!();
                 for hy in r["explanation"]["hypotheses"].as_array().into_iter().flatten() {
-                    println!("      {:<17} {:<12} dowody: {}", hy["label"].as_str().unwrap_or("?"), hy["confidence"].as_str().unwrap_or("?"),
+                    println!("      {:<17} {:<12} {} {}", hy["label"].as_str().unwrap_or("?"), hy["confidence"].as_str().unwrap_or("?"), tr!("dowody:", "evidence:"),
                         hy["evidence"].as_array().map(|e| e.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default());
                 }
                 println!("      {}", r["explanation"]["summary"].as_str().unwrap_or(""));
             } else {
                 not_ok += 1;
-                println!(" - brak interpretacji ({}): {}", r["status"].as_str().unwrap_or("?"), r["reason"].as_str().unwrap_or(""));
+                println!("{}", trf!(" - brak interpretacji ({}): {}", " - no interpretation ({}): {}", r["status"].as_str().unwrap_or("?"), r["reason"].as_str().unwrap_or("")));
             }
         }
         let c = &p["correlation"];
         if c["status"] == "ok" {
-            println!("  korelacja: {}", c["summary"].as_str().unwrap_or(""));
-            println!("  proponowana kolejność: {}", c["review_order"].as_array().map(|e| e.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(" > ")).unwrap_or_default());
+            println!("  {} {}", tr!("korelacja:", "correlation:"), c["summary"].as_str().unwrap_or(""));
+            println!("  {} {}", tr!("proponowana kolejność:", "suggested order:"), c["review_order"].as_array().map(|e| e.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(" > ")).unwrap_or_default());
             for s in c["next_steps"].as_array().into_iter().flatten() { println!("  - {}", s.as_str().unwrap_or("")); }
         } else if c["status"] == "rejected" {
             not_ok += 1;
-            println!("  korelacja: brak ({})", c["reason"].as_str().unwrap_or(""));
+            println!("{}", trf!("  korelacja: brak ({})", "  correlation: none ({})", c["reason"].as_str().unwrap_or("")));
         }
     }
-    eprintln!("\nzapisano: {}", out.display());
+    eprintln!("{}", trf!("\nzapisano: {}", "\nsaved: {}", out.display()));
     if !a.no_report { crate::write_report(&a.result, Some(&out), None, None, parse_min(&a.min)?, std::env::var_os("NANSHE_KB_DIR").map(std::path::PathBuf::from).as_deref())?; }
     // brak interpretacji to wynik częściowy, nie błąd
     Ok(if not_ok > 0 { ExitCode::from(3) } else { ExitCode::SUCCESS })

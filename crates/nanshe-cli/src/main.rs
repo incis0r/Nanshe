@@ -16,8 +16,18 @@ mod explain;
 struct Cli {
     /// Język raportu i opisów w wyniku skanu: pl albo en. Bez opcji: skan po polsku, raport w języku skanu
     #[arg(long, global = true, env = "NANSHE_LANG", value_parser = ["pl", "en"])] lang: Option<String>,
+    /// Kolory wydruku skanu: auto (tylko na terminalu i bez zmiennej NO_COLOR), always, never
+    #[arg(long, global = true, value_enum, default_value = "auto")] color: Color,
+    /// Wydruk skanu: każdy region w osobnym wierszu, z entropią i opisami znalezisk
+    #[arg(long, global = true)] regions: bool,
     #[command(subcommand)] cmd: Option<Cmd>,
 }
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Color { Auto, Always, Never }
+
+/// Opcje wydruku skanu (kolory, pełna lista regionów), ustawiane raz w `main`.
+static PRINT: std::sync::OnceLock<(Color, bool)> = std::sync::OnceLock::new();
 
 /// Język wybrany jawnie (opcja --lang albo zmienna NANSHE_LANG); None, gdy nie wybrano.
 static LANG_CHOICE: std::sync::OnceLock<Option<lang::Lang>> = std::sync::OnceLock::new();
@@ -288,10 +298,22 @@ fn vm(target: String, pid: Option<u32>, all: bool, ps: bool, symbols: Option<Pat
 
 /// Zapis wyniku, wydruk i kod wyjścia: wspólne dla skanu na żywo i analizy zrzutu.
 fn finish(result: &ScanResult, json: &Option<PathBuf>, min: Severity, partial: bool) -> Result<ExitCode> {
+    // Wydruk idzie na stdout, a przy zapisie JSON do pliku na stderr; o kolorach decyduje ten strumień.
+    let text = |stderr: bool| {
+        use std::io::IsTerminal;
+        let (color, regions) = PRINT.get().copied().unwrap_or((Color::Never, false));
+        let terminal = if stderr { std::io::stderr().is_terminal() } else { std::io::stdout().is_terminal() };
+        let color = match color {
+            Color::Never => false,
+            Color::Always => { nanshe_live::ansi_output(stderr); true }
+            Color::Auto => terminal && !std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) && nanshe_live::ansi_output(stderr),
+        };
+        nanshe_report::to_text(result, &nanshe_report::TextOptions { min, color, regions })
+    };
     match json {
         Some(p) if p.as_os_str() == "-" => println!("{}", nanshe_report::to_json(result)),
-        Some(p) => { std::fs::write(p, nanshe_report::to_json(result))?; eprint!("{}", nanshe_report::to_text(result, min)); }
-        None => print!("{}", nanshe_report::to_text(result, min)),
+        Some(p) => { std::fs::write(p, nanshe_report::to_json(result))?; eprint!("{}", text(true)); }
+        None => print!("{}", text(false)),
     }
     Ok(if result.max_severity() >= min { ExitCode::from(1) } else if partial { ExitCode::from(3) } else { ExitCode::SUCCESS })
 }
@@ -328,8 +350,9 @@ fn memory_map(pid: Option<u32>, input: Option<PathBuf>, output: PathBuf, json: O
         std::fs::write(path, serde_json::to_vec_pretty(&inventory).map_err(|e| Error::Invalid(e.to_string()))?)?;
     }
     let partial = inventory.processes.iter().any(|p| p.error.is_some() || !p.notes.is_empty());
-    eprintln!("mapa: {} | procesów: {} | niedostępnych: {} | {}", output.display(), inventory.processes.len(),
-        inventory.processes.iter().filter(|p| p.error.is_some()).count(), if partial { "sprawdź ograniczenia w raporcie" } else { "metadane zebrane" });
+    eprintln!("{}", trf!("mapa: {} | procesów: {} | niedostępnych: {} | {}", "map: {} | processes: {} | inaccessible: {} | {}", output.display(), inventory.processes.len(),
+        inventory.processes.iter().filter(|p| p.error.is_some()).count(),
+        if partial { tr!("sprawdź ograniczenia w raporcie", "see the limitations in the report") } else { tr!("metadane zebrane", "metadata collected") }));
     if !no_open {
         let path = std::fs::canonicalize(&output)?;
         #[cfg(target_os = "macos")]
@@ -340,7 +363,7 @@ fn memory_map(pid: Option<u32>, input: Option<PathBuf>, output: PathBuf, json: O
         let status = std::process::Command::new("explorer.exe").arg(&path).status();
         #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
         let status: std::io::Result<std::process::ExitStatus> = Err(std::io::Error::other("brak programu do otwarcia przeglądarki"));
-        if !matches!(status, Ok(s) if s.success()) { eprintln!("otwórz zapisany plik HTML w przeglądarce: {}", path.display()); }
+        if !matches!(status, Ok(s) if s.success()) { eprintln!("{}", trf!("otwórz zapisany plik HTML w przeglądarce: {}", "open the saved HTML file in a browser: {}", path.display())); }
     }
     Ok(if partial { ExitCode::from(3) } else { ExitCode::SUCCESS })
 }
@@ -350,6 +373,7 @@ fn main() -> ExitCode {
     let choice = cli.lang.as_deref().and_then(lang::Lang::parse);
     let _ = LANG_CHOICE.set(choice);
     if let Some(l) = choice { lang::set(l); }
+    let _ = PRINT.set((cli.color, cli.regions));
     let r: Result<ExitCode> = match cli.cmd.unwrap_or(Cmd::Map {
         pid: None, input: None, output: PathBuf::from("nanshe.memory.html"), json: None, no_open: false,
     }) {
@@ -375,8 +399,10 @@ fn main() -> ExitCode {
             Ok(ExitCode::SUCCESS)
         })(),
         Cmd::Formats => {
-            println!("źródła żywe:   linux (/proc/<pid>/maps + mem), windows (VirtualQueryEx + ReadProcessMemory)\nzrzuty:        plik core ELF 64-bit (Linux), minidump (Windows)\nhiperwizor:    gość Windows x86_64 z hosta KVM/QEMU (nanshe vm; build z --features vm, tylko Linux)\nraport:        Markdown, PDF (nanshe report)\ndetektory:     RWX X-PRIV X-MAP GUARD-X MEMFD DEL-EXEC X-TMP ENT-X HDR THR-PRIV IMG-MOD\nwarstwa LLM:   {}",
-                if cfg!(feature = "llm") { "wbudowana (ollama; chmura za --allow-cloud: nous, anthropic, google, openai)" } else { "niewbudowana (build z --features llm)" });
+            println!("{}", trf!(
+                "źródła żywe:   linux (/proc/<pid>/maps + mem),\n               windows (VirtualQueryEx + ReadProcessMemory),\n               macos (mach_vm_region_recurse + mach_vm_read_overwrite)\nzrzuty:        plik core ELF 64-bit (Linux), minidump (Windows)\nhiperwizor:    gość Windows x86_64 z hosta KVM/QEMU (nanshe vm; build z --features vm, tylko Linux)\nraport:        Markdown, PDF (nanshe report)\ndetektory:     RWX X-PRIV X-MAP GUARD-X MEMFD DEL-EXEC X-TMP ENT-X HDR THR-PRIV IMG-MOD SHC\nwarstwa LLM:   {}",
+                "live sources:  linux (/proc/<pid>/maps + mem),\n               windows (VirtualQueryEx + ReadProcessMemory),\n               macos (mach_vm_region_recurse + mach_vm_read_overwrite)\ndumps:         64-bit ELF core file (Linux), minidump (Windows)\nhypervisor:    Windows x86_64 guest from a KVM/QEMU host (nanshe vm; build with --features vm, Linux only)\nreport:        Markdown, PDF (nanshe report)\ndetectors:     RWX X-PRIV X-MAP GUARD-X MEMFD DEL-EXEC X-TMP ENT-X HDR THR-PRIV IMG-MOD SHC\nLLM layer:     {}",
+                if cfg!(feature = "llm") { tr!("wbudowana (ollama; chmura za --allow-cloud: nous, anthropic, google, openai)", "built in (ollama; cloud behind --allow-cloud: nous, anthropic, google, openai)") } else { tr!("niewbudowana (build z --features llm)", "not built in (build with --features llm)") }));
             Ok(ExitCode::SUCCESS)
         }
         #[cfg(feature = "llm")]

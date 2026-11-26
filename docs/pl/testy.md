@@ -18,8 +18,8 @@ Kod wyjścia skryptów e2e: 0 gdy wszystko zgodne, 1 gdy cokolwiek odbiega.
 
 | Warstwa | Wynik |
 |---|---|
-| Testy jednostkowe | 160 przechodzi (analyze 30, core 3, dump 9, kb 7, live 21, llm 40, report 31, vm 19) |
-| macOS (arm64, natywnie) | 162 testy jednostkowe (w tym 4 backendu macOS, uruchamiane tylko tam) oraz `scripts/e2e-macos.sh`: 7 próbek i 4 grupy asercji dodatkowych; zob. [macos.md](macos.md) |
+| Testy jednostkowe | 166 przechodzi (analyze 30, core 3, dump 9, kb 7, live 21, llm 40, report 37, vm 19) |
+| macOS (arm64, natywnie) | 168 testów jednostkowych (w tym 4 backendu macOS, uruchamiane tylko tam) oraz `scripts/e2e-macos.sh`: 7 próbek i 4 grupy asercji dodatkowych; zob. [macos.md](macos.md) |
 | Odczyt z hiperwizora (`nanshe vm`) | jedno uruchomienie na żywo na gościu Windows Server 2025 pod KVM (zob. [hiperwizor.md](hiperwizor.md)); bez automatycznego testu end-to-end |
 | Pełne skany na żywo, Linux | `nanshe scan --all` na 20 hostach jednego labu (19 x86_64, 1 arm64), 2026-11-23, przed strojeniem detekcji i po nim; żadnego procesu nie weryfikowano ręcznie |
 | e2e Linux (aarch64, kontener) | 16 próbek statycznych, 2 dynamiczne i 8 grup asercji dodatkowych |
@@ -139,6 +139,12 @@ Nowe w tej wersji (analiza i odczyt na żywo):
 | `long_token_is_broken_and_unknown_glyph_replaced` | długi ciąg bez spacji jest łamany; znak spoza czcionki staje się pytajnikiem |
 | `map_merges_files_marks_findings_and_shows_gaps` | diagram przestrzeni adresowej: mapowania jednego pliku łączone w wiersz, znalezisko ma własny wiersz, duże odstępy są przerwami; kontrola: bez znaleziska ten sam region jest zwykłą pamięcią, bez mapy regionów diagramu nie ma |
 | `stack_coverage_is_stated_with_reasons_for_abandoned_stacks` | zdanie o pokryciu stosów: liczniki, powody słowami (nieznany token zostaje bez zmian), wątki nieodczytane; wiersz jest w metryce (suma procesów) i w opisie procesu tylko wtedy, gdy wynik zawiera te dane |
+| `processes_are_ordered_by_severity_and_regions_grouped` | wydruk skanu: procesy od najwyższej wagi niezależnie od PID, regiony o tych samych cechach w jednym wierszu z zakresem rozmiarów i adresami, nic poniżej progu, brak sekwencji ANSI bez opcji koloru |
+| `inaccessible_processes_are_collapsed_by_cause` | wydruk skanu: procesy z błędem zebrane pod jedną przyczyną (komunikat bez numeru procesu) z listą PID-ów i policzone w podsumowaniu |
+| `tag_descriptions_are_printed_once_without_the_varying_detail` | wydruk skanu: każdy znacznik opisany raz; opis różny między regionami jest skrócony do części wspólnej |
+| `regions_option_lists_every_region_with_its_own_description` | `--regions`: każdy region z adresem, entropią i pełnymi opisami |
+| `colour_marks_severity_and_english_has_no_polish_words` | sekwencje koloru na nagłówkach wag; wydruk angielski ma angielskie nagłówki, liczebniki i "score" |
+| `nothing_above_the_threshold_is_said_plainly` | próg `high` ukrywa niższe sekcje; gdy nie ma czego pokazać, wydruk mówi to wprost |
 | `long_map_is_collapsed_but_findings_and_neighbours_stay` | mapa 201 regionów zwija się do kilku wierszy, znalezisko i jego sąsiedzi zostają, suma rozmiarów się zgadza |
 | `knowledge_base_explains_findings_in_plain_language` | raport zawiera przewodnik, opis zestawu cech z łagodnym i niepokojącym wyjaśnieniem, polecenia sprawdzające z adresami regionu i słowniczek; wskazówka o środowisku JIT zmienia się po dodaniu `libjvm` do mapy, a bez mapy regionów nie pojawia się wcale; zestaw bez własnego opisu jest składany z pojedynczych cech |
 | `overview_matrix_tree_scatter_and_hashes` | macierz procesy x cechy z liczbą regionów, wspólne drzewo z jednym korzeniem i wspólnym rodzicem pokazanym raz, wykres rozrzutu tylko dla procesu z co najmniej trzema regionami, skrót regionu i skrót pliku zmapowanego w raporcie; kontrola: jeden proces nie ma wspólnego drzewa, a wynik bez skrótów mówi o tym wprost |
