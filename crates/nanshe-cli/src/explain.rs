@@ -2,6 +2,7 @@
 use clap::{Args, Subcommand};
 use nanshe_core::*;
 use nanshe_core::{tr, trf};
+use nanshe_report::clean;
 use nanshe_llm::backend::{LlmBackend, ModelInfo, Ollama};
 use nanshe_llm::cloud::{self, Cloud, Provider};
 use nanshe_llm::context::DataLevel;
@@ -231,34 +232,34 @@ pub fn run(a: ExplainArgs) -> Result<ExitCode> {
     println!("== {} ==", nanshe_llm::NOTICE);
     let h = &o.result["header"];
     println!("{}", trf!("model {} | poziom danych {} | zapytań {} | z pamięci podręcznej {} | tokeny {}+{}", "model {} | data level {} | requests {} | from cache {} | tokens {}+{}",
-        h["model"].as_str().unwrap_or("?"), level.as_str(), h["usage"]["calls"], h["usage"]["cache_hits"], h["usage"]["prompt_tokens"], h["usage"]["output_tokens"]));
+        clean(h["model"].as_str().unwrap_or("?")), level.as_str(), h["usage"]["calls"], h["usage"]["cache_hits"], h["usage"]["prompt_tokens"], h["usage"]["output_tokens"]));
     let mut not_ok = 0;
     for p in o.result["processes"].as_array().into_iter().flatten() {
-        println!("\n[{}] {}", p["pid"], p["name"].as_str().unwrap_or("?"));
+        println!("\n[{}] {}", p["pid"], clean(p["name"].as_str().unwrap_or("?")));
         for r in p["regions"].as_array().into_iter().flatten() {
             let markers: Vec<&str> = r["markers"].as_array().into_iter().flatten().filter_map(|m| m.as_str()).collect();
-            print!("  {} ({} {}){}", r["base"].as_str().unwrap_or("?"), tr!("pkt", "score"), r["deterministic_score"],
-                if markers.is_empty() { String::new() } else { format!(" [{}]", markers.join(",")) });
+            print!("  {} ({} {}){}", clean(r["base"].as_str().unwrap_or("?")), tr!("pkt", "score"), r["deterministic_score"],
+                if markers.is_empty() { String::new() } else { format!(" [{}]", clean(&markers.join(","))) });
             if r["status"] == "ok" {
                 println!();
                 for hy in r["explanation"]["hypotheses"].as_array().into_iter().flatten() {
-                    println!("      {:<17} {:<12} {} {}", hy["label"].as_str().unwrap_or("?"), hy["confidence"].as_str().unwrap_or("?"), tr!("dowody:", "evidence:"),
-                        hy["evidence"].as_array().map(|e| e.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default());
+                    println!("      {:<17} {:<12} {} {}", clean(hy["label"].as_str().unwrap_or("?")), clean(hy["confidence"].as_str().unwrap_or("?")), tr!("dowody:", "evidence:"),
+                        hy["evidence"].as_array().map(|e| e.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).map(|e| clean(&e)).unwrap_or_default());
                 }
-                println!("      {}", r["explanation"]["summary"].as_str().unwrap_or(""));
+                println!("      {}", clean(r["explanation"]["summary"].as_str().unwrap_or("")));
             } else {
                 not_ok += 1;
-                println!("{}", trf!(" - brak interpretacji ({}): {}", " - no interpretation ({}): {}", r["status"].as_str().unwrap_or("?"), r["reason"].as_str().unwrap_or("")));
+                println!("{}", trf!(" - brak interpretacji ({}): {}", " - no interpretation ({}): {}", clean(r["status"].as_str().unwrap_or("?")), clean(r["reason"].as_str().unwrap_or(""))));
             }
         }
         let c = &p["correlation"];
         if c["status"] == "ok" {
-            println!("  {} {}", tr!("korelacja:", "correlation:"), c["summary"].as_str().unwrap_or(""));
-            println!("  {} {}", tr!("proponowana kolejność:", "suggested order:"), c["review_order"].as_array().map(|e| e.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(" > ")).unwrap_or_default());
-            for s in c["next_steps"].as_array().into_iter().flatten() { println!("  - {}", s.as_str().unwrap_or("")); }
+            println!("  {} {}", tr!("korelacja:", "correlation:"), clean(c["summary"].as_str().unwrap_or("")));
+            println!("  {} {}", tr!("proponowana kolejność:", "suggested order:"), c["review_order"].as_array().map(|e| e.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(" > ")).map(|e| clean(&e)).unwrap_or_default());
+            for s in c["next_steps"].as_array().into_iter().flatten() { println!("  - {}", clean(s.as_str().unwrap_or(""))); }
         } else if c["status"] == "rejected" {
             not_ok += 1;
-            println!("{}", trf!("  korelacja: brak ({})", "  correlation: none ({})", c["reason"].as_str().unwrap_or("")));
+            println!("{}", trf!("  korelacja: brak ({})", "  correlation: none ({})", clean(c["reason"].as_str().unwrap_or(""))));
         }
     }
     eprintln!("{}", trf!("\nzapisano: {}", "\nsaved: {}", out.display()));

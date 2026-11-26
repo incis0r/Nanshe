@@ -1,6 +1,7 @@
 //! Skrót tekstowy wyniku skanu dla terminala: procesy od najwyższej wagi, regiony o tych samych
 //! cechach w jednym wierszu, procesy niedostępne zebrane razem, opisy znaczników raz na końcu.
 
+use crate::doc::clean;
 use crate::sev_label;
 use nanshe_core::*;
 use nanshe_core::{tr, trf};
@@ -71,8 +72,10 @@ fn common(a: &str, b: &str) -> String {
     a[..cut].trim_end_matches([' ', '@', ':', ',', '(', '=']).to_string()
 }
 
-fn name_of(x: &RegionReport) -> &str {
-    x.region.backing.as_deref().or(x.region.label.as_deref()).unwrap_or("<anon>")
+/// Źródło regionu. Jak każdy tekst pochodzący z badanego procesu albo z pliku wyniku przechodzi przez
+/// `clean`: znak sterujący w nazwie procesu lub ścieżce nie może sterować terminalem czytającego.
+fn name_of(x: &RegionReport) -> String {
+    clean(x.region.backing.as_deref().or(x.region.label.as_deref()).unwrap_or("<anon>"))
 }
 
 pub fn to_text(r: &ScanResult, opt: &TextOptions) -> String {
@@ -82,8 +85,8 @@ pub fn to_text(r: &ScanResult, opt: &TextOptions) -> String {
     let listed = |pr: &ProcessReport| pr.max_severity >= opt.min && pr.regions.iter().any(|x| shown(&x));
 
     let with_findings = r.processes.iter().filter(|pr| pr.regions.iter().any(|x| !x.findings.is_empty())).count();
-    let mut head = vec![format!("nanshe {}", r.tool_version), format!("host {}", r.host)];
-    let mut platforms: Vec<String> = r.processes.iter().map(|pr| format!("{}/{}", pr.info.os, pr.info.arch)).collect();
+    let mut head = vec![format!("nanshe {}", clean(&r.tool_version)), format!("host {}", clean(&r.host))];
+    let mut platforms: Vec<String> = r.processes.iter().map(|pr| clean(&format!("{}/{}", pr.info.os, pr.info.arch))).collect();
     platforms.dedup();
     if let [one] = platforms.as_slice() { head.push(one.clone()); }
     head.push(count(r.processes.len(), ["proces", "procesy", "procesów"], ["process", "processes"]));
@@ -97,7 +100,7 @@ pub fn to_text(r: &ScanResult, opt: &TextOptions) -> String {
     // jedna szerokość kolumny znaczników w całym wydruku, żeby kolumny procesów stały pod sobą
     let width = r.processes.iter().filter(|pr| listed(pr)).flat_map(|pr| pr.regions.iter().filter(shown))
         .map(|x| x.findings.iter().map(|f| f.tag.chars().count() + 1).sum::<usize>().saturating_sub(1)).max().unwrap_or(0);
-    let mut legend: BTreeMap<&str, String> = BTreeMap::new();
+    let mut legend: BTreeMap<String, String> = BTreeMap::new();
     let mut totals = Vec::new();
     for sev in [Severity::High, Severity::Suspicious, Severity::Info] {
         if sev < opt.min { continue; }
@@ -108,21 +111,22 @@ pub fn to_text(r: &ScanResult, opt: &TextOptions) -> String {
         let _ = writeln!(o, "\n{}", p.sev(sev, &format!("{} ({})", sev_label(sev).to_uppercase(), procs.len())));
         for pr in procs {
             let pid = pr.info.pid.map(|x| x.to_string()).unwrap_or("-".into());
-            let _ = write!(o, "[{pid}] {}  {}, {}", p.bold(pr.info.name.as_deref().unwrap_or("?")),
+            let _ = write!(o, "[{pid}] {}  {}, {}", p.bold(&clean(pr.info.name.as_deref().unwrap_or("?"))),
                 count(pr.regions_total as usize, ["region", "regiony", "regionów"], ["region", "regions"]), size(pr.bytes_scanned));
             if pr.regions_unreadable > 0 { let _ = write!(o, "{}", trf!(", nieczytelnych: {}", ", unreadable: {}", pr.regions_unreadable)); }
             o.push('\n');
-            if let Some(e) = &pr.error { let _ = writeln!(o, "{}", trf!("    błąd: {e}", "    error: {e}")); }
+            if let Some(e) = pr.error.as_deref().map(clean) { let _ = writeln!(o, "{}", trf!("    błąd: {e}", "    error: {e}")); }
 
             // grupa: regiony o tej samej punktacji, znacznikach, uprawnieniach, źródle i obniżce
-            let mut groups: BTreeMap<(Reverse<u32>, String, String, &str, &str), Vec<&RegionReport>> = BTreeMap::new();
+            let mut groups: BTreeMap<(Reverse<u32>, String, String, String, String), Vec<&RegionReport>> = BTreeMap::new();
             for x in pr.regions.iter().filter(shown) {
-                let tags = x.findings.iter().map(|f| f.tag.as_str()).collect::<Vec<_>>().join(",");
+                let tags = clean(&x.findings.iter().map(|f| f.tag.as_str()).collect::<Vec<_>>().join(","));
                 let prot = x.region.prot.map(|q| q.to_string()).unwrap_or("???".into());
-                groups.entry((Reverse(x.score), tags, prot, name_of(x), x.allowlisted.as_deref().unwrap_or(""))).or_default().push(x);
+                groups.entry((Reverse(x.score), tags, prot, name_of(x), clean(x.allowlisted.as_deref().unwrap_or("")))).or_default().push(x);
                 for f in &x.findings {
-                    let text = match legend.get(f.tag.as_str()) { Some(known) => common(known, &f.reason), None => f.reason.clone() };
-                    legend.insert(&f.tag, text);
+                    let (tag, reason) = (clean(&f.tag), clean(&f.reason));
+                    let text = match legend.get(&tag) { Some(known) => common(known, &reason), None => reason };
+                    legend.insert(tag, text);
                 }
             }
             for ((Reverse(score), tags, prot, name, allow), mut regs) in groups {
@@ -135,7 +139,7 @@ pub fn to_text(r: &ScanResult, opt: &TextOptions) -> String {
                 if opt.regions {
                     for x in regs {
                         let _ = writeln!(o, "        {:#018x} {:>10}  ent {}", x.region.base, size(x.region.size), x.entropy_max.map(|e| format!("{e:.2}")).unwrap_or("-".into()));
-                        for f in &x.findings { let _ = writeln!(o, "            {:<8} {}", f.tag, f.reason); }
+                        for f in &x.findings { let _ = writeln!(o, "            {:<8} {}", clean(&f.tag), clean(&f.reason)); }
                     }
                 } else {
                     let addrs: Vec<String> = regs.iter().take(ADDRS).map(|x| format!("{:#x}", x.region.base)).collect();
@@ -151,9 +155,9 @@ pub fn to_text(r: &ScanResult, opt: &TextOptions) -> String {
     for pr in r.processes.iter().filter(|pr| !listed(pr)) {
         let Some(e) = &pr.error else { continue };
         let pid = pr.info.pid.map(|x| x.to_string()).unwrap_or("-".into());
-        let mut cause = e.clone();
+        let mut cause = clean(e);
         for word in ["pid", "proces", "process"] { cause = cause.replace(&format!("{word} {pid}: "), ""); }
-        denied.entry(cause).or_default().push(match &pr.info.name { Some(n) => format!("{pid} ({n})"), None => pid });
+        denied.entry(cause).or_default().push(match &pr.info.name { Some(n) => format!("{pid} ({})", clean(n)), None => pid });
     }
     let denied_total: usize = denied.values().map(Vec::len).sum();
     if denied_total > 0 {
@@ -277,6 +281,41 @@ mod tests {
             assert!(en.contains(want), "brak {want}:\n{en}");
         }
         for bad in ["pkt", "proces ", "znalezisk", "próg"] { assert!(!en.contains(bad), "polskie \"{bad}\" w:\n{en}"); }
+    }
+
+    #[test]
+    fn control_characters_from_the_scanned_host_never_reach_the_terminal() {
+        let mut s = scan();
+        let esc = "\x1b]0;tytuł\x07\x1b[2J\u{9b}31m";
+        s.host = format!("stacja{esc}");
+        s.tool_version = format!("0{esc}");
+        for pr in &mut s.processes {
+            pr.info.name = Some(format!("zły{esc}.exe"));
+            pr.info.os = format!("win{esc}");
+            if let Some(e) = &mut pr.error { e.push_str(esc); }
+            for x in &mut pr.regions {
+                x.region.backing = Some(format!("C:\\x{esc}"));
+                x.allowlisted = Some(format!("jit{esc}"));
+                for f in &mut x.findings { f.tag.push_str(esc); f.reason.push_str(esc); }
+            }
+        }
+        s.processes[0].regions = vec![region(0x1000, 4096, &[("RWX", "opis")], 60, Severity::High)];
+        s.processes[0].max_severity = Severity::High;
+        for regions in [false, true] {
+            let t = to_text(&s, &TextOptions { min: Severity::Info, color: false, regions });
+            assert!(!t.chars().any(|c| c.is_control() && c != '\n'), "znak sterujący w wydruku: {t:?}");
+            assert!(t.contains("zły") && t.contains("stacja"), "{t}");
+        }
+        // z kolorami zostają wyłącznie własne sekwencje wydruku (ESC [ ... m)
+        let t = to_text(&s, &TextOptions { min: Severity::Info, color: true, regions: true });
+        let mut rest = t.as_str();
+        while let Some(i) = rest.find('\x1b') {
+            let tail = &rest[i + 1..];
+            let end = tail.find('m').expect("sekwencja bez końca");
+            assert!(tail.starts_with('[') && tail[1..end].chars().all(|c| c.is_ascii_digit() || c == ';'), "obca sekwencja: {:?}", &tail[..end + 1]);
+            rest = &tail[end + 1..];
+        }
+        assert!(!t.chars().any(|c| c.is_control() && c != '\n' && c != '\x1b'), "{t:?}");
     }
 
     #[test]

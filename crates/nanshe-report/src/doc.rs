@@ -104,7 +104,7 @@ const MAX_CELL: usize = 600;
 pub const DETAIL_PER_PROCESS: usize = 6;
 
 /// Tekst z badanego procesu albo od modelu: bez znaków sterujących, z limitem długości.
-pub(crate) fn clean(s: &str) -> String {
+pub fn clean(s: &str) -> String {
     let t: String = s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
     let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
     if t.chars().count() > MAX_CELL { format!("{}...", t.chars().take(MAX_CELL).collect::<String>()) } else { t }

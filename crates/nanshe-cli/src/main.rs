@@ -245,7 +245,7 @@ fn vm(target: String, pid: Option<u32>, all: bool, ps: bool, symbols: Option<Pat
     let guest = nanshe_vm::open(&target, nanshe_vm::Symbols { dir: symbols.as_deref(), fetch })?;
     let procs = guest.processes()?;
     if ps {
-        for p in procs.iter().filter(|p| p.alive) { println!("{:>7}  {:<28} {}", p.pid, p.name, p.path); }
+        for p in procs.iter().filter(|p| p.alive) { println!("{:>7}  {:<28} {}", p.pid, nanshe_report::clean(&p.name), nanshe_report::clean(&p.path)); }
         return Ok(ExitCode::SUCCESS);
     }
     let pids: Vec<u32> = match (pid, all) {
@@ -379,7 +379,7 @@ fn main() -> ExitCode {
     }) {
         Cmd::Map { pid, input, output, json, no_open } => memory_map(pid, input, output, json, no_open),
         Cmd::Ps => nanshe_live::list_processes().map(|l| {
-            for p in l { println!("{:>8}  {}", p.pid, p.name); }
+            for p in l { println!("{:>8}  {}", p.pid, nanshe_report::clean(&p.name)); }
             ExitCode::SUCCESS
         }),
         Cmd::Vm { target, pid, all, ps, symbols, fetch_symbols, json, no_bytes, min, max_region_mib } => vm(target, pid, all, ps, symbols, fetch_symbols, json, no_bytes, min, max_region_mib),

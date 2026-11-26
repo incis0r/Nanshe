@@ -19,6 +19,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- Terminal output: control characters in text that comes from the scanned host or from a model (process names, paths, descriptions, error messages) are removed before printing, so a process name with an escape sequence cannot drive the terminal of the person reading the scan summary, `nanshe ps`, `nanshe vm --ps` or the `explain` printout.
 - `nanshe vm`: the cache of page tables is bounded for every reader, including the reads of kernel structures.
 - `nanshe vm`: physical reads are limited to the guest's memory size. An invalid page entry carries an extra high address bit, and for such an address the memory library returned success and zeros, so transition pages could be read as empty pages.
 

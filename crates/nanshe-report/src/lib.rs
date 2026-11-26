@@ -28,6 +28,7 @@ pub fn sev_label(s: Severity) -> &'static str {
 }
 
 pub use text::{to_text, TextOptions};
+pub use doc::clean;
 
 pub use nanshe_core::sha256_hex;
 
