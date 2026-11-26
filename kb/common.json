@@ -1,5 +1,5 @@
 {
- "version": "2026-11-22",
+ "version": "2026-11-26",
  "guide": [
   "Raport przedstawia wynik przeglądu pamięci działających procesów. Wskazuje obszary pamięci o cechach nietypowych dla zwykłego oprogramowania. Nie rozstrzyga, czy stacja została przejęta: każde znalezisko jest hipotezą do zweryfikowania.",
   "Proces przechowuje kod i dane w wydzielonych obszarach pamięci, zwanych regionami. W typowym programie kod pochodzi z pliku na dysku i nie jest modyfikowany w trakcie pracy. Narzędzie wyszukuje odstępstwa od tej reguły: kod bez pliku źródłowego, kod modyfikowalny, kod o cechach danych zaszyfrowanych, obraz programu załadowany z pominięciem systemu, wątek działający z pamięci bez pliku oraz zmieniony kod biblioteki.",
@@ -258,6 +258,61 @@
     "Podmiana kodu programu po uruchomieniu (process hollowing)."
    ],
    "hints": []
+  },
+  {
+   "tags": [
+    "SHC",
+    "X-PRIV"
+   ],
+   "title": "kod bez pliku z cechami kodu samodzielnego",
+   "meaning": "W wykonywalnej pamięci bez pliku są sekwencje instrukcji, którymi posługuje się kod działający bez pomocy programu ładującego. Opis znaleziska podaje, który wzorzec znaleziono i pod jakim adresem.",
+   "benign": [
+    "Przeglądarki oparte na Chromium i aplikacje z ich silnikiem trzymają we własnej pamięci kopie wejść do jądra systemu; to część piaskownicy. Taki region jest mały i niezapisywalny.",
+    "Programy zabezpieczające i narzędzia diagnostyczne, które same wywołują jądro, żeby ominąć cudze przekierowania funkcji.",
+    "Pojedynczy wzorzec ustalania własnego adresu zdarza się w kodzie wygenerowanym przez środowisko uruchomieniowe."
+   ],
+   "malicious": [
+    "Ładunek wstrzyknięty do procesu: kod, który sam odnajduje biblioteki i funkcje systemu, bo nie ma tablicy importów.",
+    "Etap ładujący narzędzia zdalnego sterowania, który pobiera i uruchamia właściwy program.",
+    "Bezpośrednie wywołania jądra użyte po to, żeby ominąć nadzór programu zabezpieczającego."
+   ],
+   "hints": [
+    {
+     "runtime": true,
+     "text": "W procesie jest środowisko z kompilacją w locie ({runtime}). Tłumaczy ono samą pamięć wykonywalną bez pliku, ale nie każdy wzorzec: sprawdź w opisie znaleziska, który to. Kopia wejścia do jądra w małym, niezapisywalnym regionie przeglądarki to zwykle piaskownica. Odczyt listy bibliotek, pętla skrótów nazw funkcji albo prolog znanego etapu ładującego wymagają sprawdzenia mimo obecności środowiska."
+    },
+    {
+     "runtime": false,
+     "text": "W procesie nie rozpoznano środowiska z kompilacją w locie, więc ani pamięć wykonywalna bez pliku, ani wzorzec nie mają łagodnego wyjaśnienia pod ręką. Ten region warto sprawdzić w pierwszej kolejności."
+    }
+   ]
+  },
+  {
+   "tags": [
+    "RWX",
+    "SHC",
+    "X-PRIV"
+   ],
+   "title": "zapisywalny kod bez pliku z cechami kodu samodzielnego",
+   "meaning": "Pamięć bez pliku, którą można jednocześnie zmieniać i wykonywać, zawiera sekwencje typowe dla kodu działającego bez pomocy programu ładującego. Łączy się tu miejsce, w którym kod można dowolnie podmieniać, z treścią, która wygląda na ładunek.",
+   "benign": [
+    "Program zabezpieczający albo narzędzie diagnostyczne, które buduje własne wywołania jądra w pamięci roboczej.",
+    "Rzadko: wzorzec trafiony przypadkiem w dużym regionie kodu wygenerowanego przez środowisko uruchomieniowe."
+   ],
+   "malicious": [
+    "Ładunek wstrzyknięty do procesu i pozostawiony w pamięci, którą nadal może zmieniać, np. żeby się rozszyfrować.",
+    "Etap ładujący narzędzia zdalnego sterowania, który pobiera i uruchamia właściwy program."
+   ],
+   "hints": [
+    {
+     "runtime": true,
+     "text": "W procesie jest środowisko z kompilacją w locie ({runtime}); tłumaczy ono pamięć zapisywalną i wykonywalną, ale nie wzorzec. Sprawdź w opisie znaleziska, który wzorzec znaleziono, i obejrzyj kod pod podanym adresem."
+    },
+    {
+     "runtime": false,
+     "text": "W procesie nie rozpoznano środowiska z kompilacją w locie. To jedno z najmocniejszych połączeń cech: sprawdź ten region w pierwszej kolejności."
+    }
+   ]
   }
  ],
  "terms": {

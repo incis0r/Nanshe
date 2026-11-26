@@ -119,6 +119,32 @@
     "A hidden payload. A full memory dump of the process is needed to determine the content."
    ],
    "hints": []
+  },
+  {
+   "tags": [
+    "SHC",
+    "X-MAP"
+   ],
+   "title": "executable section with no file that looks like standalone code",
+   "meaning": "An executable view of a section that is not a library contains sequences typical of code that works without the help of the program loader. The finding description gives the pattern and the address.",
+   "benign": [
+    "Newer versions of .NET map generated code as sections; a single pattern of code finding its own address can be present in it (seen in system processes that use .NET).",
+    "Security products that place their own helper code in a shared section."
+   ],
+   "malicious": [
+    "Code injected into the process through a shared section, a method that needs no write into another process's memory.",
+    "A payload mapped as a section so that it does not appear in the list of libraries."
+   ],
+   "hints": [
+    {
+     "runtime": true,
+     "text": "The process contains a just-in-time (JIT) runtime ({runtime}). A pattern of code finding its own address alone is nothing unusual in its sections. Other patterns (a read of the library list, a function-name hashing loop, a copy of a kernel entry point, the prologue of a loader stage) need checking."
+    },
+    {
+     "runtime": false,
+     "text": "No just-in-time (JIT) runtime was recognised in the process; find out where the section comes from and look at the code at the address from the finding description."
+    }
+   ]
   }
  ],
  "verify": {
@@ -200,6 +226,18 @@
     "do": "Check the dates, the digital signature and the hash of the file, replacing FILE with the file path from the memory region table",
     "cmd": "Get-Item 'FILE' | Format-List FullName,CreationTimeUtc,LastWriteTimeUtc ; Get-AuthenticodeSignature 'FILE' | Format-List Status,SignerCertificate ; Get-FileHash 'FILE'",
     "look": "Look at the creation and modification dates, the signature Status field (Valid means a valid signature) with the signer name, and the hash (64 hexadecimal characters). Benign case: an installer or updater from a known vendor with a valid signature, started by the user a moment ago, or a native library of an Electron application (a .node file) unpacked when it started. Be concerned if there is no signature, the date matches the suspected incident, the name imitates a system file, or the hash is flagged as malicious in a file reputation database: in that case copy the file as evidence before it disappears."
+   }
+  ],
+  "SHC": [
+   {
+    "do": "Attach WinDbg to the process and disassemble the code at the address from the finding description (the address after the @ sign); replace ADDRESS with that address",
+    "cmd": "u ADDRESS L20",
+    "look": "Compare the instructions with the pattern named in the description. A read of the PEB address is a mov from gs:[60h] (fs:[30h] in a 32-bit process); a function-name hashing loop contains ror by 0Dh; a copy of a kernel entry point is mov r10,rcx, then mov eax with a number and syscall; code finding its own address is a call to the next instruction followed at once by pop. Benign case: the region is 4 KiB, not writable and consists only of repeated short kernel entry points, and the process belongs to a Chromium-based browser (the sandbox). Be concerned about a PEB read after which the code walks the list of loaded libraries, a hashing loop or the prologue of a loader stage: in that case take a process dump and hand it over for analysis."
+   },
+   {
+    "do": "Extract code with no file using pe-sieve with shellcode detection turned on",
+    "cmd": "pe-sieve64.exe /pid {pid} /shellc 1 /dump_mode 3",
+    "look": "Read the summary at the end: the line Implanted shc gives the number of regions judged to be implanted code. Zero settles nothing, because the tool applies its own patterns. A value above zero confirms the finding independently: keep the directory with the saved files, compute their SHA256 hashes and hand them over for analysis. In processes of Chromium-based browsers the tool may point at the same sandbox regions as the scanner."
    }
   ]
  },
@@ -514,6 +552,32 @@
     "system.management.automation"
    ],
    "what": "PowerShell engine; its presence in a program other than PowerShell means that PowerShell scripts are being run from inside that program"
+  },
+  {
+   "names": [
+    "v8_context_snapshot"
+   ],
+   "what": "startup image of the V8 JavaScript engine; present in applications built on Electron and in Chromium-based browsers",
+   "runtime": "Chromium",
+   "family": "an application built on the Chromium browser engine, most often on Electron: a windowed program whose interface is a web page shown by an embedded browser. It runs as several processes of the same file and generates code at run time."
+  },
+  {
+   "names": [
+    "qt5webenginecore",
+    "qt6webenginecore"
+   ],
+   "what": "the Chromium browser engine as shipped in Qt WebEngine; generates code at run time",
+   "runtime": "Chromium (Qt WebEngine)",
+   "family": "a program that uses Qt WebEngine: a Qt application that shows web content with an embedded Chromium engine. Pages are usually handled by a separate QtWebEngineProcess process, which generates code at run time."
+  },
+  {
+   "names": [
+    "embeddedbrowserwebview",
+    "webview2loader",
+    "microsoft.web.webview2"
+   ],
+   "what": "libraries that connect a program to the WebView2 browser; the engine itself runs in separate msedgewebview2.exe processes",
+   "family": "a program that shows web content through WebView2, that is, the Edge browser engine. The engine runs in separate msedgewebview2.exe processes, so it does not generate code in this process."
   }
  ]
 }

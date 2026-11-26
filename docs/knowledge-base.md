@@ -9,10 +9,11 @@ The report is meant to be understandable to a person (and to a language model) w
 | `kb/common.json` | common to all systems: guide to the report, severities, the characteristics `RWX`, `X-PRIV`, `ENT-X`, `HDR`, the basic glossary |
 | `kb/linux.json` | Linux: `MEMFD`, `DEL-EXEC`, `X-TMP`, verification commands, known processes and libraries, process characteristics from `/proc` |
 | `kb/windows.json` | Windows: `X-MAP`, `GUARD-X`, verification commands, known processes and modules, handles, integrity levels |
+| `kb/macos.json` | macOS: technical layer of the features, verification commands (`vmmap`, `lldb`, `codesign`), the `ENT-X` set, known processes and libraries, code signature and program entitlements |
 
-The English version is in the `kb/en/` subdirectory (the same three files) and is used when the report is produced in English (`--lang en` or a scan performed in English). Both languages must have an identical structure: the same tags, combinations, verification steps, processes and modules; only the text differs. The test `english_base_mirrors_the_polish_one` enforces this, so every change in `kb/*.json` has to be repeated in `kb/en/*.json`. The keys in the `flags` section must match the names of the characteristics that the scanner writes in the given language (for example `poziom integralności` and `integrity level`).
+The English version is in the `kb/en/` subdirectory (the same four files) and is used when the report is produced in English (`--lang en` or a scan performed in English). Both languages must have an identical structure: the same tags, combinations, verification steps, processes and modules; only the text differs. The test `english_base_mirrors_the_polish_one` enforces this, so every change in `kb/*.json` has to be repeated in `kb/en/*.json`. The keys in the `flags` section must match the names of the characteristics that the scanner writes in the given language (for example `poziom integralności` and `integrity level`).
 
-macOS and FreeBSD do not have their own files yet: the report for them will use the common part. Adding a system means a new file `kb/<system>.json` and an entry in `crates/nanshe-kb/src/lib.rs` (the `SYSTEMS` constant and the `embedded` function).
+FreeBSD does not have its own file yet: the report for it will use the common part. Adding a system means a new file `kb/<system>.json` and an entry in `crates/nanshe-kb/src/lib.rs` (the `SYSTEMS` constant and the `embedded` function).
 
 The files are embedded in the binary at compile time. A newer or custom version can be pointed to without rebuilding:
 
@@ -60,7 +61,8 @@ Each file is a single JSON object. The system file is overlaid on the common one
                 "hints": [ { "runtime": true, "text": "... {runtime} ..." }, { "runtime": false, "text": "..." } ] } ],
   "verify": { "*": [{ "do": "what to do", "cmd": "command {pid} {start} {end} {start_plain} {size}", "look": "how to read the result" }], "HDR": [{ "do": "step for this tag only", "cmd": "", "look": "..." }] },
   "processes": [ { "names": ["svchost.exe"], "what": "...", "paths": ["\\windows\\system32\\svchost.exe"], "parents": ["services.exe"] } ],
-  "modules":   [ { "names": ["clr.dll"], "what": "...", "runtime": ".NET Framework" } ],
+  "modules":   [ { "names": ["clr.dll"], "what": "...", "runtime": ".NET Framework" },
+                 { "names": ["v8_context_snapshot"], "what": "...", "runtime": "Chromium", "family": "an application built on ..." } ],
   "flags":   { "seccomp": "explanation; the key is the beginning of the characteristic name" },
   "handles": { "file": "..." },
   "terms":   { "entropy": "..." }
@@ -69,8 +71,32 @@ Each file is a single JSON object. The system file is overlaid on the common one
 
 - `combos.tags`: the exact set of characteristics of the region, order does not matter.
 - `hints.runtime`: `true` shows the hint when the mapped files of the process include a module with the `runtime` field; `false`, when there is none.
-- `processes.names` and `parents`: lower case. `paths`: lower case, without the drive letter. An entry without a trailing separator is the exact path of a file; with a trailing separator it means a file directly in that directory; with the suffix `**`, at any depth within it. On Windows the file must additionally be on the system drive (recorded in the scan result; when it is missing, `C:` is assumed). Empty lists mean no expectations and no assessment.
+- `processes.names` and `parents`: lower case, on macOS too, where program names contain capitals (`windowserver`); the lookup lowers the name from the result, and the test `names_and_paths_are_lowercase_so_that_lookups_can_match` rejects an entry with a capital letter. `paths`: lower case, without the drive letter. An entry without a trailing separator is the exact path of a file; with a trailing separator it means a file directly in that directory; with the suffix `**`, at any depth within it. On Windows the file must additionally be on the system drive (recorded in the scan result; when it is missing, `C:` is assumed). Empty lists mean no expectations and no assessment.
 - `modules.names`: the beginning of the file name (lower case), for example `libssl` matches `libssl.so.3`.
+
+## Program families
+
+There are too many applications built on the Chromium browser engine (Electron, Qt WebEngine, CEF) to describe them by name. The base recognises them by the engine files mapped into memory; the `family` field of a `modules` entry serves this purpose:
+
+| File | Family | JIT runtime in the process |
+|---|---|---|
+| `v8_context_snapshot.bin` | Electron and Chromium-based browsers (Windows, Linux) | yes |
+| `Electron Framework`, `Chromium Embedded Framework`, `Google Chrome Framework` | the same on macOS | yes |
+| `Qt5WebEngineCore`, `Qt6WebEngineCore` | Qt WebEngine | yes |
+| `EmbeddedBrowserWebView.dll`, `WebView2Loader.dll`, `Microsoft.Web.WebView2.*` | a program that uses WebView2 | no: the engine runs in `msedgewebview2.exe` processes |
+
+The `family` field does two things:
+
+- **Description of a program with an unknown name.** In "What this program is" the report gives the kind of program instead of only "the knowledge base does not describe a program with this name". The description says how the program is built, not who published it.
+- **Carrying the recognition over to other processes of the same file.** An Electron application runs as several processes of one `.exe` file and not each of them maps the engine files (measured 2026-11-26: of five processes of one application with regions of severity "high", two had the engine file). If the runtime was recognised in another process with the same program file path, the report assumes it for this process too and states which process the recognition comes from.
+
+The carry-over works only for entries with a `family` field. The .NET library in one `svchost.exe` process says nothing about the others, so `clr.dll` does not have the field.
+
+Limitations:
+
+- Recognition relies on the name of the mapped file. A program that maps its own file named `v8_context_snapshot.bin` gets the milder reasoning (P2 instead of P1); the same holds for every `modules` entry with a runtime. This is why P2 always asks for the finding to be confirmed, and features that a runtime does not explain (`THR-PRIV`, `HDR`, `IMG-MOD` with a high weight and the others on that list) give P1 regardless of the recognition.
+- Recognition changes the verification priority and the explanations in the report. It does not change the score or the weights: those are set by the detectors.
+- Without the program file path in the result the carry-over does not work; the process name is not used for it.
 
 ## How to add an entry
 

@@ -102,6 +102,32 @@
     "Narzędzie pobrane przez atakującego i uruchomione z /tmp albo /dev/shm."
    ],
    "hints": []
+  },
+  {
+   "tags": [
+    "MEMFD",
+    "SHC"
+   ],
+   "title": "kod samodzielny w pliku istniejącym tylko w pamięci",
+   "meaning": "Wykonywalny plik, który istnieje tylko w pamięci (memfd), zawiera sekwencje typowe dla kodu działającego bez pomocy programu ładującego, np. bezpośrednie uruchomienie innego programu przez jądro.",
+   "benign": [
+    "Narzędzie do uruchamiania kontenerów, które przed startem kopiuje własny program do pliku w pamięci; taki program sam wywołuje jądro.",
+    "Program skompilowany statycznie i uruchomiony z pliku w pamięci przez narzędzie wdrożeniowe."
+   ],
+   "malicious": [
+    "Program pobrany z sieci i uruchomiony bez zapisu na dysk.",
+    "Ładunek, który bezpośrednim wywołaniem jądra uruchamia powłokę."
+   ],
+   "hints": [
+    {
+     "runtime": true,
+     "text": "W procesie jest środowisko z kompilacją w locie ({runtime}); może ono trzymać wygenerowany kod w pliku w pamięci, ale nie tłumaczy bezpośredniego uruchamiania programów. Sprawdź nazwę pliku memfd i kod pod adresem z opisu znaleziska."
+    },
+    {
+     "runtime": false,
+     "text": "W procesie nie rozpoznano środowiska z kompilacją w locie; skopiuj plik memfd (krok dla cechy MEMFD) i sprawdź, co to za program."
+    }
+   ]
   }
  ],
  "verify": {
@@ -176,6 +202,18 @@
     "do": "Porównaj kod w pamięci z plikiem: zapisz region pamięci (polecenie wyżej) i porównaj go z odpowiednim fragmentem pliku biblioteki (przesunięcie jest w /proc/{pid}/maps)",
     "cmd": "",
     "look": "Niegroźny przypadek: brak różnic albo plik biblioteki na dysku jest nowszy niż proces (aktualizacja po jego starcie), co tłumaczy rozbieżności. Niepokoić powinny pojedyncze zmienione bajty na początku funkcji, zwykle skok w inne miejsce pamięci (tzw. hook, czyli przekierowanie funkcji), bo jest to spójne z nadpisaniem kodu biblioteki. Wtedy zanotuj, których funkcji dotyczą różnice, zachowaj zapisany region i przekaż go do analizy."
+   }
+  ],
+  "SHC": [
+   {
+    "do": "Po zapisaniu regionu pamięci do pliku obejrzyj instrukcje pod adresem z opisu znaleziska (adres po znaku @); na arm64 zamień i386:x86-64 na aarch64",
+    "cmd": "objdump -D -b binary -m i386:x86-64 --adjust-vma={start} /tmp/region_{start_plain}.bin | less",
+    "look": "Wyszukaj w wyniku adres z opisu znaleziska. Bezpośrednie uruchomienie programu to wpisanie liczby 0x3b do rejestru rax (push 0x3b i pop rax albo mov eax,0x3b), a kilka instrukcji dalej syscall; na arm64 mov x8 z numerem i svc. Ustalanie własnego adresu to call do następnej instrukcji i zaraz po nim pop. Niegroźny przypadek: wokół jest zwykły, długi kod funkcji, a program to środowisko tworzące kod w trakcie działania albo narzędzie uruchamiające kontenery. Niepokoić powinien krótki fragment, który przygotowuje napis w rodzaju /bin/sh i od razu wywołuje jądro: wtedy zachowaj plik i przejdź do następnego kroku."
+   },
+   {
+    "do": "Wypisz z zapisanego regionu napisy, które wyglądają na ścieżki i adresy sieciowe",
+    "cmd": "strings -a -n 6 /tmp/region_{start_plain}.bin | grep -E \"/bin/|/tmp/|/dev/tcp|https?://|[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+\" | head -40",
+    "look": "Pusty wynik niczego nie rozstrzyga, bo ładunki często składają napisy dopiero w trakcie działania. Ścieżki powłoki (/bin/sh, /bin/bash), adresy sieciowe albo adresy URL w regionie bez pliku są spójne z ładunkiem, który uruchamia powłokę albo łączy się z serwerem: zanotuj je, policz skrót pliku (sha256sum) i przekaż plik do analizy."
    }
   ]
  },
@@ -423,6 +461,23 @@
     "memfd:"
    ],
    "what": "plik istniejący tylko w pamięci RAM; nie ma go na dysku"
+  },
+  {
+   "names": [
+    "v8_context_snapshot"
+   ],
+   "what": "obraz startowy silnika JavaScript V8; jest w aplikacjach zbudowanych na Electron i w przeglądarkach opartych na Chromium",
+   "runtime": "Chromium",
+   "family": "aplikacja zbudowana na silniku przeglądarki Chromium, najczęściej na Electron: program okienkowy, którego interfejs jest stroną WWW wyświetlaną przez wbudowaną przeglądarkę. Działa jako kilka procesów tego samego pliku i tworzy kod w trakcie działania."
+  },
+  {
+   "names": [
+    "libqt5webenginecore",
+    "libqt6webenginecore"
+   ],
+   "what": "silnik przeglądarki Chromium w wydaniu Qt WebEngine; tworzy kod w trakcie działania",
+   "runtime": "Chromium (Qt WebEngine)",
+   "family": "program korzystający z Qt WebEngine: aplikacja Qt, która wyświetla treści WWW wbudowanym silnikiem Chromium. Strony obsługuje zwykle osobny proces QtWebEngineProcess, który tworzy kod w trakcie działania."
   }
  ]
 }

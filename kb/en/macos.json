@@ -23,7 +23,23 @@
    "tech": "Search in executable regions without a file: on arm64 the svc #0x80 instruction (a direct system call, which programs normally make only through the system library), on x86_64 the same patterns as on other systems."
   }
  },
- "combos": [],
+ "combos": [
+  {
+   "tags": [
+    "ENT-X"
+   ],
+   "title": "code from a file that looks packed",
+   "meaning": "A fragment of code loaded from a program or library file has very high entropy, that is, it looks like compressed or encrypted data. On macOS this feature on its own usually concerns code from a file: code with no file would also carry the X-PRIV feature.",
+   "benign": [
+    "Cryptographic libraries, audio and video codecs and character conversion have large tables of constants in their code (seen in libgcrypt, libcrypto, libiconv and in multimedia libraries).",
+    "Large programs with resources compiled in, for example the Node.js runtime or native Python modules."
+   ],
+   "malicious": [
+    "A packed program that decrypts its own code only after it starts.",
+    "A library in an application directory replaced with a version that hides a payload."
+   ]
+  }
+ ],
  "verify": {
   "*": [
    {
@@ -55,6 +71,27 @@
     "cmd": "vmmap {pid} | grep -c \"__TEXT\"",
     "look": "The number shows how many images the system knows. A program header found in a region that is not among the __TEXT lines with a file name is an image loaded behind the system's back: save the region to a file (general steps) and inspect it with otool -l."
    }
+  ],
+  "X-PRIV": [
+   {
+    "do": "Check whether the process contains a runtime that generates code at run time",
+    "cmd": "vmmap {pid} | grep -E \"JavaScriptCore|Electron Framework|Chromium Embedded Framework|Google Chrome Framework|libnode|/node|libjvm|libcoreclr\" | head -5",
+    "look": "Lines with the name of such a library mean a program with a JIT compiler: executable memory with no file is normal for it, usually in large regions. An empty result means none of the typical runtimes was found (the list is not complete) and the region is harder to explain: check the signature of the program and save the region to a file (general steps)."
+   }
+  ],
+  "ENT-X": [
+   {
+    "do": "If the region comes from a file, check that the file has not been changed since it was signed; replace FILE with the file path from the region table",
+    "cmd": "codesign --verify --verbose=2 \"FILE\" ; shasum -a 256 \"FILE\"",
+    "look": "The result valid on disk and satisfies its Designated Requirement means the file is as it was signed. High entropy in the code of a cryptographic library, a codec or character conversion is then ordinary: these are tables of constants compiled into the code. Libraries from Homebrew and MacPorts carry a signature without a publisher (adhoc) and that is ordinary too. Be concerned about the message code object is not signed at all or invalid signature for a file of an application that claims to be a known product: in that case look up the hash from the second command in a file reputation database and keep the file. Save a region with no file to a file (general steps) and check it with the file and strings commands."
+   }
+  ],
+  "SHC": [
+   {
+    "do": "Disassemble the code before the address from the finding description (the address after the @ sign); replace ADDRESS with that address (needs lldb and root privileges, pauses the process briefly)",
+    "cmd": "sudo lldb -p {pid} --batch -o \"disassemble --start-address ADDRESS-32 --count 12\" -o detach",
+    "look": "Look for a pair: mov x16 with a number (the call number) followed a few instructions later by svc #0x80. The number says what the code asks the kernel for: 59 starts a program (execve), 97 and 98 create and open a network connection, 74 changes memory permissions. Programs on macOS call the kernel through the system library, so such a pair in memory with no file is unusual even in a program with a JIT compiler. A benign explanation is a tool that builds its own system calls on purpose, for example an emulator or a security product. Otherwise save the region to a file (general steps) and hand it over for analysis."
+   }
   ]
  },
  "terms": {
@@ -83,11 +120,11 @@
   },
   {
    "names": [
-    "WindowServer"
+    "windowserver"
    ],
    "what": "Draws windows and drives the display; a system process protected by SIP.",
    "paths": [
-    "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+    "/system/library/privateframeworks/skylight.framework/**"
    ],
    "parents": [
     "launchd"
@@ -95,11 +132,11 @@
   },
   {
    "names": [
-    "Finder"
+    "finder"
    ],
    "what": "The file manager and the user's desktop.",
    "paths": [
-    "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder"
+    "/system/library/coreservices/finder.app/contents/macos/finder"
    ],
    "parents": [
     "launchd"
@@ -113,7 +150,7 @@
    ],
    "what": "File indexing for Spotlight search.",
    "paths": [
-    "/System/Library/Frameworks/CoreServices.framework/"
+    "/system/library/frameworks/coreservices.framework/**"
    ],
    "parents": [
     "launchd"
@@ -133,6 +170,53 @@
     "launchd",
     "sshd"
    ]
+  },
+  {
+   "names": [
+    "steam_osx",
+    "steam helper"
+   ],
+   "what": "The Steam gaming platform client and its helper processes; it contains the Chromium browser engine, which generates code at run time.",
+   "paths": [],
+   "parents": []
+  },
+  {
+   "names": [
+    "gpg-agent",
+    "scdaemon",
+    "dirmngr",
+    "keyboxd"
+   ],
+   "what": "GnuPG helper processes: they keep keys in memory, handle smart cards and key retrieval. Usually installed by MacPorts or Homebrew.",
+   "paths": [
+    "/opt/local/**",
+    "/opt/homebrew/**",
+    "/usr/local/**"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "node"
+   ],
+   "what": "The Node.js runtime: it runs JavaScript programs and generates code at run time. It can be a separate installation or part of another application, so the file location has to be judged on its own.",
+   "paths": [],
+   "parents": []
+  },
+  {
+   "names": [
+    "python",
+    "python3",
+    "python3.9",
+    "python3.10",
+    "python3.11",
+    "python3.12",
+    "python3.13",
+    "python3.14"
+   ],
+   "what": "The Python interpreter. What the process does depends on the script it runs: check the command line.",
+   "paths": [],
+   "parents": []
   }
  ],
  "modules": [
@@ -144,7 +228,7 @@
   },
   {
    "names": [
-    "JavaScriptCore"
+    "javascriptcore"
    ],
    "what": "Apple's JavaScript engine; generates code at run time",
    "runtime": "JavaScriptCore"
@@ -166,12 +250,13 @@
   },
   {
    "names": [
-    "Electron Framework",
-    "Chromium Embedded Framework",
-    "Google Chrome Framework"
+    "electron framework",
+    "chromium embedded framework",
+    "google chrome framework"
    ],
    "what": "the Chromium browser engine (also in Electron applications); generates code at run time",
-   "runtime": "Chromium"
+   "runtime": "Chromium",
+   "family": "an application built on the Chromium browser engine (Electron, CEF or the browser itself): its interface is a web page shown by an embedded browser. It runs as several processes and generates code at run time."
   },
   {
    "names": [
@@ -179,6 +264,35 @@
    ],
    "what": "the .NET runtime; generates code at run time",
    "runtime": ".NET"
+  },
+  {
+   "names": [
+    "libcrypto",
+    "libssl",
+    "libgcrypt"
+   ],
+   "what": "cryptographic libraries; their code contains large tables of constants, hence the high entropy"
+  },
+  {
+   "names": [
+    "libiconv"
+   ],
+   "what": "character set conversion; the code contains large tables"
+  },
+  {
+   "names": [
+    "libpython",
+    "python3"
+   ],
+   "what": "the Python interpreter"
+  },
+  {
+   "names": [
+    "qtwebenginecore"
+   ],
+   "what": "the Chromium browser engine as shipped in Qt WebEngine; generates code at run time",
+   "runtime": "Chromium (Qt WebEngine)",
+   "family": "a program that uses Qt WebEngine: a Qt application that shows web content with an embedded Chromium engine. Pages are usually handled by a separate QtWebEngineProcess process, which generates code at run time."
   }
  ]
 }

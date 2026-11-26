@@ -23,7 +23,23 @@
    "tech": "Wyszukiwanie w regionach wykonywalnych bez pliku: na arm64 instrukcja svc #0x80 (bezpośrednie wywołanie jądra, którego programy używają tylko przez bibliotekę systemową), na x86_64 te same wzorce co na innych systemach."
   }
  },
- "combos": [],
+ "combos": [
+  {
+   "tags": [
+    "ENT-X"
+   ],
+   "title": "kod z pliku wyglądający na spakowany",
+   "meaning": "Fragment kodu wczytanego z pliku programu albo biblioteki ma bardzo dużą entropię, czyli wygląda jak dane skompresowane lub zaszyfrowane. Na macOS ta cecha występująca samodzielnie dotyczy zwykle kodu z pliku: kod bez pliku miałby też cechę X-PRIV.",
+   "benign": [
+    "Biblioteki kryptograficzne, kodeki dźwięku i obrazu oraz konwersja znaków mają w kodzie duże tablice stałych (widziane w libgcrypt, libcrypto, libiconv i w bibliotekach multimedialnych).",
+    "Duże programy z wkompilowanymi zasobami, np. środowisko Node.js albo moduły natywne Pythona."
+   ],
+   "malicious": [
+    "Program spakowany, który rozszyfrowuje własny kod dopiero po uruchomieniu.",
+    "Biblioteka podmieniona w katalogu aplikacji na wersję z ukrytym ładunkiem."
+   ]
+  }
+ ],
  "verify": {
   "*": [
    {
@@ -55,6 +71,27 @@
     "cmd": "vmmap {pid} | grep -c \"__TEXT\"",
     "look": "Liczba pokazuje, ile obrazów zna system. Nagłówek programu znaleziony w regionie, którego nie ma wśród wierszy __TEXT z nazwą pliku, to obraz załadowany z pominięciem systemu: zapisz region do pliku (kroki ogólne) i sprawdź go poleceniem otool -l."
    }
+  ],
+  "X-PRIV": [
+   {
+    "do": "Sprawdź, czy w procesie jest środowisko tworzące kod w trakcie działania",
+    "cmd": "vmmap {pid} | grep -E \"JavaScriptCore|Electron Framework|Chromium Embedded Framework|Google Chrome Framework|libnode|/node|libjvm|libcoreclr\" | head -5",
+    "look": "Wiersze z nazwą takiej biblioteki oznaczają program z kompilatorem JIT: wykonywalna pamięć bez pliku jest dla niego normalna, zwykle w dużych regionach. Pusty wynik oznacza, że nie znaleziono żadnego z typowych środowisk (lista nie jest pełna) i region trudniej wyjaśnić: sprawdź podpis programu i zapisz region do pliku (kroki ogólne)."
+   }
+  ],
+  "ENT-X": [
+   {
+    "do": "Jeśli region pochodzi z pliku, sprawdź, czy plik nie został zmieniony od podpisania; w miejsce FILE wstaw ścieżkę pliku z tabeli regionu",
+    "cmd": "codesign --verify --verbose=2 \"FILE\" ; shasum -a 256 \"FILE\"",
+    "look": "Wynik valid on disk i satisfies its Designated Requirement oznacza, że plik jest taki, jak go podpisano. Duża entropia w kodzie biblioteki kryptograficznej, kodeka albo konwersji znaków jest wtedy zwyczajna: to tablice stałych wkompilowane w kod. Biblioteki z Homebrew i MacPorts mają podpis bez wydawcy (adhoc) i to też jest zwyczajne. Niepokoić powinien komunikat code object is not signed at all albo invalid signature przy pliku aplikacji, która podaje się za znany produkt: wtedy wyszukaj skrót z drugiego polecenia w bazie reputacji plików i zachowaj plik. Region bez pliku zapisz do pliku (kroki ogólne) i sprawdź poleceniami file i strings."
+   }
+  ],
+  "SHC": [
+   {
+    "do": "Zdeasembluj kod przed adresem z opisu znaleziska (adres po znaku @); w miejsce ADDRESS wstaw ten adres (wymaga lldb i uprawnień root, zatrzymuje proces na chwilę)",
+    "cmd": "sudo lldb -p {pid} --batch -o \"disassemble --start-address ADDRESS-32 --count 12\" -o detach",
+    "look": "Szukaj pary: mov x16 z liczbą (numer wywołania), a kilka instrukcji dalej svc #0x80. Numer mówi, o co kod prosi jądro: 59 to uruchomienie programu (execve), 97 i 98 to utworzenie i nawiązanie połączenia sieciowego, 74 to zmiana uprawnień pamięci. Programy na macOS wywołują jądro przez bibliotekę systemową, więc taka para w pamięci bez pliku jest nietypowa także w programie z kompilatorem JIT. Niegroźne wyjaśnienie to narzędzie, które celowo buduje własne wywołania jądra, np. emulator albo program zabezpieczający. W pozostałych przypadkach zapisz region do pliku (kroki ogólne) i przekaż go do analizy."
+   }
   ]
  },
  "terms": {
@@ -83,11 +120,11 @@
   },
   {
    "names": [
-    "WindowServer"
+    "windowserver"
    ],
    "what": "Rysuje okna i obsługuje ekran; proces systemowy chroniony przez SIP.",
    "paths": [
-    "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+    "/system/library/privateframeworks/skylight.framework/**"
    ],
    "parents": [
     "launchd"
@@ -95,11 +132,11 @@
   },
   {
    "names": [
-    "Finder"
+    "finder"
    ],
    "what": "Menedżer plików i pulpit użytkownika.",
    "paths": [
-    "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder"
+    "/system/library/coreservices/finder.app/contents/macos/finder"
    ],
    "parents": [
     "launchd"
@@ -113,7 +150,7 @@
    ],
    "what": "Indeksowanie plików dla wyszukiwarki Spotlight.",
    "paths": [
-    "/System/Library/Frameworks/CoreServices.framework/"
+    "/system/library/frameworks/coreservices.framework/**"
    ],
    "parents": [
     "launchd"
@@ -133,6 +170,53 @@
     "launchd",
     "sshd"
    ]
+  },
+  {
+   "names": [
+    "steam_osx",
+    "steam helper"
+   ],
+   "what": "Klient platformy gier Steam i jego procesy pomocnicze; zawiera silnik przeglądarki Chromium, który tworzy kod w trakcie działania.",
+   "paths": [],
+   "parents": []
+  },
+  {
+   "names": [
+    "gpg-agent",
+    "scdaemon",
+    "dirmngr",
+    "keyboxd"
+   ],
+   "what": "Procesy pomocnicze GnuPG: przechowują klucze w pamięci, obsługują karty kryptograficzne i pobieranie kluczy. Instalowane zwykle przez MacPorts albo Homebrew.",
+   "paths": [
+    "/opt/local/**",
+    "/opt/homebrew/**",
+    "/usr/local/**"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "node"
+   ],
+   "what": "Środowisko Node.js: uruchamia programy w JavaScripcie i tworzy kod w trakcie działania. Bywa osobną instalacją albo częścią innej aplikacji, więc położenie pliku trzeba ocenić samodzielnie.",
+   "paths": [],
+   "parents": []
+  },
+  {
+   "names": [
+    "python",
+    "python3",
+    "python3.9",
+    "python3.10",
+    "python3.11",
+    "python3.12",
+    "python3.13",
+    "python3.14"
+   ],
+   "what": "Interpreter języka Python. O tym, co proces robi, decyduje uruchomiony skrypt: sprawdź wiersz poleceń.",
+   "paths": [],
+   "parents": []
   }
  ],
  "modules": [
@@ -144,7 +228,7 @@
   },
   {
    "names": [
-    "JavaScriptCore"
+    "javascriptcore"
    ],
    "what": "silnik JavaScript firmy Apple; tworzy kod w trakcie działania",
    "runtime": "JavaScriptCore"
@@ -166,12 +250,13 @@
   },
   {
    "names": [
-    "Electron Framework",
-    "Chromium Embedded Framework",
-    "Google Chrome Framework"
+    "electron framework",
+    "chromium embedded framework",
+    "google chrome framework"
    ],
    "what": "silnik przeglądarki Chromium (także w aplikacjach Electron); tworzy kod w trakcie działania",
-   "runtime": "Chromium"
+   "runtime": "Chromium",
+   "family": "aplikacja zbudowana na silniku przeglądarki Chromium (Electron, CEF albo sama przeglądarka): jej interfejs jest stroną WWW wyświetlaną przez wbudowaną przeglądarkę. Działa jako kilka procesów i tworzy kod w trakcie działania."
   },
   {
    "names": [
@@ -179,6 +264,35 @@
    ],
    "what": "środowisko .NET; tworzy kod w trakcie działania",
    "runtime": ".NET"
+  },
+  {
+   "names": [
+    "libcrypto",
+    "libssl",
+    "libgcrypt"
+   ],
+   "what": "biblioteki kryptograficzne; ich kod zawiera duże tablice stałych, stąd duża entropia"
+  },
+  {
+   "names": [
+    "libiconv"
+   ],
+   "what": "konwersja zestawów znaków; kod zawiera duże tablice"
+  },
+  {
+   "names": [
+    "libpython",
+    "python3"
+   ],
+   "what": "interpreter języka Python"
+  },
+  {
+   "names": [
+    "qtwebenginecore"
+   ],
+   "what": "silnik przeglądarki Chromium w wydaniu Qt WebEngine; tworzy kod w trakcie działania",
+   "runtime": "Chromium (Qt WebEngine)",
+   "family": "program korzystający z Qt WebEngine: aplikacja Qt, która wyświetla treści WWW wbudowanym silnikiem Chromium. Strony obsługuje zwykle osobny proces QtWebEngineProcess, który tworzy kod w trakcie działania."
   }
  ]
 }

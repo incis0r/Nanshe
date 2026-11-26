@@ -18,8 +18,8 @@ Exit code of the e2e scripts: 0 when everything matches, 1 when anything deviate
 
 | Layer | Result |
 |---|---|
-| Unit tests | 167 pass (analyze 30, core 3, dump 9, kb 7, live 21, llm 40, report 38, vm 19) |
-| macOS (arm64, native) | 169 unit tests (4 of them for the macOS backend, which run only there) and `scripts/e2e-macos.sh`: 7 samples and 4 groups of additional assertions; see [macos.md](macos.md) |
+| Unit tests | 171 pass (analyze 30, core 3, dump 9, kb 10, live 21, llm 40, report 39, vm 19) |
+| macOS (arm64, native) | 173 unit tests (4 of them for the macOS backend, which run only there) and `scripts/e2e-macos.sh`: 7 samples and 4 groups of additional assertions; see [macos.md](macos.md) |
 | Hypervisor read (`nanshe vm`) | one live run against a Windows Server 2025 guest on KVM (see [hypervisor.md](hypervisor.md)); no automated end-to-end test |
 | Full live scans, Linux | `nanshe scan --all` on 20 hosts of one lab (19 x86_64, 1 arm64), 2026-11-23, before and after the detection tuning; no process was verified manually |
 | e2e Linux (aarch64, container) | 16 static samples, 2 dynamic and 8 groups of additional assertions |
@@ -125,6 +125,10 @@ New in this version (analysis and live reading):
 | `merge_and_external_directory` | the system file overrides the common entry; an external directory without `common.json` is an error, without a system file it gives the common part |
 | `llm_glossary_covers_all_tags_in_stable_order` | the glossary for the model contains all tags in a fixed order |
 | `english_base_mirrors_the_polish_one` | the English version of the base (`kb/en/`) has the same structure as the Polish one: the same tags, definitions for the model, ATT&CK references, feature combinations, numbers of verification steps, processes with paths and parents, modules; no Polish characters and no em dashes. Verified by mutation: removing one step from `kb/en/linux.json` fails the test |
+| `names_and_paths_are_lowercase_so_that_lookups_can_match` | process names, parents, paths and module names in every system file and both languages are lower case, because lookups compare lowered text; macOS examples: `WindowServer` and `mds_stores` in their real locations, a known name in `/tmp` judged unusual, the Electron and JavaScriptCore frameworks recognised as runtimes |
+| `shellcode_findings_and_macos_have_their_own_guidance` | every system has verification steps for `SHC` that lead to the address from the finding and descriptions of the sets `SHC+X-PRIV` and `RWX+SHC+X-PRIV` with both runtime hints; `X-MAP+SHC` exists only for Windows and `MEMFD+SHC` only for Linux; on macOS every feature the scanner raises there has its own step |
+| `chromium_families_are_recognised_by_their_engine_files` | engine files (`v8_context_snapshot`, Qt WebEngine core, the Electron framework on macOS) give a runtime and a family description; the WebView2 connector gives a family without a runtime; a multimedia library or the Qt core alone gives nothing |
+| `chromium_application_is_recognised_across_its_processes` (report) | a process without the engine file takes the runtime from another process of the same program file (P2, with the source process named); another program and the second process of a service host stay at P1; a feature the runtime does not explain still gives P1; a program with an unknown name gets the family description |
 
 ### `nanshe-report` (report)
 

@@ -119,6 +119,32 @@
     "Ukryty ładunek. Do ustalenia zawartości potrzebny jest pełny zrzut pamięci procesu."
    ],
    "hints": []
+  },
+  {
+   "tags": [
+    "SHC",
+    "X-MAP"
+   ],
+   "title": "wykonywalna sekcja bez pliku z cechami kodu samodzielnego",
+   "meaning": "Wykonywalny widok sekcji, który nie jest biblioteką, zawiera sekwencje typowe dla kodu działającego bez pomocy programu ładującego. Opis znaleziska podaje wzorzec i adres.",
+   "benign": [
+    "Nowsze wersje .NET mapują wygenerowany kod jako sekcje; pojedynczy wzorzec ustalania własnego adresu bywa w nim obecny (widziany w procesach systemowych korzystających z .NET).",
+    "Programy zabezpieczające, które umieszczają własny kod pomocniczy we współdzielonej sekcji."
+   ],
+   "malicious": [
+    "Kod wstrzyknięty do procesu przez współdzieloną sekcję, czyli sposobem, który nie wymaga zapisu do cudzej pamięci.",
+    "Ładunek zmapowany jako sekcja, żeby nie pojawił się na liście bibliotek."
+   ],
+   "hints": [
+    {
+     "runtime": true,
+     "text": "W procesie jest środowisko z kompilacją w locie ({runtime}). Sam wzorzec ustalania własnego adresu w jego sekcjach nie jest niczym niezwykłym. Inne wzorce (odczyt listy bibliotek, pętla skrótów nazw funkcji, kopia wejścia do jądra, prolog etapu ładującego) wymagają sprawdzenia."
+    },
+    {
+     "runtime": false,
+     "text": "W procesie nie rozpoznano środowiska z kompilacją w locie; ustal, skąd pochodzi sekcja, i obejrzyj kod pod adresem z opisu znaleziska."
+    }
+   ]
   }
  ],
  "verify": {
@@ -200,6 +226,18 @@
     "do": "Sprawdź daty, podpis cyfrowy i skrót pliku, wstawiając w miejsce FILE ścieżkę pliku z tabeli regionu pamięci",
     "cmd": "Get-Item 'FILE' | Format-List FullName,CreationTimeUtc,LastWriteTimeUtc ; Get-AuthenticodeSignature 'FILE' | Format-List Status,SignerCertificate ; Get-FileHash 'FILE'",
     "look": "Patrz na daty utworzenia i modyfikacji, pole Status podpisu (Valid oznacza ważny podpis) i nazwę wystawcy oraz skrót (64 znaki szesnastkowe). Niegroźny przypadek: instalator albo program aktualizujący znanego producenta z ważnym podpisem, uruchomiony przed chwilą przez użytkownika, albo biblioteka natywna aplikacji Electron (plik .node) rozpakowana przy jej starcie. Niepokoić powinien brak podpisu, data zbieżna z podejrzewanym incydentem, nazwa udająca plik systemowy albo skrót oznaczony w bazie reputacji plików jako złośliwy: wtedy skopiuj plik jako dowód, zanim zniknie."
+   }
+  ],
+  "SHC": [
+   {
+    "do": "Podłącz WinDbg do procesu i zdeasembluj kod pod adresem z opisu znaleziska (adres po znaku @); w miejsce ADDRESS wstaw ten adres",
+    "cmd": "u ADDRESS L20",
+    "look": "Porównaj instrukcje z nazwą wzorca z opisu. Odczyt adresu PEB to mov z gs:[60h] (w procesie 32-bitowym fs:[30h]); pętla skrótów nazw funkcji zawiera ror o 0Dh; kopia wejścia do jądra to mov r10,rcx, potem mov eax z numerem i syscall; ustalanie własnego adresu to call do następnej instrukcji i zaraz po nim pop. Niegroźny przypadek: region ma 4 KiB, nie jest zapisywalny i składa się z samych powtarzających się krótkich wejść do jądra, a proces należy do przeglądarki opartej na Chromium (piaskownica). Niepokoić powinien odczyt PEB, po którym kod przechodzi po liście załadowanych bibliotek, pętla skrótów albo prolog etapu ładującego: wtedy zrób zrzut procesu i przekaż go do analizy."
+   },
+   {
+    "do": "Wydobądź kod bez pliku narzędziem pe-sieve z włączonym wykrywaniem shellcode'u",
+    "cmd": "pe-sieve64.exe /pid {pid} /shellc 1 /dump_mode 3",
+    "look": "Przeczytaj podsumowanie na końcu: wiersz Implanted shc podaje liczbę regionów uznanych za wstawiony kod. Zero niczego nie przesądza, bo narzędzie stosuje własne wzorce. Wartość większa od zera potwierdza znalezisko niezależnie: zachowaj katalog z zapisanymi plikami, policz ich skróty SHA256 i przekaż je do analizy. W procesach przeglądarek opartych na Chromium narzędzie może wskazać te same regiony piaskownicy co skaner."
    }
   ]
  },
@@ -514,6 +552,32 @@
     "system.management.automation"
    ],
    "what": "silnik PowerShella; jego obecność w programie innym niż PowerShell oznacza uruchamianie skryptów PowerShell z wnętrza tego programu"
+  },
+  {
+   "names": [
+    "v8_context_snapshot"
+   ],
+   "what": "obraz startowy silnika JavaScript V8; jest w aplikacjach zbudowanych na Electron i w przeglądarkach opartych na Chromium",
+   "runtime": "Chromium",
+   "family": "aplikacja zbudowana na silniku przeglądarki Chromium, najczęściej na Electron: program okienkowy, którego interfejs jest stroną WWW wyświetlaną przez wbudowaną przeglądarkę. Działa jako kilka procesów tego samego pliku i tworzy kod w trakcie działania."
+  },
+  {
+   "names": [
+    "qt5webenginecore",
+    "qt6webenginecore"
+   ],
+   "what": "silnik przeglądarki Chromium w wydaniu Qt WebEngine; tworzy kod w trakcie działania",
+   "runtime": "Chromium (Qt WebEngine)",
+   "family": "program korzystający z Qt WebEngine: aplikacja Qt, która wyświetla treści WWW wbudowanym silnikiem Chromium. Strony obsługuje zwykle osobny proces QtWebEngineProcess, który tworzy kod w trakcie działania."
+  },
+  {
+   "names": [
+    "embeddedbrowserwebview",
+    "webview2loader",
+    "microsoft.web.webview2"
+   ],
+   "what": "biblioteki łączące program z przeglądarką WebView2; sam silnik działa w osobnych procesach msedgewebview2.exe",
+   "family": "program wyświetlający treści WWW przez WebView2, czyli silnik przeglądarki Edge. Silnik działa w osobnych procesach msedgewebview2.exe, więc w tym procesie nie tworzy kodu."
   }
  ]
 }

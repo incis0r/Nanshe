@@ -9,10 +9,11 @@ Raport ma być zrozumiały dla osoby (i dla modelu językowego), która nie zajm
 | `kb/common.json` | wspólne dla wszystkich systemów: przewodnik po raporcie, wagi, cechy `RWX`, `X-PRIV`, `ENT-X`, `HDR`, podstawowy słowniczek |
 | `kb/linux.json` | Linux: `MEMFD`, `DEL-EXEC`, `X-TMP`, polecenia sprawdzające, znane procesy i biblioteki, cechy procesu z `/proc` |
 | `kb/windows.json` | Windows: `X-MAP`, `GUARD-X`, polecenia sprawdzające, znane procesy i moduły, uchwyty, poziomy integralności |
+| `kb/macos.json` | macOS: warstwa techniczna cech, polecenia sprawdzające (`vmmap`, `lldb`, `codesign`), zestaw `ENT-X`, znane procesy i biblioteki, podpis kodu i uprawnienia programu |
 
-Wersja angielska leży w podkatalogu `kb/en/` (te same trzy pliki) i jest używana, gdy raport powstaje po angielsku (`--lang en` albo skan wykonany po angielsku). Oba języki muszą mieć identyczną strukturę: te same tagi, zestawy, kroki sprawdzenia, procesy i moduły; różni się tylko tekst. Pilnuje tego test `english_base_mirrors_the_polish_one`, więc każdą zmianę w `kb/*.json` trzeba powtórzyć w `kb/en/*.json`. Klucze w sekcji `flags` muszą odpowiadać nazwom cech, które skaner zapisuje w danym języku (np. `poziom integralności` i `integrity level`).
+Wersja angielska leży w podkatalogu `kb/en/` (te same cztery pliki) i jest używana, gdy raport powstaje po angielsku (`--lang en` albo skan wykonany po angielsku). Oba języki muszą mieć identyczną strukturę: te same tagi, zestawy, kroki sprawdzenia, procesy i moduły; różni się tylko tekst. Pilnuje tego test `english_base_mirrors_the_polish_one`, więc każdą zmianę w `kb/*.json` trzeba powtórzyć w `kb/en/*.json`. Klucze w sekcji `flags` muszą odpowiadać nazwom cech, które skaner zapisuje w danym języku (np. `poziom integralności` i `integrity level`).
 
-macOS i FreeBSD nie mają jeszcze własnych plików: raport dla nich użyje części wspólnej. Dodanie systemu to nowy plik `kb/<system>.json` i wpis w `crates/nanshe-kb/src/lib.rs` (stała `SYSTEMS` i funkcja `embedded`).
+FreeBSD nie ma jeszcze własnego pliku: raport dla niego użyje części wspólnej. Dodanie systemu to nowy plik `kb/<system>.json` i wpis w `crates/nanshe-kb/src/lib.rs` (stała `SYSTEMS` i funkcja `embedded`).
 
 Pliki są wbudowane w binarium przy kompilacji. Nowszą albo własną wersję można wskazać bez przebudowy:
 
@@ -60,7 +61,8 @@ Każdy plik to jeden obiekt JSON. Plik systemu jest nakładany na wspólny: obie
                 "hints": [ { "runtime": true, "text": "... {runtime} ..." }, { "runtime": false, "text": "..." } ] } ],
   "verify": { "*": [{ "do": "co zrobić", "cmd": "polecenie {pid} {start} {end} {start_plain} {size}", "look": "jak czytać wynik" }], "HDR": [{ "do": "krok tylko dla tego tagu", "cmd": "", "look": "..." }] },
   "processes": [ { "names": ["svchost.exe"], "what": "...", "paths": ["\\windows\\system32\\svchost.exe"], "parents": ["services.exe"] } ],
-  "modules":   [ { "names": ["clr.dll"], "what": "...", "runtime": ".NET Framework" } ],
+  "modules":   [ { "names": ["clr.dll"], "what": "...", "runtime": ".NET Framework" },
+                 { "names": ["v8_context_snapshot"], "what": "...", "runtime": "Chromium", "family": "aplikacja zbudowana na ..." } ],
   "flags":   { "seccomp": "objaśnienie; klucz jest początkiem nazwy cechy" },
   "handles": { "file": "..." },
   "terms":   { "entropia": "..." }
@@ -69,8 +71,32 @@ Każdy plik to jeden obiekt JSON. Plik systemu jest nakładany na wspólny: obie
 
 - `combos.tags`: dokładny zestaw cech regionu, kolejność bez znaczenia.
 - `hints.runtime`: `true` pokazuje wskazówkę, gdy wśród zmapowanych plików procesu jest moduł z polem `runtime`; `false`, gdy takiego nie ma.
-- `processes.names` i `parents`: małe litery. `paths`: małe litery, bez litery dysku. Wpis bez końcowego separatora to dokładna ścieżka pliku; z końcowym separatorem oznacza plik bezpośrednio w tym katalogu; z końcówką `**` dowolnie głęboko w nim. Na Windows plik musi dodatkowo leżeć na dysku systemowym (zapisanym w wyniku skanu; gdy go brak, przyjmowany jest `C:`). Puste listy oznaczają brak oczekiwań i brak oceny.
+- `processes.names` i `parents`: małe litery, także na macOS, gdzie nazwy programów mają wielkie litery (`windowserver`); wyszukiwanie zamienia nazwę z wyniku na małe litery, a test `names_and_paths_are_lowercase_so_that_lookups_can_match` odrzuca wpis z wielką literą. `paths`: małe litery, bez litery dysku. Wpis bez końcowego separatora to dokładna ścieżka pliku; z końcowym separatorem oznacza plik bezpośrednio w tym katalogu; z końcówką `**` dowolnie głęboko w nim. Na Windows plik musi dodatkowo leżeć na dysku systemowym (zapisanym w wyniku skanu; gdy go brak, przyjmowany jest `C:`). Puste listy oznaczają brak oczekiwań i brak oceny.
 - `modules.names`: początek nazwy pliku (małe litery), np. `libssl` pasuje do `libssl.so.3`.
+
+## Rodziny programów
+
+Aplikacji zbudowanych na silniku przeglądarki Chromium (Electron, Qt WebEngine, CEF) jest zbyt wiele, żeby opisywać je po nazwie. Baza rozpoznaje je po plikach silnika zmapowanych do pamięci; służy do tego pole `family` wpisu w `modules`:
+
+| Plik | Rodzina | Środowisko JIT w procesie |
+|---|---|---|
+| `v8_context_snapshot.bin` | Electron i przeglądarki oparte na Chromium (Windows, Linux) | tak |
+| `Electron Framework`, `Chromium Embedded Framework`, `Google Chrome Framework` | to samo na macOS | tak |
+| `Qt5WebEngineCore`, `Qt6WebEngineCore` | Qt WebEngine | tak |
+| `EmbeddedBrowserWebView.dll`, `WebView2Loader.dll`, `Microsoft.Web.WebView2.*` | program korzystający z WebView2 | nie: silnik działa w procesach `msedgewebview2.exe` |
+
+Pole `family` robi dwie rzeczy:
+
+- **Opis programu o nieznanej nazwie.** W części „Co to za program" raport podaje rodzaj programu zamiast samego „baza nie opisuje programu o tej nazwie". Opis mówi, jak program jest zbudowany, a nie kto go wydał.
+- **Przeniesienie rozpoznania na inne procesy tego samego pliku.** Aplikacja Electron działa jako kilka procesów jednego pliku `.exe` i nie każdy z nich mapuje pliki silnika (zmierzone 2026-11-26: z pięciu procesów jednej aplikacji z regionami o wadze „wysokie" plik silnika miały dwa). Jeżeli środowisko rozpoznano w innym procesie o tej samej ścieżce pliku programu, raport przyjmuje je także dla tego procesu i pisze wprost, z którego procesu pochodzi rozpoznanie.
+
+Przeniesienie działa tylko dla wpisów z polem `family`. Biblioteka .NET w jednym procesie `svchost.exe` nic nie mówi o pozostałych, więc `clr.dll` tego pola nie ma.
+
+Ograniczenia:
+
+- Rozpoznanie opiera się na nazwie zmapowanego pliku. Program, który zmapuje własny plik o nazwie `v8_context_snapshot.bin`, dostanie łagodniejsze uzasadnienie (P2 zamiast P1); to samo dotyczy każdego wpisu `modules` ze środowiskiem. Dlatego P2 zawsze każe potwierdzić znalezisko, a cechy, których środowisko nie tłumaczy (`THR-PRIV`, `HDR`, `IMG-MOD` o wysokiej wadze i pozostałe z tej listy), dają P1 niezależnie od rozpoznania.
+- Rozpoznanie zmienia priorytet weryfikacji i objaśnienia w raporcie. Nie zmienia punktacji ani wag: te ustalają detektory.
+- Bez ścieżki pliku programu w wyniku przeniesienie nie działa; nazwa procesu do tego nie służy.
 
 ## Jak dodać wpis
 

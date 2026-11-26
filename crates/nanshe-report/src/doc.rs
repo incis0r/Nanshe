@@ -251,7 +251,8 @@ pub fn build(scan: &ScanResult, llm: Option<&Value>, o: &Options) -> Doc {
 
     // --- baza wiedzy: objaśnienia prostym językiem dla systemu, z którego pochodzi wynik
     let os = scan.processes.iter().find(|p| p.max_severity > Severity::None).or(scan.processes.first()).map(|p| p.info.os.as_str()).unwrap_or("linux");
-    let kb = o.kb_dir.as_deref().and_then(|d| Kb::from_dir(d, os).ok()).unwrap_or_else(|| Kb::embedded(os));
+    let mut kb = o.kb_dir.as_deref().and_then(|d| Kb::from_dir(d, os).ok()).unwrap_or_else(|| Kb::embedded(os));
+    kb.seen = seen_programs(&kb, scan);
     let toc_at = b.len();
     executive_summary(&mut b, scan, &kb, o, &flagged, &failed, unreadable);
 
@@ -1210,6 +1211,48 @@ mod tests {
     }
 
     #[test]
+    fn chromium_application_is_recognised_across_its_processes() {
+        // proces z plikiem silnika i proces tego samego programu bez niego (tak wyglądają aplikacje Electron)
+        let mk = |pid: u32, name: &str, exe: &str, engine: Option<&str>| {
+            let mut layout = vec![region(0x10000, 0x1000, "rwx", RegionKind::Private, None)];
+            if let Some(e) = engine { layout.push(region(0x7ff0_0000_0000, 0x1000, "r--", RegionKind::Mapped, Some(e))); }
+            let mut p = proc_with(layout, &[0x10000]);
+            p.info.os = "windows".into(); p.info.pid = Some(pid); p.info.name = Some(name.into()); p.info.exe = Some(exe.into());
+            p
+        };
+        let app = "C:\\Users\\jan\\AppData\\Local\\Programs\\Apka\\Apka.exe";
+        let snap = "C:\\Users\\jan\\AppData\\Local\\Programs\\Apka\\v8_context_snapshot.bin";
+        let mut scan = scan_of(mk(10, "Apka.exe", app, Some(snap)));
+        scan.processes.push(mk(11, "Apka.exe", app, None));
+        scan.processes.push(mk(12, "inny.exe", "C:\\x\\inny.exe", None));
+        // biblioteka .NET w jednym procesie programu-gospodarza nie tłumaczy drugiego
+        scan.processes.push(mk(20, "svchost.exe", "C:\\Windows\\System32\\svchost.exe", Some("C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\clr.dll")));
+        scan.processes.push(mk(21, "svchost.exe", "C:\\Windows\\System32\\svchost.exe", None));
+        let mut kb = Kb::embedded("windows");
+        kb.seen = seen_programs(&kb, &scan);
+        assert_eq!(kb.seen.len(), 1, "{:?}", kb.seen);
+        let prio = |i: usize| priority(&scan.processes[i], &kb, Severity::Suspicious);
+        let (own, why_own, _) = prio(0);
+        assert!(own == "P2" && why_own[0].contains("środowisko Chromium, które"), "{why_own:?}");
+        let (sib, why_sib, _) = prio(1);
+        assert!(sib == "P2" && why_sib[0].contains("Chromium (rozpoznane w procesie 10 tego samego programu)"), "{why_sib:?}");
+        assert_eq!((prio(2).0, prio(3).0, prio(4).0), ("P1", "P2", "P1"), "inny program i drugi proces gospodarza zostają bez wyjaśnienia");
+        // cecha, której środowisko nie tłumaczy, daje P1 także wtedy, gdy środowisko pochodzi z innego procesu
+        let mut thr = scan.clone();
+        let extra = Finding { tag: "THR-PRIV".into(), ..thr.processes[1].regions[0].findings[0].clone() };
+        thr.processes[1].regions[0].findings.push(extra);
+        assert_eq!(priority(&thr.processes[1], &kb, Severity::Suspicious).0, "P1");
+        // opis programu o nieznanej nazwie: rodzaj rozpoznany po plikach, także w procesie bez pliku silnika
+        let t = doc_text(&build(&scan, None, &opts()));
+        // (oba procesy programu mają ten sam priorytet i zestaw cech, więc raport opisuje je w jednym rozdziale)
+        assert_eq!(t.matches("rozpoznaje jego rodzaj: aplikacja zbudowana na silniku przeglądarki Chromium").count(), 1, "{t}");
+        let alone = doc_text(&build(&ScanResult { processes: vec![scan.processes[0].clone(), { let mut q = scan.processes[1].clone(); q.regions[0].findings[0].tag = "X-PRIV".into(); q }], ..scan.clone() }, None, &opts()));
+        assert_eq!(alone.matches("rozpoznaje jego rodzaj: aplikacja zbudowana na silniku przeglądarki Chromium").count(), 2, "{alone}");
+        assert!(t.contains("nie opisuje programu o tej nazwie. To nie znaczy"), "program bez rozpoznanego rodzaju ma dotychczasowy opis");
+        assert!(t.contains("(P1: 2, P2: 3, P3: 0)"), "{t}");
+    }
+
+    #[test]
     fn external_knowledge_base_replaces_the_embedded_one() {
         let dir = std::env::temp_dir().join(format!("nanshe-kb-report-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1255,9 +1298,50 @@ mod tests {
 
 /// Środowisko z kompilacją w locie rozpoznane w procesie: po zmapowanych plikach opisanych w bazie
 /// wiedzy. None, gdy wynik nie ma mapy regionów (wtedy nie wiemy).
+///
+/// Gdy sam proces nie ma takiego pliku, liczy się inny proces tego samego pliku programu, w którym
+/// środowisko rozpoznano: aplikacje zbudowane na Chromium działają jako wiele procesów jednego pliku
+/// i tylko część z nich mapuje pliki silnika. Nazwa środowiska podaje wtedy, z którego procesu pochodzi.
 fn runtime_of(kb: &Kb, p: &ProcessReport) -> Option<Option<String>> {
-    let layout = p.layout.as_ref()?;
-    Some(layout.iter().filter_map(|r| r.backing.as_deref()).find_map(|b| kb.module(b).and_then(|m| m.runtime.clone())))
+    let own = p.layout.as_ref().map(|l| l.iter().filter_map(|r| r.backing.as_deref()).find_map(|b| kb.module(b).and_then(|m| m.runtime.clone())));
+    if let Some(Some(_)) = own { return own; }
+    match sibling(kb, p).and_then(|s| s.runtime.as_ref().zip(s.pid)) {
+        Some((rt, pid)) => Some(Some(trf!("{rt} (rozpoznane w procesie {pid} tego samego programu)", "{rt} (recognised in process {pid} of the same program)"))),
+        None => own,
+    }
+}
+
+/// Co skan wie o pliku programu tego procesu z jego procesów (tego albo innego). Wpis własny niczego
+/// nie dodaje: własne pliki procesu są sprawdzane wcześniej.
+fn sibling<'a>(kb: &'a Kb, p: &ProcessReport) -> Option<&'a nanshe_kb::SeenProgram> {
+    let exe = p.info.exe.as_deref()?.to_lowercase();
+    kb.seen.iter().find(|s| s.exe == exe)
+}
+
+/// Programy skanu, w których po zmapowanych plikach rozpoznano środowisko albo rodzaj programu:
+/// jeden wpis na plik programu, z pierwszego procesu, w którym rozpoznanie się udało.
+fn seen_programs(kb: &Kb, scan: &ScanResult) -> Vec<nanshe_kb::SeenProgram> {
+    let mut out: Vec<nanshe_kb::SeenProgram> = Vec::new();
+    for p in &scan.processes {
+        let (Some(exe), Some(layout)) = (p.info.exe.as_deref(), p.layout.as_ref()) else { continue };
+        let exe = exe.to_lowercase();
+        let mods = || layout.iter().filter_map(|r| r.backing.as_deref()).filter_map(|b| kb.module(b));
+        // Środowisko przenosi się na inne procesy programu tylko z pliku, który mówi, jak program jest zbudowany
+        // (ma opis rodzaju). Biblioteka .NET w jednym procesie svchost.exe nic nie mówi o pozostałych.
+        let (runtime, family) = (mods().filter(|m| m.family.is_some()).find_map(|m| m.runtime.clone()), mods().find_map(|m| m.family.clone()));
+        if runtime.is_none() && family.is_none() { continue; }
+        match out.iter_mut().find(|s| s.exe == exe) {
+            Some(s) => { if s.runtime.is_none() && runtime.is_some() { s.runtime = runtime; s.pid = p.info.pid; } if s.family.is_none() { s.family = family; } }
+            None => out.push(nanshe_kb::SeenProgram { exe, pid: p.info.pid, runtime, family }),
+        }
+    }
+    out
+}
+
+/// Rodzaj programu rozpoznany po plikach zmapowanych w tym procesie albo w innym procesie tego samego pliku.
+fn family_of(kb: &Kb, p: &ProcessReport) -> Option<String> {
+    p.layout.as_ref().and_then(|l| l.iter().filter_map(|r| r.backing.as_deref()).find_map(|b| kb.module(b).and_then(|m| m.family.clone())))
+        .or_else(|| sibling(kb, p).and_then(|s| s.family.clone()))
 }
 
 fn combo_title(kb: &Kb, tags: &[&str]) -> String {
@@ -1273,6 +1357,11 @@ fn identity(b: &mut Vec<Block>, kb: &Kb, p: &ProcessReport, system_drive: Option
     b.push(Block::H2(tr!("Co to za program", "What this program is").into()));
     let name = p.info.name.as_deref().unwrap_or("");
     let Some(info) = kb.process(name) else {
+        if let Some(f) = family_of(kb, p) {
+            b.push(Block::Para(trf!("Baza wiedzy narzędzia nie opisuje programu o tej nazwie, ale po plikach zmapowanych do pamięci rozpoznaje jego rodzaj: {f} To mówi, jak program jest zbudowany, a nie kto go wydał: ustal to po ścieżce pliku, podpisie i skrócie SHA-256 (można go wyszukać w bazach znanych plików).",
+                "The tool's knowledge base does not describe a program with this name, but from the files mapped into memory it recognises its kind: {f} This says how the program is built, not who published it: establish that from the file path, the signature and the SHA-256 hash (it can be looked up in databases of known files).")));
+            return;
+        }
         b.push(Block::Para(tr!("Baza wiedzy narzędzia nie opisuje programu o tej nazwie. To nie znaczy, że jest podejrzany: ustal, czym jest, po ścieżce pliku, wierszu poleceń i skrócie SHA-256 (można go wyszukać w bazach znanych plików).", "The tool's knowledge base does not describe a program with this name. This does not mean it is suspicious: establish what it is from the file path, the command line and the SHA-256 hash (which can be looked up in databases of known files).").into()));
         return;
     };

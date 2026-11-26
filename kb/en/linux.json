@@ -102,6 +102,32 @@
     "A tool downloaded by an attacker and run from /tmp or /dev/shm."
    ],
    "hints": []
+  },
+  {
+   "tags": [
+    "MEMFD",
+    "SHC"
+   ],
+   "title": "standalone code in a file that exists only in memory",
+   "meaning": "An executable file that exists only in memory (memfd) contains sequences typical of code that works without the help of the program loader, for example starting another program directly through the kernel.",
+   "benign": [
+    "A container runtime that copies its own program into a file in memory before starting; such a program calls the kernel itself.",
+    "A statically compiled program started from a file in memory by a deployment tool."
+   ],
+   "malicious": [
+    "A program downloaded from the network and started without being written to disk.",
+    "A payload that starts a shell with a direct system call."
+   ],
+   "hints": [
+    {
+     "runtime": true,
+     "text": "The process contains a just-in-time (JIT) runtime ({runtime}); it may keep generated code in a file in memory, but it does not explain starting programs directly. Check the name of the memfd file and the code at the address from the finding description."
+    },
+    {
+     "runtime": false,
+     "text": "No just-in-time (JIT) runtime was recognised in the process; copy the memfd file (the step for the MEMFD feature) and check what program it is."
+    }
+   ]
   }
  ],
  "verify": {
@@ -176,6 +202,18 @@
     "do": "Compare the code in memory with the file: save the memory region (command above) and compare it with the corresponding part of the library file (the offset is in /proc/{pid}/maps)",
     "cmd": "",
     "look": "Benign case: no differences, or the library file on disk is newer than the process (updated after it started), which explains the mismatch. Be concerned about a few changed bytes at the start of functions, usually a jump to another place in memory (a so-called hook, a redirect of the function), because this is consistent with overwritten library code. In that case note which functions the differences concern, keep the saved region and hand it over for analysis."
+   }
+  ],
+  "SHC": [
+   {
+    "do": "After saving the memory region to a file, look at the instructions at the address from the finding description (the address after the @ sign); on arm64 replace i386:x86-64 with aarch64",
+    "cmd": "objdump -D -b binary -m i386:x86-64 --adjust-vma={start} /tmp/region_{start_plain}.bin | less",
+    "look": "Search the output for the address from the finding description. Starting a program directly is the number 0x3b put into the rax register (push 0x3b and pop rax, or mov eax,0x3b) followed a few instructions later by syscall; on arm64 it is mov x8 with a number and svc. Code finding its own address is a call to the next instruction followed at once by pop. Benign case: ordinary, long function code around it, and the program is a runtime that generates code or a container runtime. Be concerned about a short fragment that prepares a string such as /bin/sh and calls the kernel right away: in that case keep the file and go to the next step."
+   },
+   {
+    "do": "Print the strings from the saved region that look like paths and network addresses",
+    "cmd": "strings -a -n 6 /tmp/region_{start_plain}.bin | grep -E \"/bin/|/tmp/|/dev/tcp|https?://|[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+\" | head -40",
+    "look": "An empty result settles nothing, because payloads often build their strings only at run time. Shell paths (/bin/sh, /bin/bash), network addresses or URLs in a region with no file are consistent with a payload that starts a shell or connects to a server: note them, compute the hash of the file (sha256sum) and hand the file over for analysis."
    }
   ]
  },
@@ -423,6 +461,23 @@
     "memfd:"
    ],
    "what": "file that exists only in RAM; it is not present on disk"
+  },
+  {
+   "names": [
+    "v8_context_snapshot"
+   ],
+   "what": "startup image of the V8 JavaScript engine; present in applications built on Electron and in Chromium-based browsers",
+   "runtime": "Chromium",
+   "family": "an application built on the Chromium browser engine, most often on Electron: a windowed program whose interface is a web page shown by an embedded browser. It runs as several processes of the same file and generates code at run time."
+  },
+  {
+   "names": [
+    "libqt5webenginecore",
+    "libqt6webenginecore"
+   ],
+   "what": "the Chromium browser engine as shipped in Qt WebEngine; generates code at run time",
+   "runtime": "Chromium (Qt WebEngine)",
+   "family": "a program that uses Qt WebEngine: a Qt application that shows web content with an embedded Chromium engine. Pages are usually handled by a separate QtWebEngineProcess process, which generates code at run time."
   }
  ]
 }

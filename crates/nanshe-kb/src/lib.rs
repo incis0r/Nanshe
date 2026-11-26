@@ -78,6 +78,20 @@ pub struct ModInfo {
     /// Nazwa środowiska z kompilacją w locie, jeśli moduł nim jest.
     #[serde(default)]
     pub runtime: Option<String>,
+    /// Rodzaj programu, który ma ten plik zmapowany (np. aplikacja zbudowana na Electron): opis dla
+    /// programów, których baza nie zna z nazwy.
+    #[serde(default)]
+    pub family: Option<String>,
+}
+
+/// Program widziany w skanie: co o nim mówią pliki zmapowane w jednym z jego procesów.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SeenProgram {
+    /// ścieżka pliku programu, małymi literami
+    pub exe: String,
+    pub pid: Option<u32>,
+    pub runtime: Option<String>,
+    pub family: Option<String>,
 }
 
 /// Krok sprawdzenia regionu: co zrobić, jakim poleceniem i jak czytać wynik.
@@ -134,6 +148,10 @@ pub struct Kb {
     pub socket_states: Vec<(String, String)>,
     pub processes: Vec<ProcInfo>,
     pub modules: Vec<ModInfo>,
+    /// Programy rozpoznane w bieżącym skanie po zmapowanych plikach; wypełnia raport, nie pliki bazy.
+    /// Aplikacje zbudowane na Chromium działają jako wiele procesów jednego pliku i nie każdy z nich
+    /// ma zmapowany plik, po którym rozpoznaje się silnik.
+    pub seen: Vec<SeenProgram>,
 }
 
 /// Scalanie: obiekty rekurencyjnie (plik systemu nadpisuje wspólny), tablice sklejane
@@ -168,7 +186,7 @@ impl Kb {
         let r: Raw = serde_json::from_value(v).map_err(|e| format!("baza wiedzy ({os}): {e}"))?;
         Ok(Kb { version: r.version, os: os.to_string(), guide: r.guide, severity: pairs(r.severity), sections: pairs(r.sections), tags: r.tags,
             combos: r.combos, terms: pairs(r.terms), verify: r.verify, flags: pairs(r.flags), handles: pairs(r.handles),
-            socket_states: pairs(r.socket_states), processes: r.processes, modules: r.modules })
+            socket_states: pairs(r.socket_states), processes: r.processes, modules: r.modules, seen: Vec::new() })
     }
 
     /// Baza wbudowana w binarium, w języku programu. System bez własnego pliku dostaje część wspólną.
@@ -293,7 +311,7 @@ mod tests {
             assert_eq!(pl.verify.iter().map(|(k, v)| (k, v.iter().map(|s| &s.cmd).collect::<Vec<_>>())).collect::<Vec<_>>(), en.verify.iter().map(|(k, v)| (k, v.iter().map(|s| &s.cmd).collect::<Vec<_>>())).collect::<Vec<_>>(), "{os}");
             for v in pl.verify.values().chain(en.verify.values()) { for s in v { assert!(!s.what.is_empty() && !s.look.is_empty(), "{os}: krok bez opisu albo wskazówki: {s:?}"); } }
             assert_eq!(pl.processes.iter().map(|p| (&p.names, &p.paths, &p.parents)).collect::<Vec<_>>(), en.processes.iter().map(|p| (&p.names, &p.paths, &p.parents)).collect::<Vec<_>>(), "{os}");
-            assert_eq!(pl.modules.iter().map(|m| (&m.names, &m.runtime)).collect::<Vec<_>>(), en.modules.iter().map(|m| (&m.names, &m.runtime)).collect::<Vec<_>>(), "{os}");
+            assert_eq!(pl.modules.iter().map(|m| (&m.names, &m.runtime, m.family.is_some())).collect::<Vec<_>>(), en.modules.iter().map(|m| (&m.names, &m.runtime, m.family.is_some())).collect::<Vec<_>>(), "{os}");
             assert_eq!((pl.guide.len(), pl.sections.len(), pl.terms.len(), pl.flags.len()), (en.guide.len(), en.sections.len(), en.terms.len(), en.flags.len()), "{os}");
             let keys = |v: &[(String, String)]| { let mut k: Vec<String> = v.iter().map(|x| x.0.clone()).collect(); k.sort(); k };
             assert_eq!(keys(&pl.severity), keys(&en.severity), "{os}");
@@ -359,7 +377,7 @@ mod tests {
 
     #[test]
     fn text_is_plain_and_placeholders_are_filled() {
-        for (name, raw) in [("common", COMMON), ("linux", LINUX), ("windows", WINDOWS)] {
+        for (name, raw) in [("common", COMMON), ("linux", LINUX), ("windows", WINDOWS), ("macos", MACOS)] {
             assert!(!raw.contains('\u{2014}') && !raw.contains('\u{2013}'), "{name}: długi myślnik w treści");
         }
         let kb = Kb::embedded("linux");
@@ -418,6 +436,73 @@ mod tests {
         assert_eq!(l.module("/usr/lib/jvm/lib/server/libjvm.so").and_then(|m| m.runtime.as_deref()), Some("Java"));
         assert!(l.flag("uprawnienia efektywne (CapEff)").is_some() && l.flag("zmienna LD_PRELOAD").is_some() && l.flag("nieznana cecha").is_none());
         assert!(w.flag("poziom integralności").is_some());
+    }
+
+    /// Wyszukiwanie procesu, rodzica, ścieżki i modułu porównuje z bazą tekst zamieniony na małe litery,
+    /// więc wpis z wielką literą nigdy by nie pasował (tak było z `WindowServer` i `JavaScriptCore`).
+    #[test]
+    fn names_and_paths_are_lowercase_so_that_lookups_can_match() {
+        for os in SYSTEMS {
+            for l in [Lang::Pl, Lang::En] {
+                let kb = Kb::embedded_lang(os, l);
+                for p in &kb.processes {
+                    for x in p.names.iter().chain(&p.paths).chain(&p.parents) { assert_eq!(*x, x.to_lowercase(), "{os}: proces {:?}", p.names); }
+                }
+                for m in &kb.modules { for x in &m.names { assert_eq!(*x, x.to_lowercase(), "{os}: moduł {:?}", m.names); } }
+            }
+        }
+        let m = Kb::embedded("macos");
+        let ws = m.process("WindowServer").expect("WindowServer");
+        assert_eq!(Kb::path_expected(ws, "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer", None), Some(true));
+        assert_eq!(Kb::path_expected(ws, "/Users/jan/WindowServer", None), Some(false));
+        let mds = m.process("mds_stores").expect("mds");
+        assert_eq!(Kb::path_expected(mds, "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores", None), Some(true));
+        assert_eq!(Kb::path_expected(m.process("gpg-agent").expect("gpg"), "/tmp/gpg-agent", None), Some(false));
+        assert_eq!(m.module("/Applications/X.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework").and_then(|x| x.runtime.as_deref()), Some("Chromium"));
+        assert_eq!(m.module("/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/JavaScriptCore").and_then(|x| x.runtime.as_deref()), Some("JavaScriptCore"));
+        assert!(m.process("Steam Helper").is_some() && m.module("/opt/local/lib/libgcrypt.20.dylib").is_some());
+    }
+
+    /// Aplikacje zbudowane na Chromium rozpoznaje się po plikach silnika, nie po nazwie programu.
+    #[test]
+    fn chromium_families_are_recognised_by_their_engine_files() {
+        let w = Kb::embedded("windows");
+        let snap = w.module("C:\\Users\\jan\\AppData\\Local\\Programs\\X\\v8_context_snapshot.bin").expect("V8");
+        assert!(snap.runtime.as_deref() == Some("Chromium") && snap.family.as_deref().is_some_and(|f| f.contains("Electron")));
+        let qt = w.module("C:\\Program Files\\X\\Qt5WebEngineCore.dll").expect("Qt");
+        assert!(qt.runtime.as_deref() == Some("Chromium (Qt WebEngine)") && qt.family.is_some());
+        assert!(w.module("C:\\Program Files\\X\\Qt6WebEngineCore.dll").is_some_and(|m| m.runtime.is_some()));
+        // biblioteka łącząca z WebView2 opisuje rodzaj programu, ale silnik działa w innym procesie
+        let wv = w.module("C:\\Windows\\SystemApps\\X\\EmbeddedBrowserWebView.dll").expect("WebView2");
+        assert!(wv.runtime.is_none() && wv.family.is_some());
+        // sama biblioteka multimediów nie jest dowodem na silnik przeglądarki
+        assert!(w.module("C:\\Program Files\\X\\ffmpeg.dll").is_none() && w.module("C:\\Program Files\\X\\Qt5Core.dll").is_none());
+        let l = Kb::embedded("linux");
+        assert!(l.module("/opt/app/v8_context_snapshot.bin").is_some_and(|m| m.runtime.is_some() && m.family.is_some()));
+        assert!(l.module("/usr/lib/x86_64-linux-gnu/libQt6WebEngineCore.so.6").is_some_and(|m| m.runtime.is_some()));
+        let m = Kb::embedded("macos");
+        assert!(m.module("/Applications/X.app/Contents/Frameworks/Electron Framework.framework/Electron Framework").is_some_and(|x| x.family.is_some()));
+        assert!(m.module("/Applications/X.app/Contents/Frameworks/QtWebEngineCore.framework/QtWebEngineCore").is_some_and(|x| x.runtime.is_some()));
+    }
+
+    #[test]
+    fn shellcode_findings_and_macos_have_their_own_guidance() {
+        for os in SYSTEMS {
+            let kb = Kb::embedded(os);
+            // kroki dla SHC prowadzą do kodu pod adresem ze znaleziska, a nie tylko do regionu
+            let steps = kb.verify.get("SHC").unwrap_or_else(|| panic!("{os}: brak kroków dla SHC"));
+            assert!(steps.iter().any(|s| !s.cmd.is_empty() && format!("{} {}", s.what, s.look).contains('@')), "{os}");
+            for tags in [&["SHC", "X-PRIV"][..], &["RWX", "SHC", "X-PRIV"]] {
+                let c = kb.combo(tags).unwrap_or_else(|| panic!("{os}: brak zestawu {tags:?}"));
+                assert!(c.hints.iter().any(|h| h.runtime == Some(true)) && c.hints.iter().any(|h| h.runtime == Some(false)), "{os}: {tags:?}");
+            }
+        }
+        assert!(Kb::embedded("windows").combo(&["X-MAP", "SHC"]).is_some() && Kb::embedded("linux").combo(&["SHC", "MEMFD"]).is_some());
+        assert!(Kb::embedded("linux").combo(&["X-MAP", "SHC"]).is_none() && Kb::embedded("windows").combo(&["SHC", "MEMFD"]).is_none(), "zestaw jednego systemu nie przecieka do drugiego");
+        // macOS: każda cecha, którą skaner tam zgłasza, ma własny krok oprócz ogólnych
+        let m = Kb::embedded("macos");
+        for t in ["RWX", "X-PRIV", "ENT-X", "HDR", "SHC"] { assert!(m.verify.get(t).is_some_and(|v| !v.is_empty()), "macos: brak kroku dla {t}"); }
+        assert!(m.combo(&["ENT-X"]).is_some() && Kb::embedded("linux").combo(&["ENT-X"]).is_none());
     }
 
     #[test]
