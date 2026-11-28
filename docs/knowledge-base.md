@@ -92,6 +92,10 @@ The `family` field does two things:
 
 The carry-over works only for entries with a `family` field. The .NET library in one `svchost.exe` process says nothing about the others, so `clr.dll` does not have the field.
 
+A runtime taken over from another process does not explain a standalone code pattern. A process with a region of severity "high" and an `SHC` finding of weight 30 or more, whose own files show no runtime, gets P1 with a separate justification. A runtime recognised in the process's own files works as before (P2). On four saved scans (2026-11-27) the rule changed no priority: no process with a taken-over runtime had such a finding.
+
+Measurement of the Linux entries (2026-11-27, arm64 container): Electron 30.5.1 maps `v8_context_snapshot.bin` in all six processes of the application, and a PyQt5 application maps `libQt5WebEngineCore.so.5` in the main process and in three `QtWebEngineProcess` processes. This is one application from each family.
+
 Limitations:
 
 - Recognition relies on the name of the mapped file. A program that maps its own file named `v8_context_snapshot.bin` gets the milder reasoning (P2 instead of P1); the same holds for every `modules` entry with a runtime. This is why P2 always asks for the finding to be confirmed, and features that a runtime does not explain (`THR-PRIV`, `HDR`, `IMG-MOD` with a high weight and the others on that list) give P1 regardless of the recognition.
@@ -110,4 +114,5 @@ Limitations:
 - The descriptions of processes and modules are a few dozen of the most common items, not a software catalogue. A program not described in the base gets a note in the report that the lack of a description is not an assessment.
 - The typical paths and parents apply to standard installations. A non-standard installation will produce a warning that has to be explained manually.
 - The verification commands assume administrator access and the presence of the tools (gdb, Sysinternals, System Informer, pe-sieve); the report does not run them.
+- The steps for `SHC` were checked on 2026-11-27: disassembly with the Windows debugger (`cdb`) on a sample on the test host, and `objdump` and `strings` on x86-64 and arm64 code in containers. The `pe-sieve` syntax and the description of its summary were compared with the tool's source code, without running it. The `lldb` step on macOS was not run (it needs root).
 - The explanations describe typical cases and come from general knowledge, not from a measurement on a large number of hosts.

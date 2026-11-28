@@ -506,6 +506,42 @@ mod tests {
     }
 
     #[test]
+    fn windows_shell_and_service_processes_are_described() {
+        let kb = Kb::embedded("windows");
+        let p = |n: &str| kb.process(n).unwrap_or_else(|| panic!("brak opisu {n}"));
+        // położenie i proces nadrzędny potwierdzone na żywych stacjach (Windows 11 i Windows Server 2025)
+        for (name, exe, parent) in [
+            ("dwm.exe", "C:\\WINDOWS\\system32\\dwm.exe", "winlogon.exe"),
+            ("LogonUI.exe", "C:\\WINDOWS\\system32\\LogonUI.exe", "winlogon.exe"),
+            ("SearchHost.exe", "C:\\WINDOWS\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\SearchHost.exe", "svchost.exe"),
+            ("StartMenuExperienceHost.exe", "C:\\WINDOWS\\SystemApps\\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\\StartMenuExperienceHost.exe", "svchost.exe"),
+            ("WmiPrvSE.exe", "C:\\WINDOWS\\system32\\wbem\\WmiPrvSE.exe", "svchost.exe"),
+            ("fontdrvhost.exe", "C:\\WINDOWS\\system32\\fontdrvhost.exe", "wininit.exe"),
+            ("spoolsv.exe", "C:\\WINDOWS\\System32\\spoolsv.exe", "services.exe"),
+            ("vmnat.exe", "C:\\WINDOWS\\SysWOW64\\vmnat.exe", "services.exe"),
+        ] {
+            let i = p(name);
+            assert_eq!(Kb::path_expected(i, exe, None), Some(true), "{name}: {exe}");
+            assert_eq!(Kb::parent_expected(i, parent), Some(true), "{name}: {parent}");
+            assert_eq!(Kb::parent_expected(i, "explorer.exe"), Some(false), "{name}");
+            let file = exe.rsplit('\\').next().unwrap();
+            assert_eq!(Kb::path_expected(i, &format!("C:\\Users\\Public\\{file}"), None), Some(false), "{name}: to samo imię w katalogu publicznym");
+        }
+        // pakiet systemowy z numerem wersji w nazwie katalogu: dopasowanie po początku nazwy pakietu
+        let c = p("CrossDeviceService.exe");
+        assert_eq!(Kb::path_expected(c, "C:\\Program Files\\WindowsApps\\MicrosoftWindows.CrossDevice_1.26101.77.0_x64__cw5n1h2txyewy\\CrossDeviceService.exe", None), Some(true));
+        assert_eq!(Kb::path_expected(c, "C:\\Program Files\\WindowsApps\\Inny.Pakiet_1.0.0.0_x64__abc\\CrossDeviceService.exe", None), Some(false));
+        // interpreter bywa zainstalowany gdziekolwiek: opis jest, typowego położenia nie ma
+        assert_eq!(Kb::path_expected(p("python.exe"), "D:\\narzedzia\\python.exe", None), None);
+        // dwie słabe cechy w kodzie z pliku mają wspólny opis z przyczynami łagodnymi i niepokojącymi
+        for os in ["windows", "linux"] {
+            let k = Kb::embedded(os);
+            let c = k.combo(&["IMG-MOD", "ENT-X"]).unwrap_or_else(|| panic!("{os}: brak zestawu"));
+            assert!(c.benign.len() >= 2 && c.malicious.len() >= 2, "{os}");
+        }
+    }
+
+    #[test]
     fn merge_and_external_directory() {
         // plik systemu nadpisuje wpis wspólny i dokłada własne
         let common = r#"{"version":"1","tags":{"A":{"name":"a","en":"a","meaning":"m","why":"w"}},"combos":[{"tags":["A"],"title":"wspólny","meaning":"m"}],"terms":{"x":"wspólne"}}"#;

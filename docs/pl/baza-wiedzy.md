@@ -92,6 +92,10 @@ Pole `family` robi dwie rzeczy:
 
 Przeniesienie działa tylko dla wpisów z polem `family`. Biblioteka .NET w jednym procesie `svchost.exe` nic nie mówi o pozostałych, więc `clr.dll` tego pola nie ma.
 
+Przejęte środowisko nie tłumaczy wzorca kodu samodzielnego. Proces z regionem o wadze „wysokie" i znaleziskiem `SHC` o wadze co najmniej 30, w którego własnych plikach środowiska nie rozpoznano, dostaje P1 z osobnym uzasadnieniem. Środowisko rozpoznane we własnych plikach procesu działa jak dotąd (P2). Na czterech zapisanych skanach (2026-11-27) reguła nie zmieniła żadnego priorytetu: żaden proces z przejętym środowiskiem nie miał takiego znaleziska.
+
+Pomiar wpisów dla Linuksa (2026-11-27, kontener arm64): Electron 30.5.1 mapuje `v8_context_snapshot.bin` we wszystkich sześciu procesach aplikacji, a aplikacja PyQt5 mapuje `libQt5WebEngineCore.so.5` w procesie głównym i w trzech procesach `QtWebEngineProcess`. To po jednej aplikacji z każdej rodziny.
+
 Ograniczenia:
 
 - Rozpoznanie opiera się na nazwie zmapowanego pliku. Program, który zmapuje własny plik o nazwie `v8_context_snapshot.bin`, dostanie łagodniejsze uzasadnienie (P2 zamiast P1); to samo dotyczy każdego wpisu `modules` ze środowiskiem. Dlatego P2 zawsze każe potwierdzić znalezisko, a cechy, których środowisko nie tłumaczy (`THR-PRIV`, `HDR`, `IMG-MOD` o wysokiej wadze i pozostałe z tej listy), dają P1 niezależnie od rozpoznania.
@@ -110,4 +114,5 @@ Ograniczenia:
 - Opisy procesów i modułów to kilkadziesiąt najczęstszych pozycji, nie katalog oprogramowania. Program nieopisany w bazie dostaje w raporcie informację, że brak opisu nie jest oceną.
 - Typowe ścieżki i rodzice dotyczą standardowych instalacji. Niestandardowa instalacja da ostrzeżenie, które trzeba wyjaśnić ręcznie.
 - Polecenia sprawdzające zakładają dostęp administratora i obecność narzędzi (gdb, Sysinternals, System Informer, pe-sieve); raport ich nie uruchamia.
+- Kroki dla `SHC` sprawdzono 2026-11-27: deasemblację debuggerem Windows (`cdb`) na próbce na stacji testowej oraz `objdump` i `strings` na kodzie x86-64 i arm64 w kontenerach. Składnię `pe-sieve` i opis jego podsumowania porównano z kodem źródłowym narzędzia, bez uruchomienia. Kroku `lldb` na macOS nie uruchomiono (wymaga uprawnień root).
 - Wyjaśnienia opisują typowe przypadki i pochodzą z wiedzy ogólnej, nie z pomiaru na dużej liczbie stacji.

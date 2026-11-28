@@ -1242,6 +1242,12 @@ mod tests {
         let extra = Finding { tag: "THR-PRIV".into(), ..thr.processes[1].regions[0].findings[0].clone() };
         thr.processes[1].regions[0].findings.push(extra);
         assert_eq!(priority(&thr.processes[1], &kb, Severity::Suspicious).0, "P1");
+        // wzorzec kodu samodzielnego: środowisko przejęte z innego procesu go nie tłumaczy, własne tak jak dotąd
+        let mut shc = scan.clone();
+        for i in [0, 1] { let f = Finding { tag: "SHC".into(), ..shc.processes[i].regions[0].findings[0].clone() }; shc.processes[i].regions[0].findings.push(f); }
+        let (p_own, _, _) = priority(&shc.processes[0], &kb, Severity::Suspicious);
+        let (p_sib, why_shc, _) = priority(&shc.processes[1], &kb, Severity::Suspicious);
+        assert!(p_own == "P2" && p_sib == "P1" && why_shc[0].contains("tylko w innym procesie tego samego programu"), "{p_own} {p_sib} {why_shc:?}");
         // opis programu o nieznanej nazwie: rodzaj rozpoznany po plikach, także w procesie bez pliku silnika
         let t = doc_text(&build(&scan, None, &opts()));
         // (oba procesy programu mają ten sam priorytet i zestaw cech, więc raport opisuje je w jednym rozdziale)
@@ -1302,12 +1308,15 @@ mod tests {
 /// Gdy sam proces nie ma takiego pliku, liczy się inny proces tego samego pliku programu, w którym
 /// środowisko rozpoznano: aplikacje zbudowane na Chromium działają jako wiele procesów jednego pliku
 /// i tylko część z nich mapuje pliki silnika. Nazwa środowiska podaje wtedy, z którego procesu pochodzi.
-fn runtime_of(kb: &Kb, p: &ProcessReport) -> Option<Option<String>> {
+fn runtime_of(kb: &Kb, p: &ProcessReport) -> Option<Option<String>> { runtime_src(kb, p).0 }
+
+/// Środowisko jak w `runtime_of` oraz informacja, czy pochodzi wyłącznie z innego procesu tego samego programu.
+fn runtime_src(kb: &Kb, p: &ProcessReport) -> (Option<Option<String>>, bool) {
     let own = p.layout.as_ref().map(|l| l.iter().filter_map(|r| r.backing.as_deref()).find_map(|b| kb.module(b).and_then(|m| m.runtime.clone())));
-    if let Some(Some(_)) = own { return own; }
+    if let Some(Some(_)) = own { return (own, false); }
     match sibling(kb, p).and_then(|s| s.runtime.as_ref().zip(s.pid)) {
-        Some((rt, pid)) => Some(Some(trf!("{rt} (rozpoznane w procesie {pid} tego samego programu)", "{rt} (recognised in process {pid} of the same program)"))),
-        None => own,
+        Some((rt, pid)) => (Some(Some(trf!("{rt} (rozpoznane w procesie {pid} tego samego programu)", "{rt} (recognised in process {pid} of the same program)"))), true),
+        None => (own, false),
     }
 }
 
@@ -1523,7 +1532,9 @@ pub fn priority(p: &ProcessReport, kb: &Kb, min: Severity) -> (&'static str, Vec
     let has = |t: &str| regs.iter().any(|r| r.findings.iter().any(|f| f.tag == t && f.weight >= 30));
     let strong: Vec<&str> = STRONG_TAGS.iter().copied().filter(|t| has(t)).collect();
     let patched_guard = regs.iter().any(|r| r.findings.iter().any(|f| f.tag == "IMG-MOD" && f.weight >= 40));
-    let runtime = runtime_of(kb, p);
+    let (runtime, inherited) = runtime_src(kb, p);
+    // środowisko rozpoznane tylko w innym procesie tego samego programu nie tłumaczy wzorca kodu samodzielnego
+    let inherited_shc = inherited && has("SHC");
     let outside = p.info.exe.as_deref().map(|e| !in_system_dir(e)).unwrap_or(false);
     let privileged = p.context.as_ref().map(|c| c.user.as_deref().map(|u| u.contains("SYSTEM") || u.starts_with("root")).unwrap_or(false)
         || c.flags.iter().any(|f| (f.0.starts_with("poziom integralności") && (f.1 == "systemowy" || f.1 == "wysoki")) || (f.0.starts_with("integrity level") && (f.1 == "system" || f.1 == "high")))).unwrap_or(false);
@@ -1538,6 +1549,9 @@ pub fn priority(p: &ProcessReport, kb: &Kb, min: Severity) -> (&'static str, Vec
         "P1"
     } else if p.max_severity >= Severity::High && runtime == Some(None) {
         why.push(tr!("Region o wadze „wysokie\" w procesie, w którym nie rozpoznano środowiska kompilującego kod w locie, więc brak gotowego łagodnego wyjaśnienia.", "A region of severity \"high\" in a process where no JIT runtime was recognised, so there is no ready benign explanation.").into());
+        "P1"
+    } else if p.max_severity >= Severity::High && inherited_shc {
+        why.push(tr!("Region o wadze „wysokie\" i wzorzec kodu samodzielnego (SHC) w procesie, w którego własnych plikach nie rozpoznano środowiska kompilującego kod w locie. Rozpoznano je tylko w innym procesie tego samego programu, a to nie wystarcza jako wyjaśnienie takiego wzorca.", "A region of severity \"high\" and a standalone code pattern (SHC) in a process whose own files show no JIT runtime. The runtime was recognised only in another process of the same program, which is not enough to explain such a pattern.").into());
         "P1"
     } else if p.max_severity >= Severity::High {
         match &runtime {

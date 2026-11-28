@@ -230,14 +230,14 @@
   ],
   "SHC": [
    {
-    "do": "Podłącz WinDbg do procesu i zdeasembluj kod pod adresem z opisu znaleziska (adres po znaku @); w miejsce ADDRESS wstaw ten adres",
+    "do": "Podłącz WinDbg do procesu i zdeasembluj kod pod adresem z opisu znaleziska (adres po znaku @); w miejsce ADDRESS wstaw ten adres. Bez okna: cdb -pv -p {pid} podłącza się bez przejmowania procesu, a polecenie qd odłącza i zostawia proces działający",
     "cmd": "u ADDRESS L20",
     "look": "Porównaj instrukcje z nazwą wzorca z opisu. Odczyt adresu PEB to mov z gs:[60h] (w procesie 32-bitowym fs:[30h]); pętla skrótów nazw funkcji zawiera ror o 0Dh; kopia wejścia do jądra to mov r10,rcx, potem mov eax z numerem i syscall; ustalanie własnego adresu to call do następnej instrukcji i zaraz po nim pop. Niegroźny przypadek: region ma 4 KiB, nie jest zapisywalny i składa się z samych powtarzających się krótkich wejść do jądra, a proces należy do przeglądarki opartej na Chromium (piaskownica). Niepokoić powinien odczyt PEB, po którym kod przechodzi po liście załadowanych bibliotek, pętla skrótów albo prolog etapu ładującego: wtedy zrób zrzut procesu i przekaż go do analizy."
    },
    {
     "do": "Wydobądź kod bez pliku narzędziem pe-sieve z włączonym wykrywaniem shellcode'u",
-    "cmd": "pe-sieve64.exe /pid {pid} /shellc 1 /dump_mode 3",
-    "look": "Przeczytaj podsumowanie na końcu: wiersz Implanted shc podaje liczbę regionów uznanych za wstawiony kod. Zero niczego nie przesądza, bo narzędzie stosuje własne wzorce. Wartość większa od zera potwierdza znalezisko niezależnie: zachowaj katalog z zapisanymi plikami, policz ich skróty SHA256 i przekaż je do analizy. W procesach przeglądarek opartych na Chromium narzędzie może wskazać te same regiony piaskownicy co skaner."
+    "cmd": "pe-sieve64.exe /pid {pid} /shellc 1",
+    "look": "Przeczytaj podsumowanie na końcu: wiersz Implanted podaje liczbę wstawionych fragmentów; gdy jest większa od zera, pod nim pojawia się wiersz Implanted shc z liczbą regionów uznanych za wstawiony kod. Zero niczego nie przesądza, bo narzędzie stosuje własne wzorce. Wartość większa od zera potwierdza znalezisko niezależnie: narzędzie zapisuje wtedy regiony jako pliki .shc w katalogu process_{pid}; zachowaj ten katalog, policz skróty SHA256 plików i przekaż je do analizy. W procesach przeglądarek opartych na Chromium narzędzie może wskazać te same regiony piaskownicy co skaner."
    }
   ]
  },
@@ -445,6 +445,258 @@
    "parents": [
     "services.exe"
    ]
+  },
+  {
+   "names": [
+    "dwm.exe"
+   ],
+   "what": "Menedżer okien pulpitu: składa obraz wszystkich okien i wysyła go na ekran. Działa po jednym na sesję użytkownika, na osobnym koncie z grupy Window Manager.",
+   "paths": [
+    "\\windows\\system32\\dwm.exe"
+   ],
+   "parents": [
+    "winlogon.exe"
+   ]
+  },
+  {
+   "names": [
+    "logonui.exe"
+   ],
+   "what": "Ekran logowania i blokady systemu Windows. Działa, gdy stacja czeka na zalogowanie albo jest zablokowana, a po zalogowaniu kończy pracę.",
+   "paths": [
+    "\\windows\\system32\\logonui.exe"
+   ],
+   "parents": [
+    "winlogon.exe"
+   ]
+  },
+  {
+   "names": [
+    "searchhost.exe",
+    "searchapp.exe",
+    "startmenuexperiencehost.exe",
+    "shellexperiencehost.exe",
+    "textinputhost.exe"
+   ],
+   "what": "Składnik powłoki systemu Windows: wyszukiwanie, menu Start, panele paska zadań albo klawiatura ekranowa. Część z nich wyświetla treść silnikiem przeglądarki, więc tworzy kod w trakcie działania.",
+   "paths": [
+    "\\windows\\systemapps\\**"
+   ],
+   "parents": [
+    "svchost.exe"
+   ]
+  },
+  {
+   "names": [
+    "crossdeviceservice.exe",
+    "crossdeviceresume.exe"
+   ],
+   "what": "Składnik systemu Windows do pracy między urządzeniami (połączenie z telefonem, wznawianie pracy rozpoczętej na innym urządzeniu).",
+   "paths": [
+    "\\program files\\windowsapps\\microsoftwindows.crossdevice_**",
+    "\\windows\\systemapps\\**"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "securityhealthservice.exe"
+   ],
+   "what": "Usługa Zabezpieczeń Windows: zbiera stan ochrony antywirusowej, zapory i aktualizacji i pokazuje go w Centrum zabezpieczeń.",
+   "paths": [
+    "\\windows\\system32\\securityhealthservice.exe"
+   ],
+   "parents": [
+    "services.exe"
+   ]
+  },
+  {
+   "names": [
+    "microsoft.activedirectory.webservices.exe"
+   ],
+   "what": "Usługi sieci Web Active Directory: usługa kontrolera domeny, przez którą działają polecenia PowerShell do zarządzania katalogiem. Jest programem .NET, więc tworzy kod w trakcie działania. Poza kontrolerem domeny nie powinna występować.",
+   "paths": [
+    "\\windows\\adws\\microsoft.activedirectory.webservices.exe"
+   ],
+   "parents": [
+    "services.exe"
+   ]
+  },
+  {
+   "names": [
+    "spoolsv.exe"
+   ],
+   "what": "Bufor wydruku: usługa obsługująca drukarki i kolejki wydruku. Ładuje sterowniki drukarek innych producentów i była celem wielu ataków podnoszących uprawnienia.",
+   "paths": [
+    "\\windows\\system32\\spoolsv.exe"
+   ],
+   "parents": [
+    "services.exe"
+   ]
+  },
+  {
+   "names": [
+    "wmiprvse.exe"
+   ],
+   "what": "Proces dostawców WMI: wykonuje zapytania o stan systemu na zlecenie innych programów. Bywa używany do zdalnego uruchamiania poleceń, więc istotne są jego procesy potomne.",
+   "paths": [
+    "\\windows\\system32\\wbem\\wmiprvse.exe",
+    "\\windows\\syswow64\\wbem\\wmiprvse.exe"
+   ],
+   "parents": [
+    "svchost.exe"
+   ]
+  },
+  {
+   "names": [
+    "searchindexer.exe"
+   ],
+   "what": "Usługa indeksowania wyszukiwania Windows: przegląda pliki i pocztę, żeby wyszukiwanie działało szybko.",
+   "paths": [
+    "\\windows\\system32\\searchindexer.exe"
+   ],
+   "parents": [
+    "services.exe"
+   ]
+  },
+  {
+   "names": [
+    "fontdrvhost.exe"
+   ],
+   "what": "Proces sterownika czcionek: przetwarza czcionki poza jądrem systemu, na koncie o niskich uprawnieniach.",
+   "paths": [
+    "\\windows\\system32\\fontdrvhost.exe"
+   ],
+   "parents": [
+    "wininit.exe",
+    "winlogon.exe"
+   ]
+  },
+  {
+   "names": [
+    "audiodg.exe"
+   ],
+   "what": "Proces izolacji grafu urządzeń audio: miesza i przetwarza dźwięk, ładuje rozszerzenia sterowników dźwięku innych producentów.",
+   "paths": [
+    "\\windows\\system32\\audiodg.exe"
+   ],
+   "parents": [
+    "svchost.exe"
+   ]
+  },
+  {
+   "names": [
+    "smartscreen.exe"
+   ],
+   "what": "Filtr SmartScreen: sprawdza reputację uruchamianych plików i odwiedzanych adresów.",
+   "paths": [
+    "\\windows\\system32\\smartscreen.exe"
+   ],
+   "parents": [
+    "svchost.exe"
+   ]
+  },
+  {
+   "names": [
+    "werfault.exe",
+    "msiexec.exe",
+    "mmc.exe"
+   ],
+   "what": "Narzędzie systemu Windows: zgłaszanie błędów programów (werfault.exe), instalator pakietów MSI (msiexec.exe) albo konsola zarządzania (mmc.exe, która ładuje przystawki, w tym napisane w .NET). Te programy bywają uruchamiane po to, żeby pod ich nazwą wykonać cudzy kod, więc istotne są wiersz poleceń i proces nadrzędny.",
+   "paths": [
+    "\\windows\\system32\\",
+    "\\windows\\syswow64\\"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "python.exe",
+    "pythonw.exe",
+    "py.exe"
+   ],
+   "what": "Interpreter języka Python. O tym, co proces robi, decyduje uruchomiony skrypt: sprawdź wiersz poleceń.",
+   "paths": [],
+   "parents": []
+  },
+  {
+   "names": [
+    "node.exe"
+   ],
+   "what": "Środowisko Node.js: uruchamia programy w JavaScripcie i tworzy kod w trakcie działania. Bywa osobną instalacją albo częścią innej aplikacji, więc położenie pliku trzeba ocenić samodzielnie.",
+   "paths": [],
+   "parents": []
+  },
+  {
+   "names": [
+    "java.exe",
+    "javaw.exe"
+   ],
+   "what": "Maszyna wirtualna Javy: uruchamia programy w Javie i tworzy kod w trakcie działania. O tym, co proces robi, decyduje uruchomiony program: sprawdź wiersz poleceń.",
+   "paths": [],
+   "parents": []
+  },
+  {
+   "names": [
+    "jusched.exe",
+    "jucheck.exe"
+   ],
+   "what": "Aktualizator Javy firmy Oracle: sprawdza w tle, czy jest nowsza wersja, i proponuje jej instalację.",
+   "paths": [
+    "\\program files (x86)\\common files\\java\\java update\\",
+    "\\program files\\common files\\java\\java update\\"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "vmware-authd.exe",
+    "vmnat.exe",
+    "vmnetdhcp.exe"
+   ],
+   "what": "Usługa programu VMware Workstation albo Player: uwierzytelnianie dostępu do maszyn wirtualnych (vmware-authd.exe) albo sieć wirtualna (vmnat.exe, vmnetdhcp.exe).",
+   "paths": [
+    "\\program files (x86)\\vmware\\**",
+    "\\windows\\syswow64\\"
+   ],
+   "parents": [
+    "services.exe"
+   ]
+  },
+  {
+   "names": [
+    "vpnagent.exe",
+    "vpnui.exe"
+   ],
+   "what": "Klient VPN firmy Cisco (AnyConnect, w nowszych wersjach Secure Client): usługa zestawiająca połączenie (vpnagent.exe) i jej okno (vpnui.exe).",
+   "paths": [
+    "\\program files (x86)\\cisco\\**"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "openvpn.exe",
+    "openvpn-gui.exe",
+    "openvpnserv.exe",
+    "openvpnserv2.exe"
+   ],
+   "what": "Klient VPN OpenVPN: program zestawiający połączenie, jego usługi i okno w zasobniku systemowym.",
+   "paths": [
+    "\\program files\\openvpn\\**"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "nessusd.exe",
+    "nessus-service.exe"
+   ],
+   "what": "Skaner podatności Nessus firmy Tenable: usługa i silnik skanujący. Jego obecność powinna wynikać z decyzji administratora.",
+   "paths": [
+    "\\program files\\tenable\\nessus\\"
+   ],
+   "parents": []
   }
  ],
  "modules": [

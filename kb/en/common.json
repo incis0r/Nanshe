@@ -1,5 +1,5 @@
 {
- "version": "2026-11-26",
+ "version": "2026-11-27",
  "guide": [
   "This report presents the result of a review of the memory of running processes. It points out memory areas with characteristics that are unusual for ordinary software. It does not determine whether the host has been compromised: every finding is a hypothesis to verify.",
   "A process keeps its code and data in separate areas of memory called regions. In a typical program, code comes from a file on disk and is not modified while the program runs. The tool looks for deviations from this rule: code with no source file, modifiable code, code that looks like encrypted data, a program image loaded without the operating system loader, a thread running from memory not backed by a file, and modified library code.",
@@ -256,6 +256,23 @@
     "Disabling protections by overwriting functions (for example script scanning or event logging).",
     "Hooking functions in order to steal data or hide presence.",
     "Replacing the program's code after it has started (process hollowing)."
+   ],
+   "hints": []
+  },
+  {
+   "tags": [
+    "ENT-X",
+    "IMG-MOD"
+   ],
+   "title": "changed code from a file with a part that looks encrypted",
+   "meaning": "Code loaded from a file differs from the file on disk, and the same region contains pages whose byte distribution is close to random. Both features describe the same region but need not concern the same place: the finding description says how many bytes were changed and how many pages exceed the threshold.",
+   "benign": [
+    "A few or a dozen changed bytes in a system library and a single high-entropy page: a function redirection installed by a security product or by a system compatibility mechanism, while the high-entropy page is data tables embedded in the library code. The same address of the change in many processes at once points to a mechanism working across the whole system.",
+    "A packed or copy-protected program that unpacks its own code in place: the change then covers a large part of the region."
+   ],
+   "malicious": [
+    "Program code replaced after start with other code, packed or encrypted (process hollowing): many bytes are changed and high entropy covers many pages.",
+    "A library function overwritten with a jump to hidden code: the change is a few bytes long but leads to memory with no file."
    ],
    "hints": []
   },

@@ -230,14 +230,14 @@
   ],
   "SHC": [
    {
-    "do": "Attach WinDbg to the process and disassemble the code at the address from the finding description (the address after the @ sign); replace ADDRESS with that address",
+    "do": "Attach WinDbg to the process and disassemble the code at the address from the finding description (the address after the @ sign); replace ADDRESS with that address. Without a window: cdb -pv -p {pid} attaches without taking over the process, and the qd command detaches and leaves the process running",
     "cmd": "u ADDRESS L20",
     "look": "Compare the instructions with the pattern named in the description. A read of the PEB address is a mov from gs:[60h] (fs:[30h] in a 32-bit process); a function-name hashing loop contains ror by 0Dh; a copy of a kernel entry point is mov r10,rcx, then mov eax with a number and syscall; code finding its own address is a call to the next instruction followed at once by pop. Benign case: the region is 4 KiB, not writable and consists only of repeated short kernel entry points, and the process belongs to a Chromium-based browser (the sandbox). Be concerned about a PEB read after which the code walks the list of loaded libraries, a hashing loop or the prologue of a loader stage: in that case take a process dump and hand it over for analysis."
    },
    {
     "do": "Extract code with no file using pe-sieve with shellcode detection turned on",
-    "cmd": "pe-sieve64.exe /pid {pid} /shellc 1 /dump_mode 3",
-    "look": "Read the summary at the end: the line Implanted shc gives the number of regions judged to be implanted code. Zero settles nothing, because the tool applies its own patterns. A value above zero confirms the finding independently: keep the directory with the saved files, compute their SHA256 hashes and hand them over for analysis. In processes of Chromium-based browsers the tool may point at the same sandbox regions as the scanner."
+    "cmd": "pe-sieve64.exe /pid {pid} /shellc 1",
+    "look": "Read the summary at the end: the line Implanted gives the number of implanted pieces; when it is above zero, the line Implanted shc below it gives the number of regions judged to be implanted code. Zero settles nothing, because the tool applies its own patterns. A value above zero confirms the finding independently: the tool then saves the regions as .shc files in the directory process_{pid}; keep that directory, compute the SHA256 hashes of the files and hand them over for analysis. In processes of Chromium-based browsers the tool may point at the same sandbox regions as the scanner."
    }
   ]
  },
@@ -445,6 +445,258 @@
    "parents": [
     "services.exe"
    ]
+  },
+  {
+   "names": [
+    "dwm.exe"
+   ],
+   "what": "Desktop Window Manager: composes the image of all windows and sends it to the screen. One runs per user session, under a separate account from the Window Manager group.",
+   "paths": [
+    "\\windows\\system32\\dwm.exe"
+   ],
+   "parents": [
+    "winlogon.exe"
+   ]
+  },
+  {
+   "names": [
+    "logonui.exe"
+   ],
+   "what": "The Windows sign-in and lock screen. It runs while the machine waits for a sign-in or is locked and exits after sign-in.",
+   "paths": [
+    "\\windows\\system32\\logonui.exe"
+   ],
+   "parents": [
+    "winlogon.exe"
+   ]
+  },
+  {
+   "names": [
+    "searchhost.exe",
+    "searchapp.exe",
+    "startmenuexperiencehost.exe",
+    "shellexperiencehost.exe",
+    "textinputhost.exe"
+   ],
+   "what": "A Windows shell component: search, the Start menu, taskbar panels or the on-screen keyboard. Some of them render content with a browser engine and therefore generate code at run time.",
+   "paths": [
+    "\\windows\\systemapps\\**"
+   ],
+   "parents": [
+    "svchost.exe"
+   ]
+  },
+  {
+   "names": [
+    "crossdeviceservice.exe",
+    "crossdeviceresume.exe"
+   ],
+   "what": "A Windows component for working across devices (phone link, resuming work started on another device).",
+   "paths": [
+    "\\program files\\windowsapps\\microsoftwindows.crossdevice_**",
+    "\\windows\\systemapps\\**"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "securityhealthservice.exe"
+   ],
+   "what": "The Windows Security service: collects the state of antivirus protection, the firewall and updates and shows it in the Security Center.",
+   "paths": [
+    "\\windows\\system32\\securityhealthservice.exe"
+   ],
+   "parents": [
+    "services.exe"
+   ]
+  },
+  {
+   "names": [
+    "microsoft.activedirectory.webservices.exe"
+   ],
+   "what": "Active Directory Web Services: a domain controller service through which the PowerShell directory management commands work. It is a .NET program and therefore generates code at run time. It should not be present outside a domain controller.",
+   "paths": [
+    "\\windows\\adws\\microsoft.activedirectory.webservices.exe"
+   ],
+   "parents": [
+    "services.exe"
+   ]
+  },
+  {
+   "names": [
+    "spoolsv.exe"
+   ],
+   "what": "The print spooler: the service that handles printers and print queues. It loads printer drivers from other vendors and has been the target of many privilege escalation attacks.",
+   "paths": [
+    "\\windows\\system32\\spoolsv.exe"
+   ],
+   "parents": [
+    "services.exe"
+   ]
+  },
+  {
+   "names": [
+    "wmiprvse.exe"
+   ],
+   "what": "The WMI provider host: runs queries about the state of the system on behalf of other programs. It is used for remote command execution, so its child processes matter.",
+   "paths": [
+    "\\windows\\system32\\wbem\\wmiprvse.exe",
+    "\\windows\\syswow64\\wbem\\wmiprvse.exe"
+   ],
+   "parents": [
+    "svchost.exe"
+   ]
+  },
+  {
+   "names": [
+    "searchindexer.exe"
+   ],
+   "what": "The Windows Search indexing service: goes through files and mail so that search works fast.",
+   "paths": [
+    "\\windows\\system32\\searchindexer.exe"
+   ],
+   "parents": [
+    "services.exe"
+   ]
+  },
+  {
+   "names": [
+    "fontdrvhost.exe"
+   ],
+   "what": "The font driver host: processes fonts outside the kernel, under a low-privileged account.",
+   "paths": [
+    "\\windows\\system32\\fontdrvhost.exe"
+   ],
+   "parents": [
+    "wininit.exe",
+    "winlogon.exe"
+   ]
+  },
+  {
+   "names": [
+    "audiodg.exe"
+   ],
+   "what": "Audio Device Graph Isolation: mixes and processes sound and loads sound driver extensions from other vendors.",
+   "paths": [
+    "\\windows\\system32\\audiodg.exe"
+   ],
+   "parents": [
+    "svchost.exe"
+   ]
+  },
+  {
+   "names": [
+    "smartscreen.exe"
+   ],
+   "what": "The SmartScreen filter: checks the reputation of files being started and addresses being visited.",
+   "paths": [
+    "\\windows\\system32\\smartscreen.exe"
+   ],
+   "parents": [
+    "svchost.exe"
+   ]
+  },
+  {
+   "names": [
+    "werfault.exe",
+    "msiexec.exe",
+    "mmc.exe"
+   ],
+   "what": "A Windows tool: program error reporting (werfault.exe), the MSI package installer (msiexec.exe) or the management console (mmc.exe, which loads snap-ins, including ones written in .NET). These programs are sometimes started in order to run foreign code under their name, so the command line and the parent process matter.",
+   "paths": [
+    "\\windows\\system32\\",
+    "\\windows\\syswow64\\"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "python.exe",
+    "pythonw.exe",
+    "py.exe"
+   ],
+   "what": "The Python language interpreter. What the process does is decided by the script it runs: check the command line.",
+   "paths": [],
+   "parents": []
+  },
+  {
+   "names": [
+    "node.exe"
+   ],
+   "what": "The Node.js runtime: runs JavaScript programs and generates code at run time. It may be a separate installation or part of another application, so the file location has to be judged on its own.",
+   "paths": [],
+   "parents": []
+  },
+  {
+   "names": [
+    "java.exe",
+    "javaw.exe"
+   ],
+   "what": "The Java virtual machine: runs Java programs and generates code at run time. What the process does is decided by the program it runs: check the command line.",
+   "paths": [],
+   "parents": []
+  },
+  {
+   "names": [
+    "jusched.exe",
+    "jucheck.exe"
+   ],
+   "what": "The Oracle Java updater: checks in the background whether a newer version exists and offers to install it.",
+   "paths": [
+    "\\program files (x86)\\common files\\java\\java update\\",
+    "\\program files\\common files\\java\\java update\\"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "vmware-authd.exe",
+    "vmnat.exe",
+    "vmnetdhcp.exe"
+   ],
+   "what": "A service of VMware Workstation or Player: authorisation of access to virtual machines (vmware-authd.exe) or the virtual network (vmnat.exe, vmnetdhcp.exe).",
+   "paths": [
+    "\\program files (x86)\\vmware\\**",
+    "\\windows\\syswow64\\"
+   ],
+   "parents": [
+    "services.exe"
+   ]
+  },
+  {
+   "names": [
+    "vpnagent.exe",
+    "vpnui.exe"
+   ],
+   "what": "The Cisco VPN client (AnyConnect, in newer versions Secure Client): the service that sets up the connection (vpnagent.exe) and its window (vpnui.exe).",
+   "paths": [
+    "\\program files (x86)\\cisco\\**"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "openvpn.exe",
+    "openvpn-gui.exe",
+    "openvpnserv.exe",
+    "openvpnserv2.exe"
+   ],
+   "what": "The OpenVPN client: the program that sets up the connection, its services and the system tray window.",
+   "paths": [
+    "\\program files\\openvpn\\**"
+   ],
+   "parents": []
+  },
+  {
+   "names": [
+    "nessusd.exe",
+    "nessus-service.exe"
+   ],
+   "what": "The Tenable Nessus vulnerability scanner: the service and the scanning engine. Its presence should follow from an administrator's decision.",
+   "paths": [
+    "\\program files\\tenable\\nessus\\"
+   ],
+   "parents": []
   }
  ],
  "modules": [

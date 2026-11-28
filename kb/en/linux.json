@@ -206,9 +206,9 @@
   ],
   "SHC": [
    {
-    "do": "After saving the memory region to a file, look at the instructions at the address from the finding description (the address after the @ sign); on arm64 replace i386:x86-64 with aarch64",
-    "cmd": "objdump -D -b binary -m i386:x86-64 --adjust-vma={start} /tmp/region_{start_plain}.bin | less",
-    "look": "Search the output for the address from the finding description. Starting a program directly is the number 0x3b put into the rax register (push 0x3b and pop rax, or mov eax,0x3b) followed a few instructions later by syscall; on arm64 it is mov x8 with a number and svc. Code finding its own address is a call to the next instruction followed at once by pop. Benign case: ordinary, long function code around it, and the program is a runtime that generates code or a container runtime. Be concerned about a short fragment that prepares a string such as /bin/sh and calls the kernel right away: in that case keep the file and go to the next step."
+    "do": "After saving the memory region to a file, look at the instructions at the address from the finding description (the address after the @ sign); on arm64 replace i386:x86-64 with aarch64 and remove -M intel",
+    "cmd": "objdump -D -b binary -m i386:x86-64 -M intel --adjust-vma={start} /tmp/region_{start_plain}.bin | less",
+    "look": "Search the output for the address from the finding description (addresses in the output have no leading 0x). Starting a program directly is the number 0x3b put into the rax register (push 0x3b and pop rax, or mov eax,0x3b) followed a few instructions later by syscall; on arm64 it is mov x8 with a number and svc. Code finding its own address is a call to the next instruction followed at once by pop. Benign case: ordinary, long function code around it, and the program is a runtime that generates code or a container runtime. Be concerned about a short fragment that prepares a string such as /bin/sh and calls the kernel right away: in that case keep the file and go to the next step."
    },
    {
     "do": "Print the strings from the saved region that look like paths and network addresses",

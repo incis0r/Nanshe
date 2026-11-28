@@ -18,8 +18,8 @@ Kod wyjścia skryptów e2e: 0 gdy wszystko zgodne, 1 gdy cokolwiek odbiega.
 
 | Warstwa | Wynik |
 |---|---|
-| Testy jednostkowe | 171 przechodzi (analyze 30, core 3, dump 9, kb 10, live 21, llm 40, report 39, vm 19) |
-| macOS (arm64, natywnie) | 173 testów jednostkowych (w tym 4 backendu macOS, uruchamiane tylko tam) oraz `scripts/e2e-macos.sh`: 7 próbek i 4 grupy asercji dodatkowych; zob. [macos.md](macos.md) |
+| Testy jednostkowe | 172 przechodzi (analyze 30, core 3, dump 9, kb 11, live 21, llm 40, report 39, vm 19) |
+| macOS (arm64, natywnie) | 174 testów jednostkowych (w tym 4 backendu macOS, uruchamiane tylko tam) oraz `scripts/e2e-macos.sh`: 7 próbek i 4 grupy asercji dodatkowych; zob. [macos.md](macos.md) |
 | Odczyt z hiperwizora (`nanshe vm`) | jedno uruchomienie na żywo na gościu Windows Server 2025 pod KVM (zob. [hiperwizor.md](hiperwizor.md)); bez automatycznego testu end-to-end |
 | Pełne skany na żywo, Linux | `nanshe scan --all` na 20 hostach jednego labu (19 x86_64, 1 arm64), 2026-11-23, przed strojeniem detekcji i po nim; żadnego procesu nie weryfikowano ręcznie |
 | e2e Linux (aarch64, kontener) | 16 próbek statycznych, 2 dynamiczne i 8 grup asercji dodatkowych |
@@ -128,7 +128,8 @@ Nowe w tej wersji (analiza i odczyt na żywo):
 | `names_and_paths_are_lowercase_so_that_lookups_can_match` | nazwy procesów, rodziców, ścieżki i nazwy modułów w każdym pliku systemu i w obu językach są małymi literami, bo wyszukiwanie porównuje tekst zamieniony na małe litery; przykłady z macOS: `WindowServer` i `mds_stores` w prawdziwych położeniach, znana nazwa w `/tmp` oceniona jako nietypowa, biblioteki Electron i JavaScriptCore rozpoznane jako środowiska |
 | `shellcode_findings_and_macos_have_their_own_guidance` | każdy system ma kroki sprawdzenia dla `SHC`, które prowadzą do adresu ze znaleziska, oraz opisy zestawów `SHC+X-PRIV` i `RWX+SHC+X-PRIV` z obiema wskazówkami o środowisku; `X-MAP+SHC` istnieje tylko dla Windows, a `MEMFD+SHC` tylko dla Linuksa; na macOS każda cecha zgłaszana tam przez skaner ma własny krok |
 | `chromium_families_are_recognised_by_their_engine_files` | pliki silnika (`v8_context_snapshot`, rdzeń Qt WebEngine, biblioteka Electron na macOS) dają środowisko i opis rodziny; biblioteka łącząca z WebView2 daje rodzinę bez środowiska; sama biblioteka multimediów albo rdzeń Qt nie dają nic |
-| `chromium_application_is_recognised_across_its_processes` (report) | proces bez pliku silnika przejmuje środowisko z innego procesu tego samego pliku programu (P2, z podanym procesem źródłowym); inny program i drugi proces gospodarza usług zostają w P1; cecha, której środowisko nie tłumaczy, nadal daje P1; program o nieznanej nazwie dostaje opis rodziny |
+| `windows_shell_and_service_processes_are_described` | opisy procesów powłoki i usług Windows: położenie i proces nadrzędny zgodne z odczytanymi na żywych stacjach; ta sama nazwa w katalogu publicznym i inny proces nadrzędny dają niezgodność; pakiet systemowy z numerem wersji w katalogu pasuje po początku nazwy pakietu, obcy pakiet nie; interpreter nie ma typowego położenia; zestaw `ENT-X+IMG-MOD` ma opis z przyczynami łagodnymi i niepokojącymi |
+| `chromium_application_is_recognised_across_its_processes` (report) | proces bez pliku silnika przejmuje środowisko z innego procesu tego samego pliku programu (P2, z podanym procesem źródłowym); inny program i drugi proces gospodarza usług zostają w P1; cecha, której środowisko nie tłumaczy, nadal daje P1; `SHC` daje P1 przy środowisku przejętym z innego procesu i P2 przy rozpoznanym we własnych plikach; program o nieznanej nazwie dostaje opis rodziny |
 
 ### `nanshe-report` (raport)
 

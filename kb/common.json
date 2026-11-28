@@ -1,5 +1,5 @@
 {
- "version": "2026-11-26",
+ "version": "2026-11-27",
  "guide": [
   "Raport przedstawia wynik przeglądu pamięci działających procesów. Wskazuje obszary pamięci o cechach nietypowych dla zwykłego oprogramowania. Nie rozstrzyga, czy stacja została przejęta: każde znalezisko jest hipotezą do zweryfikowania.",
   "Proces przechowuje kod i dane w wydzielonych obszarach pamięci, zwanych regionami. W typowym programie kod pochodzi z pliku na dysku i nie jest modyfikowany w trakcie pracy. Narzędzie wyszukuje odstępstwa od tej reguły: kod bez pliku źródłowego, kod modyfikowalny, kod o cechach danych zaszyfrowanych, obraz programu załadowany z pominięciem systemu, wątek działający z pamięci bez pliku oraz zmieniony kod biblioteki.",
@@ -256,6 +256,23 @@
     "Wyłączenie zabezpieczeń przez nadpisanie funkcji (np. skanowania skryptów albo rejestrowania zdarzeń).",
     "Przechwytywanie funkcji w celu kradzieży danych albo ukrycia obecności.",
     "Podmiana kodu programu po uruchomieniu (process hollowing)."
+   ],
+   "hints": []
+  },
+  {
+   "tags": [
+    "ENT-X",
+    "IMG-MOD"
+   ],
+   "title": "zmieniony kod z pliku z fragmentem wyglądającym na zaszyfrowany",
+   "meaning": "W kodzie załadowanym z pliku jest zmiana względem pliku na dysku, a w tym samym regionie są strony o rozkładzie bajtów bliskim losowemu. Obie cechy opisują ten sam region, ale nie muszą dotyczyć tego samego miejsca: opis znaleziska podaje, ile bajtów zmieniono i ile stron przekracza próg.",
+   "benign": [
+    "Kilka lub kilkanaście zmienionych bajtów w bibliotece systemowej i pojedyncza strona o wysokiej entropii: przekierowanie funkcji założone przez program zabezpieczający albo mechanizm zgodności systemu, a strona o wysokiej entropii to tablice danych wbudowane w kod biblioteki. Ten sam adres zmiany w wielu procesach naraz wskazuje na mechanizm działający w całym systemie.",
+    "Program spakowany albo chroniony przed kopiowaniem, który rozpakowuje własny kod w miejscu: zmiana obejmuje wtedy dużą część regionu."
+   ],
+   "malicious": [
+    "Kod programu podmieniony po uruchomieniu na inny, spakowany albo zaszyfrowany (process hollowing): zmienionych bajtów jest dużo, a wysoka entropia obejmuje wiele stron.",
+    "Funkcja biblioteki nadpisana skokiem do ukrytego kodu: zmiana ma kilka bajtów, ale prowadzi do pamięci bez pliku."
    ],
    "hints": []
   },

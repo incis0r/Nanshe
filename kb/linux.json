@@ -206,9 +206,9 @@
   ],
   "SHC": [
    {
-    "do": "Po zapisaniu regionu pamięci do pliku obejrzyj instrukcje pod adresem z opisu znaleziska (adres po znaku @); na arm64 zamień i386:x86-64 na aarch64",
-    "cmd": "objdump -D -b binary -m i386:x86-64 --adjust-vma={start} /tmp/region_{start_plain}.bin | less",
-    "look": "Wyszukaj w wyniku adres z opisu znaleziska. Bezpośrednie uruchomienie programu to wpisanie liczby 0x3b do rejestru rax (push 0x3b i pop rax albo mov eax,0x3b), a kilka instrukcji dalej syscall; na arm64 mov x8 z numerem i svc. Ustalanie własnego adresu to call do następnej instrukcji i zaraz po nim pop. Niegroźny przypadek: wokół jest zwykły, długi kod funkcji, a program to środowisko tworzące kod w trakcie działania albo narzędzie uruchamiające kontenery. Niepokoić powinien krótki fragment, który przygotowuje napis w rodzaju /bin/sh i od razu wywołuje jądro: wtedy zachowaj plik i przejdź do następnego kroku."
+    "do": "Po zapisaniu regionu pamięci do pliku obejrzyj instrukcje pod adresem z opisu znaleziska (adres po znaku @); na arm64 zamień i386:x86-64 na aarch64 i usuń -M intel",
+    "cmd": "objdump -D -b binary -m i386:x86-64 -M intel --adjust-vma={start} /tmp/region_{start_plain}.bin | less",
+    "look": "Wyszukaj w wyniku adres z opisu znaleziska (w wyniku adresy nie mają początkowego 0x). Bezpośrednie uruchomienie programu to wpisanie liczby 0x3b do rejestru rax (push 0x3b i pop rax albo mov eax,0x3b), a kilka instrukcji dalej syscall; na arm64 mov x8 z numerem i svc. Ustalanie własnego adresu to call do następnej instrukcji i zaraz po nim pop. Niegroźny przypadek: wokół jest zwykły, długi kod funkcji, a program to środowisko tworzące kod w trakcie działania albo narzędzie uruchamiające kontenery. Niepokoić powinien krótki fragment, który przygotowuje napis w rodzaju /bin/sh i od razu wywołuje jądro: wtedy zachowaj plik i przejdź do następnego kroku."
    },
    {
     "do": "Wypisz z zapisanego regionu napisy, które wyglądają na ścieżki i adresy sieciowe",
