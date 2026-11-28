@@ -214,6 +214,8 @@ Uruchamianie: `scripts/fuzz.sh [sekundy na cel] [cele...]` w kontenerze (kompila
 
 Dotychczasowe przebiegi (2026-11-24, kontener arm64, 5 minut na cel): 1,7 mln wykonań `dump`, 11,1 mln `pediff`, 11,9 mln `pagetables`, 2,7 mln `maps`, 0,4 mln `detectors`, bez awarii. Wcześniejszy, 30-sekundowy przebieg znalazł jeden błąd: adres modułu bliski końca zakresu liczb przepełniał zaokrąglanie granic modułu w `nanshe-vm` (naprawione, z testem regresji).
 
+Cel `pagetables` zwolnił później do około 70 wykonań na sekundę. Przyczyna (ustalona 2026-11-27 pomiarem etapów na korpusie): korpus dorobił się wejść z tablicą stron wskazującą na siebie, a takie wejście wyczerpuje limit `MAX_TABLES`, czyli czyta ponad sto tysięcy tablic w jednym wykonaniu. Cel sprawdza teraz tę samą logikę z limitem 128 tablic (`walk_page_tables_limited`); pełny limit sprawdza test jednostkowy `page_walk_survives_unreadable_and_looping_tables`. Po zmianie: 281 tys. wykonań w minutę (około 4700 na sekundę), bez awarii, pokrycie nie spadło.
+
 Granice tego dowodu: minuty, nie dni; jedna architektura; cele sprawdzają awarie i podane niezmienniki, a nie poprawność wyników; trzy cele dodane później (`wintables`, `llm`, `report`) działały po 2 minuty (0,6 mln, 1,1 mln i 3 tys. wykonań) bez awarii.
 
 ## Testy end-to-end

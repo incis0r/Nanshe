@@ -38,6 +38,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - Windows: the message for a process that cannot be opened no longer repeats "access denied" after the error kind.
 - `nanshe formats` lists the macOS live source and the `SHC` detector.
 - `nanshe vm`: an executable page that no VAD entry describes is examined as private memory, and an image whose file cannot be named as a mapping without a file; kernel structures are read through Nanshe's own address translation, including transition pages.
+- Fuzzing: the `pagetables` target runs the page walk with a limit of 128 tables instead of the scanner's limit. Inputs with a table that points at itself made every execution read more than a hundred thousand tables, which slowed the target down to about 70 executions per second; it now does about 4700. `walk_page_tables_limited` takes the limit as a parameter.
 
 ## [0.2.0] - 2026-11-24
 

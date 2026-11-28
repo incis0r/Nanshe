@@ -162,7 +162,14 @@ pub fn proto_frames(proto: u64) -> Vec<u64> {
     if proto & 1 != 0 || is_transition(proto) { frame_candidates(proto) } else { Vec::new() }
 }
 
-pub fn walk_page_tables(dtb: u64, mut table: impl FnMut(u64) -> Option<Vec<u64>>) -> (Vec<PageRange>, bool) {
+pub fn walk_page_tables(dtb: u64, table: impl FnMut(u64) -> Option<Vec<u64>>) -> (Vec<PageRange>, bool) {
+    walk_page_tables_limited(dtb, MAX_TABLES, table)
+}
+
+/// Przejście jak w `walk_page_tables`, z podanym limitem liczby odczytanych tablic. Osobna funkcja po to,
+/// żeby fuzzing mógł sprawdzać tę samą logikę z małym limitem: wejście z tablicą wskazującą na siebie
+/// wyczerpuje limit, a przy `MAX_TABLES` jedno takie wykonanie czyta ponad sto tysięcy tablic.
+pub fn walk_page_tables_limited(dtb: u64, max_tables: usize, mut table: impl FnMut(u64) -> Option<Vec<u64>>) -> (Vec<PageRange>, bool) {
     const P: u64 = 1; const W: u64 = 2; const U: u64 = 4; const PS: u64 = 0x80; const NX: u64 = 1 << 63;
     const ADDR: u64 = 0x000f_ffff_ffff_f000;
     // wpis tablicy wyższego poziomu w stanie przejściowym: tablica nadal jest w pamięci, a uprawnień sprzętowych
@@ -183,7 +190,7 @@ pub fn walk_page_tables(dtb: u64, mut table: impl FnMut(u64) -> Option<Vec<u64>>
     };
     // stos zamiast rekurencji: (adres tablicy, poziom 4..1, adres wirtualny początku, zapis, użytkownik, zakaz wykonania)
     let mut read = |addr: u64, tables: &mut usize, complete: &mut bool| -> Option<Vec<u64>> {
-        if *tables >= MAX_TABLES { *complete = false; return None; }
+        if *tables >= max_tables { *complete = false; return None; }
         *tables += 1;
         let t = table(addr).filter(|t| t.len() == 512);
         if t.is_none() { *complete = false; }

@@ -214,6 +214,8 @@ How to run: `scripts/fuzz.sh [seconds per target] [targets...]` runs them in a c
 
 Runs so far (2026-11-24, arm64 container, 5 minutes per target): 1.7 million executions of `dump`, 11.1 million of `pediff`, 11.9 million of `pagetables`, 2.7 million of `maps`, 0.4 million of `detectors`, with no failure. An earlier 30-second run found one defect: a module address near the end of the number range overflowed the rounding of module extents in `nanshe-vm` (fixed, with a regression test).
 
+The `pagetables` target later slowed down to about 70 executions per second. The cause (established 2026-11-27 by timing the stages on the corpus): the corpus had grown inputs with a page table that points at itself, and such an input exhausts the `MAX_TABLES` limit, that is, reads more than a hundred thousand tables in one execution. The target now checks the same logic with a limit of 128 tables (`walk_page_tables_limited`); the full limit is checked by the unit test `page_walk_survives_unreadable_and_looping_tables`. After the change: 281 thousand executions in a minute (about 4700 per second), no failure, coverage did not drop.
+
 Limits of this evidence: minutes, not days; one architecture; the targets check for crashes and the stated invariants, not for wrong results; the three targets added later (`wintables`, `llm`, `report`) ran for 2 minutes each (0.6 million, 1.1 million and 3 thousand executions) with no failure.
 
 ## End-to-end tests
