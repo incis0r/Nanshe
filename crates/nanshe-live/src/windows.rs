@@ -211,10 +211,12 @@ impl MemorySource for WinProcess {
     /// Rejestry wątków (GetThreadContext) bez wstrzymywania: proces nie jest zatrzymywany ani zmieniany.
     /// Dla wątku czekającego w jądrze wartości są stałe; dla działającego mogą być niespójne, co
     /// odbiorca sprawdza sam (drugi odczyt po analizie). Tylko x86_64.
+    /// `unread` liczy wątki żyjące, których rejestrów nie udało się odczytać; wątki zakończone są pomijane.
     #[cfg(target_arch = "x86_64")]
     fn thread_regs(&self) -> nanshe_core::ThreadSet {
         const THREAD_GET_CONTEXT: u32 = 0x0008;
         const THREAD_QUERY_INFORMATION: u32 = 0x0040;
+        const STILL_ACTIVE: u32 = 259;
         // CONTEXT_AMD64 | CONTEXT_CONTROL | CONTEXT_INTEGER
         const FLAGS: u32 = 0x0010_0003;
         // struktura CONTEXT (x64): 1232 bajty, wyrównanie 16; ContextFlags pod 0x30, Rax..R15 od 0x78, Rip pod 0xf8
@@ -240,7 +242,14 @@ impl MemorySource for WinProcess {
                 let mut gpr = [0u64; 16];
                 for (i, g) in gpr.iter_mut().enumerate() { *g = q(0x78 + i * 8); }
                 out.push(nanshe_core::ThreadRegs { tid, rip: q(0xf8), gpr, known: 0xffff });
-            } else { unread += 1; }
+            } else {
+                // Wątek, który już się zakończył, nadal jest na liście, dopóki ktoś trzyma jego uchwyt;
+                // odczyt rejestrów kończy się wtedy błędem. Nie ma stosu do zbadania, więc nie jest luką w pokryciu.
+                let mut code = 0u32;
+                // SAFETY: uchwyt wątku z udanego wywołania; wynik w zmiennej lokalnej.
+                let exited = unsafe { GetExitCodeThread(h.0, &mut code) } != 0 && code != STILL_ACTIVE;
+                if !exited { unread += 1; }
+            }
             prev = Some(h);
         }
         out.sort_by_key(|t| t.tid);
@@ -387,6 +396,8 @@ extern "system" {
     fn GetThreadId(h: HANDLE) -> u32;
     #[cfg(target_arch = "x86_64")]
     fn GetThreadContext(h: HANDLE, context: *mut c_void) -> i32;
+    #[cfg(target_arch = "x86_64")]
+    fn GetExitCodeThread(h: HANDLE, code: *mut u32) -> i32;
     fn K32QueryWorkingSetEx(process: HANDLE, buf: *mut c_void, size: u32) -> i32;
     fn GetFinalPathNameByHandleW(h: HANDLE, path: *mut u16, len: u32, flags: u32) -> u32;
     fn GetTickCount64() -> u64;
@@ -816,4 +827,24 @@ pub fn list() -> Result<Vec<ProcEntry>> {
     }
     v.sort_by_key(|p| p.pid);
     Ok(v)
+}
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod tests {
+    use super::*;
+
+    /// Wątek, który się zakończył, zostaje na liście wątków procesu, dopóki ktoś trzyma jego uchwyt, a odczyt
+    /// jego rejestrów kończy się błędem. Taki wątek nie ma stosu do zbadania i nie jest liczony jako nieodczytany.
+    #[test]
+    fn exited_threads_are_not_counted_as_unread() {
+        // uchwyt wątku żyje tak długo jak JoinHandle; wątki kończą pracę od razu
+        let done: Vec<_> = (0..8).map(|_| std::thread::spawn(|| ())).collect();
+        while !done.iter().all(|t| t.is_finished()) { std::thread::sleep(std::time::Duration::from_millis(10)); }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let p = WinProcess::open(std::process::id()).expect("własny proces");
+        let set = p.thread_regs();
+        assert!(!set.regs.is_empty(), "wątki żyjące są odczytane");
+        assert_eq!(set.unread, 0, "zakończone wątki nie są luką w pokryciu");
+        drop(done);
+    }
 }

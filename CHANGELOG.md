@@ -23,6 +23,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Fixed
 
+- Windows: threads that have already exited (their objects stay on the thread list while someone holds a handle) were counted as threads whose registers could not be read. They have no stack to examine and are no longer counted, so `unread` now shows real gaps in stack coverage.
 - Knowledge base: the `pe-sieve` step for `SHC` named an option that does not exist (`/dump_mode`); the step now uses `/shellc 1` alone and describes the summary lines and the output directory as the tool prints them. The `objdump` step uses Intel syntax so that the output matches the description.
 - Report: a JIT runtime recognised only in another process of the same program file no longer lowers the priority of a process that has an `SHC` finding of weight 30 or more; such a process gets P1.
 - Knowledge base, macOS: process and library names written with capital letters (`WindowServer`, `Finder`, `JavaScriptCore`, `Electron Framework`, `Chromium Embedded Framework`) never matched, because lookups compare lower-cased text, and the expected location of the Spotlight processes never matched either. An application built on the Chromium Embedded Framework was therefore reported as a process without a known runtime (priority P1 instead of P2). A test now rejects such entries.

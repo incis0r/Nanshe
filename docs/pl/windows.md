@@ -148,13 +148,15 @@ Jak to działa i czego nie robi:
 | Licznik | Znaczenie |
 |---|---|
 | `threads` | wątki, których rejestry odczytano |
-| `unread` | wątki, których rejestrów nie dało się odczytać; ich stosy nie zostały zbadane |
+| `unread` | żyjące wątki, których rejestrów nie dało się odczytać; ich stosy nie zostały zbadane. Wątki już zakończone, które zostają na liście, dopóki ktoś trzyma ich uchwyt, nie są liczone |
 | `waiting` | wątki czekające w wywołaniu jądra (tylko one są odwijane) |
 | `complete` | stosy odwinięte do dna (zerowy adres powrotu pierwszej funkcji wątku), każda ramka w obrazie modułu |
 | `foreign` | stosy z adresem powrotu poza obrazami modułów |
 | `abandoned` | stosy porzucone, z powodem: `no-table`, `table-read`, `unwind-info-read`, `unwind-info`, `stack-read`, `stack-bounds`, `frame-limit`, `register-unknown`, `moved`, `own-stack`, `outside-map`, `thread-limit` |
 
-Pomiar na stacji testowej (2026-11-25, skan na żywo, 229 procesów, 35 s): odczytano rejestry 1817 wątków, 408 nie odczytano; 1815 wątków czekało, 1773 stosy odwinięto do dna, 42 wracały poza moduły (wszystkie do pamięci wykonywalnej procesów z rozpoznanym środowiskiem JIT, więc bez zgłoszenia), żadnego nie porzucono. Żadnego zgłoszenia poza próbkami. To jeden pomiar na jednej stacji; dlaczego rejestrów 408 wątków nie dało się odczytać, nie zostało zbadane.
+Pomiar na stacji testowej (2026-11-25, skan na żywo, 229 procesów, 35 s): odczytano rejestry 1817 wątków, 408 nie odczytano; 1815 wątków czekało, 1773 stosy odwinięto do dna, 42 wracały poza moduły (wszystkie do pamięci wykonywalnej procesów z rozpoznanym środowiskiem JIT, więc bez zgłoszenia), żadnego nie porzucono. Żadnego zgłoszenia poza próbkami. To jeden pomiar na jednej stacji.
+
+Przyczyna 408 nieodczytanych wątków (ustalona 2026-11-27 osobnym odczytem na dwóch stacjach): były to wątki już zakończone, których obiekty istnieją, dopóki jakiś program trzyma ich uchwyt (na pierwszej stacji 430 z 431 wątków z błędem odczytu, na drugiej 193 ze 193; najwięcej w procesach usług). Taki wątek nie ma stosu do zbadania, więc licznik go już nie obejmuje. Ten sam skan po zmianie (228 procesów, 39 s): 1857 wątków odczytanych, 1 nieodczytany (`LsaIso.exe`, proces izolowany przez system), 1855 czekających, 1813 stosów odwiniętych do dna, 42 wracające poza moduły, żadnego porzuconego.
 
 Ograniczenia: sfałszowany stos (podstawione ramki wracające do obrazów modułów) omija tę kontrolę; kod wstrzyknięty do procesu z JIT, wracający do pamięci wykonywalnej, nie różni się od kodu środowiska; wątki działające w chwili skanu, procesy 32-bitowe, Linux i macOS nie są objęte.
 

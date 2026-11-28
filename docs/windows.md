@@ -148,13 +148,15 @@ How it works and what it does not do:
 | Counter | Meaning |
 |---|---|
 | `threads` | threads whose registers were read |
-| `unread` | threads whose registers could not be read; their stacks were not examined |
+| `unread` | live threads whose registers could not be read; their stacks were not examined. Threads that have already exited and stay on the list while someone holds their handle are not counted |
 | `waiting` | threads waiting in a kernel call (only these are unwound) |
 | `complete` | stacks unwound to the bottom (the zero return address of the first function of the thread), every frame in a module image |
 | `foreign` | stacks with a return address outside module images |
 | `abandoned` | stacks given up, with the reason: `no-table`, `table-read`, `unwind-info-read`, `unwind-info`, `stack-read`, `stack-bounds`, `frame-limit`, `register-unknown`, `moved`, `own-stack`, `outside-map`, `thread-limit` |
 
-Measurement on the test host (2026-11-25, live scan, 229 processes, 35 s): registers of 1817 threads read, 408 not read; 1815 threads waiting, 1773 stacks unwound to the bottom, 42 returning outside modules (all into executable memory of processes with a recognised JIT runtime, so no report), none abandoned. No report outside the samples. This is one measurement on one host; why the registers of 408 threads could not be read was not examined.
+Measurement on the test host (2026-11-25, live scan, 229 processes, 35 s): registers of 1817 threads read, 408 not read; 1815 threads waiting, 1773 stacks unwound to the bottom, 42 returning outside modules (all into executable memory of processes with a recognised JIT runtime, so no report), none abandoned. No report outside the samples. This is one measurement on one host.
+
+The cause of the 408 unread threads (established 2026-11-27 by a separate read on two hosts): they were threads that had already exited, whose objects exist as long as some program holds their handle (430 of 431 threads with a read error on the first host, 193 of 193 on the second; most of them in service processes). Such a thread has no stack to examine, so the counter no longer includes it. The same scan after the change (228 processes, 39 s): 1857 threads read, 1 not read (`LsaIso.exe`, a process isolated by the system), 1855 waiting, 1813 stacks unwound to the bottom, 42 returning outside modules, none abandoned.
 
 Limitations: a spoofed stack (planted frames that return to module images) bypasses this check; code injected into a process with JIT that returns to executable memory does not differ from the runtime's own code; threads running at the moment of the scan, 32-bit processes, Linux and macOS are not covered.
 
